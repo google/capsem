@@ -62,6 +62,7 @@ impl<E: SecurityEventEmitter> SecurityEventEngine<E> {
         for rule in evaluation.matched_rules() {
             record_rule_detection(&mut event, rule);
         }
+        record_observations(&mut event, evaluation.observations());
         event.request_decision(requested_boundary_decision(
             selected_enforcement_rule(&evaluation),
             event.event_type,

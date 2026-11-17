@@ -46,6 +46,8 @@ pub use http_materialization::{
     materialize_http_request_for_upstream, materialize_http_request_for_upstream_after_enforcement,
     HttpRequestSecurityEvent, MaterializedHttpRequest,
 };
+mod observations;
+use observations::{event_with_rule_detections, record_observations, record_rule_detection};
 mod rule_decision;
 mod rule_emission;
 pub(crate) use plugins::redact_query_for_ledger;
@@ -630,32 +632,6 @@ fn security_decision_event(
     })
 }
 
-fn record_rule_detection(event: &mut SecurityEvent, rule: &CompiledSecurityRule) {
-    let Some(detection_level) = rule.detection_level else {
-        return;
-    };
-    event.record_detection(SecurityDetectionEvent {
-        source: SecurityDetectionSource::Rule,
-        detection_level,
-        rule_id: Some(rule.rule_id.clone()),
-        plugin_id: None,
-        action: Some(rule.action),
-        plugin_mode: None,
-        reason: rule.reason.clone(),
-    });
-}
-
-fn event_with_rule_detections<'a>(
-    event: &SecurityEvent,
-    rules: impl IntoIterator<Item = &'a CompiledSecurityRule>,
-) -> SecurityEvent {
-    let mut enriched = event.clone();
-    for rule in rules {
-        record_rule_detection(&mut enriched, rule);
-    }
-    enriched
-}
-
 pub async fn emit_security_decision_transition(
     db: &DbWriter,
     event_id: SecurityEventId,
@@ -727,6 +703,7 @@ fn evaluate_security_boundary_with_registry(
     for rule in evaluation.matched_rules() {
         record_rule_detection(&mut event, rule);
     }
+    record_observations(&mut event, evaluation.observations());
 
     let selected_rule = selected_enforcement_rule(&evaluation);
     event.request_decision(requested_boundary_decision(selected_rule, event.event_type));

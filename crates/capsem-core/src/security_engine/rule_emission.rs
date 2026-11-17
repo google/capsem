@@ -119,13 +119,15 @@ async fn emit_rule_rows(
     let evaluation = rules.evaluate(event)?;
     let selected_rule = selected_enforcement_rule(&evaluation);
     let mut emitted = 0;
-    let mut enriched_event = event_with_rule_detections(event, evaluation.detections());
+    let mut enriched_event = event_with_rule_detections(event, &evaluation);
     let mut enforcement = security_enforcement_decision(selected_rule, &mut enriched_event);
     let mut decision_state = enriched_event.decision.clone();
     let mut rule_events = Vec::new();
     let mut writes = Vec::new();
     if evaluation.matched_rules().is_empty() {
-        if let Some(write) = plugin_execution_write(event_id.clone(), event_type, &enriched_event, timestamp_unix_ms)? {
+        if let Some(write) =
+            supplemental_evidence_write(event_id.clone(), event_type, &enriched_event, timestamp_unix_ms)?
+        {
             writes.push(write);
         }
     }
@@ -192,12 +194,14 @@ fn emit_rule_rows_blocking(
     let evaluation = rules.evaluate(event)?;
     let selected_rule = selected_enforcement_rule(&evaluation);
     let mut emitted = 0;
-    let mut enriched_event = event_with_rule_detections(event, evaluation.detections());
+    let mut enriched_event = event_with_rule_detections(event, &evaluation);
     let mut enforcement = security_enforcement_decision(selected_rule, &mut enriched_event);
     let mut decision_state = enriched_event.decision.clone();
     let mut rule_events = Vec::new();
     if evaluation.matched_rules().is_empty() {
-        if let Some(write) = plugin_execution_write(event_id.clone(), event_type, &enriched_event, timestamp_unix_ms)? {
+        if let Some(write) =
+            supplemental_evidence_write(event_id.clone(), event_type, &enriched_event, timestamp_unix_ms)?
+        {
             emit_security_write_blocking(db, write)
                 .ok_or_else(|| "ledger refused plugin execution evidence".to_string())?;
         }
@@ -247,17 +251,18 @@ fn emit_rule_rows_blocking(
     })
 }
 
-/// Plugin evidence must not depend on an unrelated CEL rule matching. Reuse the
+/// Plugin and detection evidence must not depend on an access rule matching. Reuse the
 /// existing decision ledger, carrying a snapshot (not an invented transition).
-fn plugin_execution_write(
+fn supplemental_evidence_write(
     event_id: SecurityEventId,
     event_type: RuntimeSecurityEventType,
     event: &SecurityEvent,
     timestamp_unix_ms: i64,
 ) -> Result<Option<WriteOp>, String> {
-    let Some(execution) = event.plugin_executions.first() else {
+    let execution = event.plugin_executions.first();
+    if execution.is_none() && event.detections.is_empty() {
         return Ok(None);
-    };
+    }
     // This row adds execution accounting, not another payload archive. Borrow
     // only its typed evidence instead of building a forensic JSON body copy.
     #[derive(Serialize)]
@@ -274,15 +279,32 @@ fn plugin_execution_write(
         timestamp_unix_ms,
         event_id: event_id.as_str().into(),
         event_type: event_type.as_str().into(),
-        stage: capsem_logger::SecurityDecisionStage::Preprocess,
-        actor: "security.plugins".into(),
+        stage: if execution.is_some() {
+            capsem_logger::SecurityDecisionStage::Preprocess
+        } else {
+            capsem_logger::SecurityDecisionStage::Rule
+        },
+        actor: if execution.is_some() {
+            "security.plugins"
+        } else {
+            "security.observations"
+        }
+        .into(),
         rule_id: None,
-        plugin_id: Some(execution.plugin_id.clone()),
+        plugin_id: execution.map(|execution| execution.plugin_id.clone()),
         previous_decision: decision,
         requested_decision: decision,
         effective_decision: decision,
-        reason: Some("completed plugin execution snapshot".into()),
-        event_json: serde_json::to_string(&evidence).map_err(|_| "serialize plugin execution evidence".to_string())?,
+        reason: Some(
+            if execution.is_some() {
+                "completed plugin execution snapshot"
+            } else {
+                "completed detection snapshot"
+            }
+            .into(),
+        ),
+        event_json: serde_json::to_string(&evidence)
+            .map_err(|_| "serialize supplemental security evidence".to_string())?,
         trace_id: event.trace_id(),
         turn_id: event.trace_id(),
         credential_ref: event.credential_ref.clone(),

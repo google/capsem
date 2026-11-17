@@ -154,6 +154,8 @@ mod effective_decision;
 mod event_contract;
 #[path = "tests/materialization.rs"]
 mod materialization;
+#[path = "tests/observations.rs"]
+mod observations;
 #[path = "tests/plugin_boundaries.rs"]
 mod plugin_boundaries;
 #[path = "tests/plugin_execution.rs"]
