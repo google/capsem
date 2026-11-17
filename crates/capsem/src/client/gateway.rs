@@ -10,7 +10,12 @@ use std::time::Duration;
 
 pub struct GatewayClient {
     bootstrap: ServiceAdminClient,
-    connection: tokio::sync::OnceCell<Transport>,
+    connection: tokio::sync::OnceCell<Connection>,
+}
+
+struct Connection {
+    transport: Transport,
+    local_authorization: Option<reqwest::header::HeaderValue>,
 }
 
 impl GatewayClient {
@@ -78,9 +83,25 @@ impl GatewayClient {
                         }
                         Err(_) => anyhow::bail!("gateway token environment is not UTF-8"),
                     };
-                    Transport::new(&url, token.trim(), CallOptions::command_timeout(None)).map_err(anyhow::Error::new)
+                    let local = crate::gateway_url_from_runtime(run_dir)
+                        .await
+                        .and_then(Result::ok)
+                        .is_some_and(|runtime| runtime == url);
+                    let local_authorization = if local {
+                        let mut header = reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token.trim()))?;
+                        header.set_sensitive(true);
+                        Some(header)
+                    } else {
+                        None
+                    };
+                    let transport = Transport::new(&url, token.trim(), CallOptions::command_timeout(None))?;
+                    Ok::<_, anyhow::Error>(Connection {
+                        transport,
+                        local_authorization,
+                    })
                 })
                 .await
+                .map(|connection| &connection.transport)
         })
     }
 
@@ -183,6 +204,16 @@ impl GatewayClient {
             .await
             .map_err(gateway_error)?;
         Ok((response.body, response.content_type))
+    }
+
+    pub(crate) async fn preserve_doctor_failure(&self, id: &str) -> Result<capsem_api::VmActionResponse> {
+        self.transport().await?;
+        let authorization = self
+            .connection
+            .get()
+            .and_then(|connection| connection.local_authorization.clone())
+            .context("doctor failure preservation requires the selected local gateway")?;
+        self.bootstrap.preserve_doctor_failure(id, authorization).await
     }
 
     pub async fn listed_session_id(&self, typed: &str) -> Result<Option<String>> {

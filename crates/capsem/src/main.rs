@@ -4,6 +4,8 @@ mod container_image;
 mod container_run;
 mod create_command;
 mod doctor_bundle;
+mod doctor_cleanup;
+use doctor_cleanup::{cleanup_doctor_vm, DoctorSessionCleanup};
 mod doctor_mock_server;
 use doctor_mock_server::{spawn_doctor_mock_server, DOCTOR_MOCK_SERVER_ADDR};
 mod doctor_output;
@@ -49,23 +51,6 @@ use client::{
     ProvisionRequest, ProvisionResponse, PurgeRequest, PurgeResponse, SessionInfo, UpdateStatusResponse,
     VmLifecycleState,
 };
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DoctorSessionCleanup {
-    Completed,
-    Failed,
-    Interrupted,
-}
-
-impl DoctorSessionCleanup {
-    fn route(self, vm_id: &str) -> String {
-        let action = match self {
-            Self::Failed => "preserve-failure",
-            Self::Completed | Self::Interrupted => "delete",
-        };
-        format!("/vms/{vm_id}/{action}")
-    }
-}
 
 const fn cli_styles() -> Styles {
     Styles::styled()
@@ -1613,17 +1598,6 @@ async fn main() -> Result<()> {
             let resp: ApiResponse<ProvisionResponse> = client.post("/vms/create", req).await?;
             let provisioned = resp.into_result()?;
             let vm_id = provisioned.id;
-
-            async fn cleanup_doctor_vm(client: &GatewayClient, vm_id: &str, cleanup: DoctorSessionCleanup) {
-                let route = cleanup.route(vm_id);
-                let result: Result<ApiResponse<serde_json::Value>, _> = match cleanup {
-                    DoctorSessionCleanup::Failed => client.post(&route, serde_json::json!({})).await,
-                    DoctorSessionCleanup::Completed | DoctorSessionCleanup::Interrupted => client.delete(&route).await,
-                };
-                if let Err(error) = result {
-                    eprintln!("warning: doctor session cleanup failed: {error:#}");
-                }
-            }
 
             let ctrl_c = tokio::signal::ctrl_c();
             tokio::pin!(ctrl_c);

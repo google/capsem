@@ -89,3 +89,67 @@ async fn direct_administration_cannot_issue_vm_requests() {
     );
     assert!(!service.recorded()[0].via_gateway);
 }
+
+#[tokio::test]
+async fn failed_doctor_uses_named_authenticated_local_administration() {
+    let service = FakeService::start();
+    let route = "/vms/doctor-test/preserve-failure";
+    service.route("POST", route, 200, json!({"success": true}));
+    let response = service.client.preserve_doctor_failure("doctor-test").await.unwrap();
+    assert!(response.success);
+    let requests = service.recorded();
+    assert_eq!(requests.len(), 1);
+    assert!(
+        !requests[0].via_gateway,
+        "doctor preservation has no public gateway route"
+    );
+    assert_eq!(requests[0].path, route);
+}
+
+#[tokio::test]
+async fn doctor_administration_retains_selected_credential_without_operator_fallback() {
+    let service = FakeService::start();
+    std::fs::write(
+        service.socket.parent().unwrap().join("gateway.token"),
+        "invalid-selected-token",
+    )
+    .unwrap();
+    service.route(
+        "POST",
+        "/vms/doctor-test/preserve-failure",
+        200,
+        json!({"success": true}),
+    );
+    assert!(service.client.preserve_doctor_failure("doctor-test").await.is_err());
+    let requests = service.recorded();
+    assert_eq!(requests.len(), 1);
+    assert!(!requests[0].via_gateway);
+    let admin = ServiceAdminClient::new(service.socket.clone(), false);
+    assert!(admin
+        .request::<(), capsem_api::VmActionResponse>("POST", "/vms/doctor-test/preserve-failure", None)
+        .await
+        .is_err());
+    assert_eq!(service.recorded().len(), 1);
+}
+
+#[tokio::test]
+async fn remote_gateway_connection_cannot_preserve_a_local_doctor_session() {
+    let service = FakeService::start();
+    service
+        .client
+        .connection
+        .set(Connection {
+            transport: Transport::new(
+                "https://remote.example.invalid",
+                "remote-token",
+                CallOptions::command_timeout(None),
+            )
+            .unwrap(),
+            local_authorization: None,
+        })
+        .ok()
+        .unwrap();
+    let error = service.client.preserve_doctor_failure("doctor-test").await.unwrap_err();
+    assert!(error.to_string().contains("requires the selected local gateway"));
+    assert!(service.recorded().is_empty());
+}

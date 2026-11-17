@@ -56,7 +56,7 @@ json = { count = 4, reason = "mock-readiness" }
 json = { count = 1, reason = "http" }
 
 [sources."crates/capsem/src/main.rs"]
-json = { count = 43, reason = "http" }
+json = { count = 40, reason = "http" }
 
 [sources."crates/capsem/src/network_commands.rs"]
 json = { count = 1, reason = "http" }

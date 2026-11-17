@@ -433,6 +433,16 @@ impl ServiceAdminClient {
             method == "GET" && matches!(path, "/system/status" | "/assets/status"),
             "direct service access is restricted to local status/asset administration"
         );
+        self.request_local(method, path, body, None).await
+    }
+
+    async fn request_local<T: Serialize, R: for<'de> Deserialize<'de>>(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<T>,
+        authorization: Option<hyper::header::HeaderValue>,
+    ) -> Result<R> {
         let stream = match self.connect_with_timeout(ConnectMode::FailFast).await {
             Ok(s) => s,
             Err(e) if !self.auto_launch => {
@@ -456,6 +466,11 @@ impl ServiceAdminClient {
             .method(method)
             .uri(format!("http://localhost{}", path))
             .header("Content-Type", "application/json");
+
+        let builder = match authorization {
+            Some(value) => builder.header(hyper::header::AUTHORIZATION, value),
+            None => builder,
+        };
 
         let req = if let Some(b) = body {
             let json = serde_json::to_vec(&b)?;
@@ -506,6 +521,7 @@ impl ServiceAdminClient {
 // Tests
 // ---------------------------------------------------------------------------
 
+mod local_admin;
 mod networks;
 mod stream;
 pub use networks::*;

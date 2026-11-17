@@ -124,7 +124,9 @@ impl FakeService {
         let recorded = self.script.lock().unwrap().recorded.clone();
         for request in &recorded {
             assert!(
-                request.via_gateway || matches!(request.path.as_str(), "/system/status" | "/assets/status"),
+                request.via_gateway
+                    || matches!(request.path.as_str(), "/system/status" | "/assets/status")
+                    || (request.method == "POST" && request.path == "/vms/doctor-test/preserve-failure"),
                 "ordinary CLI request used direct service access: {} {}",
                 request.method,
                 request.path
@@ -161,7 +163,8 @@ async fn answer(
     request: Request<hyper::body::Incoming>,
     via_gateway: bool,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    let authorized = !via_gateway
+    let needs_auth = via_gateway || request.uri().path() == "/vms/doctor-test/preserve-failure";
+    let authorized = !needs_auth
         || request
             .headers()
             .get("authorization")
