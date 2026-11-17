@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import base64
 import json
+import queue
 import shlex
 import subprocess
 import threading
+import tomllib
 from contextlib import closing, contextmanager, suppress
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
 import tomli_w
-import tomllib
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, host_bin_root
 from helpers.service import (
     ServiceInstance,
@@ -36,6 +37,7 @@ def encode(message):
 def upstream(payload_limit):
     calls = []
     lock = threading.Lock()
+    replies = queue.Queue()
     empty = {"jsonrpc": "2.0", "result": {"content": [{"type": "text", "text": ""}]}}
     text_bytes = payload_limit - len(encode(empty))
 
@@ -44,8 +46,21 @@ def upstream(payload_limit):
             pass
 
         def do_GET(self):
-            self.send_response(405)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
             self.end_headers()
+            while (reply := replies.get()) is not None:
+                body, oversized = reply
+                try:
+                    self.wfile.write(b"data: " + body + b"\r\n\r\n")
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    return
+                if oversized:
+                    # The production receiver drops a refused stream immediately.
+                    # Retire this fixture writer too, before its replacement GET
+                    # consumes the next reply.
+                    return
 
         def do_POST(self):
             message = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
@@ -57,14 +72,12 @@ def upstream(payload_limit):
             mode = "json"
             if method == "initialize":
                 result = {
-                    "protocolVersion": message["params"]["protocolVersion"],
+                    "protocolVersion": "2025-06-18",
                     "capabilities": {"tools": {}, "resources": {}, "prompts": {}},
                     "serverInfo": {"name": "payload-fixture", "version": "1"},
                 }
             elif method == "tools/list":
-                result = {
-                    "tools": [{"name": "boundary", "inputSchema": {"type": "object"}}]
-                }
+                result = {"tools": [{"name": "boundary", "inputSchema": {"type": "object"}}]}
             elif method == "resources/list":
                 result = {"resources": []}
             elif method == "prompts/list":
@@ -77,16 +90,22 @@ def upstream(payload_limit):
                     calls.append((mode, bool(args.get("oversized"))))
                 text = (
                     "after refusal"
-                    if mode == "echo"
+                    if mode == "echo" or args.get("echo")
                     else "r" * (text_bytes + int(bool(args.get("oversized"))))
                 )
                 result = {"content": [{"type": "text", "text": text}]}
             else:
                 raise AssertionError(f"unexpected method {method}")
             body = encode({"jsonrpc": "2.0", "id": message["id"], "result": result})
+            if mode == "get":
+                replies.put((body, bool(message["params"]["arguments"].get("oversized"))))
+                self.send_response(202)
+                self.end_headers()
+                return
             if mode == "sse":
                 body = b"data: " + body + b"\r\n\r\n"
             self.send_response(200)
+            self.send_header("Mcp-Session-Id", "payload-fixture-session")
             self.send_header(
                 "Content-Type",
                 "text/event-stream" if mode == "sse" else "application/json",
@@ -102,15 +121,14 @@ def upstream(payload_limit):
     try:
         yield f"http://127.0.0.1:{server.server_port}/mcp", text_bytes, calls
     finally:
+        replies.put(None)
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
 
 
 def test_real_guest_mcp_preserves_payload_bounds_and_recovers_after_refusals():
-    limits = tomllib.loads((ROOT / "config/data/runtime-limits.toml").read_text())[
-        "mcp"
-    ]
+    limits = tomllib.loads((ROOT / "config/data/runtime-limits.toml").read_text())["mcp"]
     with upstream(limits["payload_max_bytes"]) as (url, text_bytes, calls):
         service = ServiceInstance(isolated_corp_config=True)
         vm_id = None
@@ -167,7 +185,7 @@ def test_real_guest_mcp_preserves_payload_bounds_and_recovers_after_refusals():
             summary = json.loads(response.stdout.strip())
             assert summary == {
                 "boundary_bytes": text_bytes,
-                "complete_modes": ["json", "sse"],
+                "complete_modes": ["json", "sse", "get"],
                 "local_refusals": 2,
             }
             assert sorted(calls) == sorted(
@@ -176,6 +194,9 @@ def test_real_guest_mcp_preserves_payload_bounds_and_recovers_after_refusals():
                     ("json", True),
                     ("sse", False),
                     ("sse", True),
+                    ("get", False),
+                    ("get", True),
+                    ("get", False),
                     ("echo", False),
                     ("echo", False),
                 ]
@@ -186,7 +207,7 @@ def test_real_guest_mcp_preserves_payload_bounds_and_recovers_after_refusals():
                 rows = db.execute(
                     "SELECT process_name, transport FROM tool_calls WHERE origin='mcp' AND server_name='payload'"
                 ).fetchall()
-            assert len(rows) == 6, rows
+            assert len(rows) == 9, rows
             assert all(tuple(row) == (PARENT_NAME, "vsock_frame") for row in rows), rows
         finally:
             if vm_id is not None:

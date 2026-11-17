@@ -12,6 +12,7 @@ def main():
     payload_limit, id_limit, text_bytes = map(int, sys.argv[1:])
     json_id = "\0" * id_limit
     sse_id = "\x01" * id_limit
+    modes = [("json", json_id), ("sse", sse_id), ("get", "\x02" * id_limit)]
     messages = [
         {
             "jsonrpc": "2.0",
@@ -25,11 +26,11 @@ def main():
         },
         {"jsonrpc": "2.0", "method": "notifications/initialized"},
     ]
-    for mode, identity in [("json", json_id), ("sse", sse_id)]:
+    for mode, identity in modes:
         for request_id, arguments in [
             (identity, {"mode": mode}),
             (f"over-{mode}", {"mode": mode, "oversized": True}),
-            (f"after-{mode}", {"mode": "echo"}),
+            (f"after-{mode}", {"mode": "get" if mode == "get" else "echo", "echo": True}),
         ]:
             messages.append(
                 {
@@ -68,9 +69,9 @@ def main():
             deadline = time.monotonic() + 15
             while b"\n" not in buffered:
                 remaining = deadline - time.monotonic()
-                assert (
-                    remaining > 0 and select.select([output_pipe], [], [], remaining)[0]
-                ), "MCP response timed out"
+                assert remaining > 0 and select.select([output_pipe], [], [], remaining)[0], (
+                    "MCP response timed out"
+                )
                 chunk = os.read(output_pipe.fileno(), 65536)
                 assert chunk, "relay closed while awaiting a response"
                 buffered.extend(chunk)
@@ -108,9 +109,9 @@ def main():
     assert len(refusals) == 2, f"expected two local refusals, got {len(refusals)}"
     assert all("not forwarded" in response["error"]["message"] for response in refusals)
     assert "never-forward" not in known
-    assert len(known) == 7, f"expected all seven correlated responses, got {len(known)}"
+    assert len(known) == 10, f"expected all ten correlated responses, got {len(known)}"
     expected = "r" * text_bytes
-    for mode, identity in [("json", json_id), ("sse", sse_id)]:
+    for mode, identity in modes:
         exact = known[identity]
         assert "error" not in exact, exact.get("error")
         assert exact["result"]["content"] == [{"type": "text", "text": expected}], (
@@ -125,7 +126,7 @@ def main():
         json.dumps(
             {
                 "boundary_bytes": text_bytes,
-                "complete_modes": ["json", "sse"],
+                "complete_modes": ["json", "sse", "get"],
                 "local_refusals": len(refusals),
             }
         )
