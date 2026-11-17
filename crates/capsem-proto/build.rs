@@ -10,6 +10,8 @@
 mod agent_access_limits;
 #[path = "build/approval_limits.rs"]
 mod approval_limits;
+#[path = "build/catalog_limits.rs"]
+mod catalog_limits;
 #[path = "build/environment_limits.rs"]
 mod environment_limits;
 #[path = "build/runtime_limits.rs"]

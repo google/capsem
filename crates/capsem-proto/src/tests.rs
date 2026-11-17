@@ -1,13 +1,14 @@
 use super::*;
 
+mod catalog_limits;
 mod dns_frames;
+mod environment_limits;
 mod exec_output_protocol;
 mod frame_limits;
 mod mcp_frames;
 mod snapshot;
 mod sparse;
 mod update_limits;
-mod environment_limits;
 mod validation;
 
 // -------------------------------------------------------------------
@@ -685,7 +686,6 @@ fn one_mib_file_content_fits_in_frame() {
 // -------------------------------------------------------------------
 // Constants
 // -------------------------------------------------------------------
-
 
 // -------------------------------------------------------------------
 // File event edge cases

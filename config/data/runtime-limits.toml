@@ -146,3 +146,22 @@ max_mcp_tool_overrides = 1024
 max_package_registries = 64
 max_configuration_entries = 256
 max_configuration_text_bytes = 16384
+
+# OCI catalog documents are bounded before decoding. Entry and metadata caps
+# also bound deterministic discovery/search and preset expansion. Skills are
+# published and retrieved as complete UTF-8 file dictionaries; never truncated.
+[catalog]
+max_document_bytes = 1048576
+max_entries = 4096
+max_identifier_bytes = 64
+max_name_bytes = 128
+max_version_bytes = 128
+max_description_bytes = 4096
+max_tags = 32
+max_tag_bytes = 64
+max_provenance_bytes = 1024
+max_rule_parameters = 64
+max_skill_files = 128
+max_skill_path_bytes = 256
+max_skill_file_bytes = 262144
+max_skill_total_bytes = 524288
