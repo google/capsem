@@ -626,3 +626,5 @@ mod history;
 mod request_history;
 
 mod warc;
+
+mod capabilities;
