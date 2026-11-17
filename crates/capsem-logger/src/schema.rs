@@ -16,6 +16,7 @@ static MEMORY_SCHEMA_LOCK: Mutex<()> = Mutex::new(());
 const SECURITY_EVENT_TYPE_CHECK: &str =
     "CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask', 'network.connect', 'network.connect_result', 'network.close', 'network.lifecycle', 'network.probe', 'network.probe_result'))";
 mod ddl;
+mod environment;
 mod integrity;
 pub use ddl::CREATE_SCHEMA;
 
@@ -41,6 +42,7 @@ pub fn validate_existing_host_schema(conn: &Connection) -> rusqlite::Result<()> 
             "obsolete host hash-chain schema; a current ledger is required",
         ));
     }
+    environment::assert_current(conn)?;
     transport::assert_current(conn)?;
     security_event_types::assert_current(conn)?;
     integrity::validate(conn)?;
@@ -72,6 +74,11 @@ pub(crate) fn create_tables_with_archive_header(
     }
     let has_archive_state = matches!(status, ArchiveSchemaStatus::Current(_));
 
+    // Existing files must pass before any CREATE IF NOT EXISTS can erase
+    // the distinction between absent history and a genuinely fresh ledger.
+    if has_archive_state {
+        environment::assert_current(conn)?;
+    }
     conn.execute_batch("BEGIN IMMEDIATE")?;
     let created = (|| {
         conn.execute_batch(CREATE_SCHEMA)?;
@@ -153,7 +160,7 @@ fn recorded_rows(conn: &Connection) -> rusqlite::Result<Option<(&'static str, i6
         // Bookkeeping rows every ledger is created with are not activity.
         if matches!(
             *table,
-            "archive_state" | "ledger_counters" | "transport_events" | "transport_schema"
+            "archive_state" | "ledger_counters" | "transport_events" | "transport_schema" | "environment_schema"
         ) {
             continue;
         }
@@ -362,6 +369,8 @@ pub use pragmas::{apply_pragmas, apply_reader_pragmas, record_sqlite_mmap_teleme
 /// runs `quick_check` over the whole file before it is trusted.
 pub fn validate_ready_schema(conn: &Connection) -> Result<(), String> {
     validate_required_columns(conn)?;
+
+    environment::assert_current(conn).map_err(|error| error.to_string())?;
 
     // A CHECK constraint is not a column, so the loop above cannot see a
     // security ledger that was declared against an older list of event types.

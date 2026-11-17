@@ -4,6 +4,7 @@ use rusqlite::OpenFlags;
 mod admission;
 mod archive;
 mod decision_lookup;
+mod environment;
 mod integrity;
 
 fn columns_for_schema(conn: &Connection, schema: &str, table: &str) -> BTreeSet<String> {

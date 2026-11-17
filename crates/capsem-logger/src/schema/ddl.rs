@@ -5,6 +5,7 @@
 //! module is behavior -- creation, the writer's memory schema -- and this is the
 //! contract those behaviors operate on.
 //!
+//! This batch includes the environment declarations in `environment.sql`.
 //! It is the only place a session table is defined. `schema::migrate` used to
 //! be a second one: seventy `let _ = conn.execute("ALTER TABLE ... ADD COLUMN
 //! ...")` statements whose results were discarded, which on an older file
@@ -14,7 +15,7 @@
 
 // Digest checks use exact byte lengths and 64 individual hex characters.
 // GLOB '[0-9a-f]*' checks only the first character; text length ignores a NUL suffix.
-pub const CREATE_SCHEMA: &str = "
+pub const CREATE_SCHEMA: &str = concat!("
     CREATE TABLE IF NOT EXISTS net_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         event_id TEXT NOT NULL DEFAULT (lower(hex(randomblob(6)))) CHECK (length(CAST(event_id AS BLOB)) = 12 AND event_id GLOB '[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]'),
@@ -599,7 +600,7 @@ pub const CREATE_SCHEMA: &str = "
     CREATE INDEX IF NOT EXISTS idx_dns_events_event_id ON dns_events(event_id);
     CREATE INDEX IF NOT EXISTS idx_audit_events_event_id ON audit_events(event_id);
     CREATE INDEX IF NOT EXISTS idx_substitution_events_event_id ON substitution_events(event_id);
-";
+", include_str!("environment.sql"));
 
 /// The transport ledger, created once and thereafter only asserted.
 ///

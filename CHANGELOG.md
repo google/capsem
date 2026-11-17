@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: An explicit environment format in the machine ledger, with revision, request, application, retention-reference and purge state tables. Refuse incompatible or damaged environment history before schema DDL.
+
 - Added: Typed canonical environment documents and editable specifications with shared limits, pinned image/repository identities, separate credential-binding references, fork-lineage checks, and redacted diagnostics.
 
 - Fix failed doctor cleanup to use authenticated named local administration with the selected gateway credential, stop its VM, and retain failure logs and ledger evidence. Remote gateway connections cannot clean up local sessions.
