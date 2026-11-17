@@ -2,6 +2,8 @@
 //! metadata use these identities; options are specific to each built-in.
 use crate::{DetectionLevel, SecurityPluginMode};
 use serde::{Deserialize, Serialize};
+mod descriptors;
+pub use descriptors::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

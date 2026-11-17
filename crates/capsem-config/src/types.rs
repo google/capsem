@@ -276,6 +276,7 @@ pub struct SettingMetadata {
 }
 
 /// Schema definition for a setting (loaded from defaults.toml at compile time).
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SettingDef {
     pub id: String,
     pub category: String,
