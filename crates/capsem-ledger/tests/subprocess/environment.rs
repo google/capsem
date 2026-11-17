@@ -3,6 +3,8 @@ use super::*;
 
 #[path = "../../src/codec/implementation.rs"]
 mod native_codecs;
+#[path = "environment/reads.rs"]
+mod reads;
 use capsem_config::environment::EnvironmentSpecification;
 use capsem_logger::events::environment::purge::*;
 use capsem_logger::events::environment::request::*;
@@ -324,6 +326,7 @@ async fn executable_variable_purge_recompresses_native_history_and_recovers_dura
     )
     .await;
     let client = worker.maintainer(2, &database).await;
+    reads::complete(&client).await;
     // Independent read-only oracle and generation lease live in the test
     // process, proving reclamation observes a different process's open reader.
     let conn = rusqlite::Connection::open_with_flags(&database, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
@@ -356,6 +359,7 @@ async fn executable_variable_purge_recompresses_native_history_and_recovers_dura
     };
     let pending = client.purge_variable_history(execution.clone()).await.unwrap();
     assert_eq!(pending.state, EnvironmentVariablePurgeState::ReclaimPending);
+    reads::partial(&client, EnvironmentVariablePurgeState::ReclaimPending).await;
     assert!(old_path.exists());
     // Restart while another process still leases the old generation. Recovery
     // must preserve the published generation and the outstanding reclamation.
@@ -370,6 +374,7 @@ async fn executable_variable_purge_recompresses_native_history_and_recovers_dura
     let resumed = client.purge_variable_history(execution.clone()).await.unwrap();
     assert_eq!(resumed.state, EnvironmentVariablePurgeState::ReclaimPending);
     assert_eq!(resumed.new_generation_id, pending.new_generation_id);
+    reads::partial(&client, EnvironmentVariablePurgeState::ReclaimPending).await;
     assert!(old_path.exists());
     let captured = old_reader
         .read_bounded(
@@ -393,6 +398,7 @@ async fn executable_variable_purge_recompresses_native_history_and_recovers_dura
     drop(old_reader);
     let complete = client.purge_variable_history(execution.clone()).await.unwrap();
     assert_eq!(complete.state, EnvironmentVariablePurgeState::Committed);
+    reads::partial(&client, EnvironmentVariablePurgeState::Committed).await;
     assert!(!old_path.exists());
     assert_eq!(complete.new_generation_id, pending.new_generation_id);
     for n in [3, 5] {
@@ -477,6 +483,8 @@ async fn executable_variable_purge_recompresses_native_history_and_recovers_dura
     let restarted = Worker::start(&database, 0x73).await;
     let client = restarted.maintainer(1, &database).await;
     assert_eq!(client.purge_variable_history(execution).await.unwrap(), complete);
+    reads::partial(&client, EnvironmentVariablePurgeState::Committed).await;
+    reads::refuses_replay(&restarted, &database).await;
     assert_eq!(client.read_bodies("000000000003").await.unwrap().len(), 1);
     drop(client);
     restarted.stop().await;
