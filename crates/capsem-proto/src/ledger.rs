@@ -11,9 +11,10 @@ use thiserror::Error;
 
 /// Version of the ledger handshake, request envelopes and logger-owned
 /// operation/reply enums. Bump it when any of those wire shapes changes.
-/// Version 5 adds required archived environment snapshots and revision transitions.
+/// Version 6 includes durable request deadlines/invalidation, acknowledged
+/// application compositions and exact variable-purge intents beyond v5 revisions.
 /// Logger-owned operation semantics are not covered by the declaration hash.
-pub const LEDGER_PROTOCOL_VERSION: u16 = 5;
+pub const LEDGER_PROTOCOL_VERSION: u16 = 6;
 /// Hash of ledger wire declarations, separate from the guest protocol hash.
 pub const LEDGER_SCHEMA_HASH: u64 = include!(concat!(env!("OUT_DIR"), "/ledger_schema_hash.txt"));
 /// Largest diagnostic admitted into a response.

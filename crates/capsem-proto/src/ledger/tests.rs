@@ -147,3 +147,26 @@ fn pre_environment_ledger_peers_are_rejected_before_admission() {
         })
     );
 }
+
+#[test]
+fn revision_only_ledger_peers_are_rejected_before_admission() {
+    let expected = grant(LedgerClientRole::VmOwner);
+    let mut hello = LedgerHello::for_grant(&expected);
+    hello.protocol_version = 5;
+    assert_eq!(
+        expected.validate_hello(&hello),
+        Err(LedgerHandshakeError::ProtocolVersion {
+            expected: LEDGER_PROTOCOL_VERSION,
+            actual: 5,
+        })
+    );
+    let mut welcome = LedgerWelcome::for_grant(&expected);
+    welcome.protocol_version = 5;
+    assert_eq!(
+        expected.validate_welcome(&welcome),
+        Err(LedgerHandshakeError::ProtocolVersion {
+            expected: LEDGER_PROTOCOL_VERSION,
+            actual: 5,
+        })
+    );
+}
