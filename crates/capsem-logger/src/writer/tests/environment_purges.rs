@@ -301,7 +301,10 @@ async fn variable_purge_plan_covers_a_fork_result_proposal_without_purging_paren
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("host.db");
     let writer = owner(&path, true).await;
-    let draft = toml::from_str(&format!("name='development'\n[variables]\nWRONG='{SELECTED}'\n")).unwrap();
+    let draft = toml::from_str(&format!(
+        "name='development'\n[variables]\nWRONG='{SELECTED}'\nKEEP='unrelated value'\n"
+    ))
+    .unwrap();
     durable(
         &writer,
         WriteOp::PrepareEnvironmentRequest(PreparedEnvironmentRequest {

@@ -44,6 +44,27 @@ fn existing(conn: &Connection, id: &str) -> rusqlite::Result<Option<ExistingRequ
     }).optional()
 }
 
+fn required_payload(
+    conn: &Connection,
+    request: &ExistingRequest,
+    bodies: &BodyArchive,
+) -> rusqlite::Result<EnvironmentRequestPayload> {
+    let bytes = bodies.read_required_bytes(conn, &request.payload_event_id, ENVIRONMENT_REQUEST_SOURCE)?;
+    let payload: EnvironmentRequestPayload =
+        rmp_serde::from_slice(&bytes).map_err(|_| invalid("invalid archived environment request payload"))?;
+    if payload.kind() != request.kind {
+        return Err(invalid(
+            "environment request kind metadata does not match its archived intent",
+        ));
+    }
+    if payload.source_revision() != request.source.as_ref() {
+        return Err(invalid(
+            "environment request source metadata does not match its archived intent",
+        ));
+    }
+    Ok(payload)
+}
+
 fn reason(value: &str) -> bool {
     !value.trim().is_empty() && value.len() <= capsem_proto::APPROVAL_CONTEXT_BYTES && !value.contains('\0')
 }
@@ -316,6 +337,7 @@ pub(super) fn require_approved(conn: &Connection, id: &str) -> rusqlite::Result<
 pub(super) fn require_revision_request(
     conn: &Connection,
     record: &crate::events::PreparedEnvironmentRevision,
+    bodies: &BodyArchive,
 ) -> rusqlite::Result<()> {
     let Some(id) = &record.request_id else {
         return Ok(());
@@ -346,6 +368,23 @@ pub(super) fn require_revision_request(
             "environment revision does not match its approved target and base",
         ));
     }
+    // Approval freezes complete canonical content, including every host pin.
+    // Typed archive decoding is owned here; no route/cache can substitute a
+    // refreshed selector or a different specification under the same request.
+    let payload = required_payload(conn, &old, bodies)?;
+    let matches = match payload {
+        EnvironmentRequestPayload::Change { specification }
+        | EnvironmentRequestPayload::ImageUpdate { specification } => specification == record.specification,
+        EnvironmentRequestPayload::Promotion { source } => {
+            super::environment::committed_specification(conn, &source, bodies)? == *record.specification
+        }
+        EnvironmentRequestPayload::Apply { .. } => false,
+    };
+    if !matches {
+        return Err(invalid(
+            "environment revision content differs from its approved request",
+        ));
+    }
     Ok(())
 }
 
@@ -369,14 +408,7 @@ pub(super) fn bind_result(
         }
         return Err(invalid("environment request result is immutable"));
     }
-    let bytes = bodies.read_required_bytes(conn, &old.payload_event_id, ENVIRONMENT_REQUEST_SOURCE)?;
-    let payload: EnvironmentRequestPayload =
-        rmp_serde::from_slice(&bytes).map_err(|_| invalid("invalid archived environment request payload"))?;
-    if payload.source_revision() != old.source.as_ref() {
-        return Err(invalid(
-            "environment request source metadata does not match its archived intent",
-        ));
-    }
+    let payload = required_payload(conn, &old, bodies)?;
     let (parent, request_id) = committed_reference(conn, &record.result, true)?;
     match payload {
         EnvironmentRequestPayload::Apply { revision, .. } if revision == record.result => {}
@@ -479,14 +511,7 @@ pub(super) fn require_application_target(
             "application desired revision is not the approved request result",
         ));
     }
-    let bytes = bodies.read_required_bytes(conn, &old.payload_event_id, ENVIRONMENT_REQUEST_SOURCE)?;
-    let payload: EnvironmentRequestPayload =
-        rmp_serde::from_slice(&bytes).map_err(|_| invalid("invalid archived environment request payload"))?;
-    if payload.kind() != old.kind || payload.source_revision() != old.source.as_ref() {
-        return Err(invalid(
-            "environment request metadata does not match its archived intent",
-        ));
-    }
+    let payload = required_payload(conn, &old, bodies)?;
     match payload {
         EnvironmentRequestPayload::Apply { targets, .. } if targets.contains(target) => Ok(()),
         EnvironmentRequestPayload::Change { .. } | EnvironmentRequestPayload::ImageUpdate { .. }

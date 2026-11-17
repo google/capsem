@@ -161,6 +161,14 @@ fn commit(record: &crate::events::PreparedEnvironmentRevision) -> WriteOp {
         actor: "operator".into(),
     })
 }
+fn requested_revision(environment: u64, number: u64) -> crate::events::PreparedEnvironmentRevision {
+    let mut result = revision(environment, number);
+    let EnvironmentRequestPayload::Change { specification } = *proposal().payload else {
+        unreachable!()
+    };
+    result.specification = specification;
+    result
+}
 async fn committed(writer: &DbWriter, record: &crate::events::PreparedEnvironmentRevision) {
     durable(writer, WriteOp::PrepareEnvironmentRevision(record.clone())).await;
     durable(writer, commit(record)).await;
@@ -184,7 +192,7 @@ async fn approved_request_binds_one_committed_result_and_retries_its_original_pr
     let writer = DbWriter::open(&path, 16).unwrap();
     let request = proposal();
     durable(&writer, WriteOp::PrepareEnvironmentRequest(request.clone())).await;
-    let mut created = revision(2, 3);
+    let mut created = requested_revision(2, 3);
     created.request_id = Some(request.request_id.clone());
     rejected(&writer, WriteOp::PrepareEnvironmentRevision(created.clone())).await;
     durable(
@@ -376,7 +384,7 @@ async fn agent_result_is_a_fork_of_its_exact_request_base() {
     )
     .await;
     rejected(&writer, WriteOp::EnvironmentRequestResult(result(2, 3))).await;
-    let mut fork = revision(6, 7);
+    let mut fork = requested_revision(6, 7);
     fork.fork_parent = Some(crate::events::EnvironmentRevisionParent {
         environment_id: id(2),
         revision_id: id(3),
@@ -684,13 +692,13 @@ async fn approved_request_cannot_prepare_another_environment_or_a_second_revisio
         WriteOp::EnvironmentRequestDecision(decision(EnvironmentRequestDecisionKind::Approve)),
     )
     .await;
-    let mut wrong = revision(99, 100);
+    let mut wrong = requested_revision(99, 100);
     wrong.request_id = Some(id(1));
     rejected(&writer, WriteOp::PrepareEnvironmentRevision(wrong)).await;
-    let mut correct = revision(2, 3);
+    let mut correct = requested_revision(2, 3);
     correct.request_id = Some(id(1));
     committed(&writer, &correct).await;
-    let mut second = revision(2, 4);
+    let mut second = requested_revision(2, 4);
     second.previous_revision_id = Some(id(3));
     second.request_id = Some(id(1));
     rejected(&writer, WriteOp::PrepareEnvironmentRevision(second)).await;
@@ -714,7 +722,7 @@ async fn approved_agent_request_cannot_prepare_an_edit_to_its_parent() {
         WriteOp::EnvironmentRequestDecision(decision(EnvironmentRequestDecisionKind::Approve)),
     )
     .await;
-    let mut parent_edit = revision(2, 8);
+    let mut parent_edit = requested_revision(2, 8);
     parent_edit.previous_revision_id = Some(id(3));
     parent_edit.request_id = Some(id(1));
     rejected(&writer, WriteOp::PrepareEnvironmentRevision(parent_edit)).await;

@@ -106,6 +106,16 @@ fn committed_parent(
     Ok(parent)
 }
 
+pub(super) fn committed_specification(
+    conn: &Connection,
+    reference: &EnvironmentRevisionParent,
+    bodies: &BodyArchive,
+) -> rusqlite::Result<capsem_config::environment::EnvironmentSpecification> {
+    let revision = committed_parent(conn, &reference.environment_id, &reference.revision_id, true)?;
+    let bytes = bodies.read_required_bytes(conn, &revision.payload_event_id, ENVIRONMENT_REVISION_SOURCE)?;
+    rmp_serde::from_slice(&bytes).map_err(|_| invalid("invalid archived committed environment specification"))
+}
+
 pub(super) fn prepare_revision(
     conn: &Connection,
     record: &PreparedEnvironmentRevision,
@@ -141,7 +151,7 @@ pub(super) fn prepare_revision(
         }
         return Ok(());
     }
-    super::environment_requests::require_revision_request(conn, record)?;
+    super::environment_requests::require_revision_request(conn, record, bodies)?;
     super::environment_references::check_current(conn, &record.environment_id, record.previous_revision_id.as_deref())?;
     let inflight: bool = conn.query_row("SELECT EXISTS(SELECT 1 FROM main.environment_revisions WHERE environment_id=?1 AND state='committing' UNION ALL SELECT 1 FROM mem.environment_revisions WHERE environment_id=?1 AND state='committing')", [&record.environment_id], |row| row.get(0))?;
     if inflight {

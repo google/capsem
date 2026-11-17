@@ -366,7 +366,7 @@ async fn approved_agent_fork_application_binds_only_its_exact_requester() {
     approval.request_id = id(40);
     approval.timestamp_unix_ms = 41;
     durable(&writer, WriteOp::EnvironmentRequestDecision(approval)).await;
-    let mut fork = revision(6, 7);
+    let mut fork = requested_revision(6, 7);
     fork.fork_parent = Some(reference(2, 3));
     fork.request_id = Some(id(40));
     fork.timestamp_unix_ms = 42;
