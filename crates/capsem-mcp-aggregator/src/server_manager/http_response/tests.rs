@@ -5,6 +5,78 @@ use std::sync::{
     Arc,
 };
 
+#[tokio::test]
+async fn usable_sse_payload_excludes_prefixes_line_endings_and_metadata() {
+    for input in [
+        "data: éé\r\n\r\n",
+        "event:x\nid: 7\ndata: éé\n\n",
+        "data:a\ndata:bc\n\n",
+    ] {
+        let expected = if input.contains("é") { "éé" } else { "a\nbc" };
+        for split in 0..=input.len() {
+            let bytes = Bytes::copy_from_slice(input.as_bytes());
+            let chunks = [bytes.slice(..split), bytes.slice(split..)];
+            let received: Vec<_> = sse(stream::iter(chunks.map(Ok::<_, io::Error>)), 4).collect().await;
+            assert_eq!(received.len(), 1, "split {split}: {received:?}");
+            assert_eq!(
+                received.into_iter().next().unwrap().unwrap().data.as_deref(),
+                Some(expected)
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn initial_bom_empty_data_lines_and_keepalives_preserve_the_exact_payload() {
+    for (input, expected) in [
+        ("\u{feff}data: éé\r\n\r\n", "éé"),
+        ("data:\n:keep\ndata:\n:keep\ndata:\ndata:\ndata:\n\n", "\n\n\n\n"),
+    ] {
+        for split in 0..=input.len() {
+            let bytes = Bytes::copy_from_slice(input.as_bytes());
+            let chunks = [bytes.slice(..split), bytes.slice(split..)];
+            let received: Vec<_> = sse(stream::iter(chunks.map(Ok::<_, io::Error>)), 4).collect().await;
+            assert_eq!(received.len(), 1, "split {split}: {received:?}");
+            assert_eq!(
+                received.into_iter().next().unwrap().unwrap().data.as_deref(),
+                Some(expected)
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn shared_payload_boundary_has_the_same_usable_bytes_in_http_and_sse() {
+    let limit = capsem_proto::MCP_PAYLOAD_MAX_BYTES;
+    let data = "x".repeat(limit);
+    let input = Bytes::from(format!("data: {data}\r\n\r\n"));
+    let chunks: Vec<_> = (0..input.len())
+        .step_by(8192)
+        .map(|start| Ok::<_, io::Error>(input.slice(start..(start + 8192).min(input.len()))))
+        .collect();
+    let mut received = sse(stream::iter(chunks), limit);
+    assert_eq!(
+        received.next().await.unwrap().unwrap().data.as_deref(),
+        Some(data.as_str())
+    );
+    assert!(received.next().await.is_none());
+    let response = http::Response::new(reqwest::Body::from(data));
+    assert_eq!(body(response.into(), limit).await.unwrap().len(), limit);
+}
+
+#[tokio::test]
+async fn comment_and_metadata_lines_remain_bounded_without_a_terminator() {
+    for input in [":xxxxxxxxxxx", "id:xxxxxxxxx"] {
+        let chunks = stream::iter([Ok::<_, io::Error>(Bytes::from_static(input.as_bytes()))]).chain(stream::pending());
+        let mut received = sse(chunks, 4);
+        assert!(tokio::time::timeout(std::time::Duration::from_secs(1), received.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .is_err());
+    }
+}
+
 fn response(chunks: Vec<&'static str>, length: Option<u64>) -> reqwest::Response {
     let body = reqwest::Body::wrap_stream(stream::iter(
         chunks.into_iter().map(|chunk| Ok::<_, io::Error>(Bytes::from(chunk))),
@@ -60,14 +132,14 @@ async fn events(chunks: Vec<&'static str>, limit: usize) -> Vec<Result<Sse, SseE
 
 #[tokio::test]
 async fn an_unterminated_sse_line_is_bounded_before_parsing() {
-    let received = events(vec!["data:12345"], 8).await;
+    let received = events(vec!["data:123456789"], 8).await;
     assert!(matches!(received.as_slice(), [Err(_)]), "{received:?}");
 }
 
 #[tokio::test]
 async fn multiline_data_and_intervening_comments_cannot_bypass_the_event_limit() {
     for chunks in [vec!["data:a\n", "data:b\n"], vec!["data:abc\n", ":ok\n", "data:x\n"]] {
-        let received = events(chunks, 10).await;
+        let received = events(chunks, 2).await;
         assert!(matches!(received.as_slice(), [Err(_)]), "{received:?}");
     }
 }
@@ -92,7 +164,7 @@ async fn an_oversized_body_does_not_wait_for_eof() {
 
 #[tokio::test]
 async fn an_oversized_sse_event_drops_its_stream_without_another_read() {
-    let chunks = stream::iter([Ok::<_, io::Error>(Bytes::from("data:12345"))]).chain(stream::pending());
+    let chunks = stream::iter([Ok::<_, io::Error>(Bytes::from("data:123456789"))]).chain(stream::pending());
     let mut events = sse(chunks, 8);
     let first = tokio::time::timeout(std::time::Duration::from_secs(1), events.next())
         .await

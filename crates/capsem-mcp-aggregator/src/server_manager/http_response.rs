@@ -40,20 +40,34 @@ pub(super) async fn body(response: reqwest::Response, limit: usize) -> io::Resul
     Ok(body)
 }
 
-/// SSE accounting follows rmcp 3.10's client_side_sse admission rules
-/// (Apache-2.0 OR MIT): retain complete data fields, discard complete comments,
-/// and treat CRLF as one line ending even across transport chunks.
+/// Count normalized data bytes before handing chunks to sse-stream. Prefixes,
+/// optional spaces and CRLF do not consume the usable JSON-RPC payload budget.
+/// A separate derived wire allowance bounds parser storage for framing and
+/// metadata; comments are bounded per line and do not accumulate per event.
 #[derive(Default)]
 struct EventSize {
     retained: usize,
     line: usize,
     comment: bool,
     after_cr: bool,
+    prefix: [u8; 5],
+    payload: usize,
+    data_lines: usize,
+    bom_prefix: usize,
+    bom_checked: bool,
 }
 
 impl EventSize {
     fn observe(&mut self, bytes: &[u8], limit: usize) -> io::Result<()> {
         for &byte in bytes {
+            if !self.bom_checked {
+                if byte == b"\xef\xbb\xbf"[self.bom_prefix] {
+                    self.bom_prefix += 1;
+                    self.bom_checked = self.bom_prefix == 3;
+                    continue;
+                }
+                self.bom_checked = true;
+            }
             if self.after_cr {
                 self.after_cr = false;
                 if byte == b'\n' {
@@ -64,8 +78,13 @@ impl EventSize {
                 b'\r' | b'\n' => {
                     if self.line == 0 {
                         self.retained = 0;
+                        self.payload = 0;
+                        self.data_lines = 0;
                     } else if !self.comment {
                         self.retained = self.retained.saturating_add(self.line).saturating_add(1);
+                        if self.line >= 5 && &self.prefix == b"data:" {
+                            self.data_lines = self.data_lines.saturating_add(1);
+                        }
                     }
                     self.line = 0;
                     self.comment = false;
@@ -76,9 +95,24 @@ impl EventSize {
                         self.comment = byte == b':';
                     }
                     self.line = self.line.saturating_add(1);
+                    if self.line <= 5 {
+                        self.prefix[self.line - 1] = byte;
+                        if self.line == 5 && &self.prefix == b"data:" && self.data_lines > 0 {
+                            self.payload = self.payload.saturating_add(1);
+                        }
+                    } else if &self.prefix == b"data:" && !(self.line == 6 && byte == b' ') {
+                        self.payload = self.payload.saturating_add(1);
+                    }
                 }
             }
-            if self.retained.saturating_add(self.line) > limit {
+            // Each normalized byte can occupy a separate "data: \n" line.
+            // One extra line accounts for the final omitted data newline;
+            // metadata shares this physical envelope rather than payload space.
+            let wire_limit = limit.saturating_add(1).saturating_mul(b"data: \n".len());
+            if self.payload > limit
+                || self.line > limit.saturating_add(b"data: ".len())
+                || self.retained.saturating_add(self.line) > wire_limit
+            {
                 return Err(too_large(limit));
             }
         }

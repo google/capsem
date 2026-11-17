@@ -175,7 +175,7 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
             last_event_id,
             auth_header,
             custom_headers,
-            capsem_proto::MCP_FRAME_MAX_SIZE,
+            capsem_proto::MCP_PAYLOAD_MAX_BYTES,
         )
         .await
     }
@@ -224,7 +224,7 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
         }
         Ok(http_response::sse(
             response.bytes_stream(),
-            max_sse_event_size.min(capsem_proto::MCP_FRAME_MAX_SIZE),
+            max_sse_event_size.min(capsem_proto::MCP_PAYLOAD_MAX_BYTES),
         ))
     }
 
@@ -268,7 +268,7 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
             session_id,
             auth_header,
             custom_headers,
-            capsem_proto::MCP_FRAME_MAX_SIZE,
+            capsem_proto::MCP_PAYLOAD_MAX_BYTES,
         )
         .await
     }
@@ -341,7 +341,7 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
             .map(|value| value.to_string());
 
         if !status.is_success() {
-            let bytes = http_response::body(response, capsem_proto::MCP_FRAME_MAX_SIZE)
+            let bytes = http_response::body(response, capsem_proto::MCP_PAYLOAD_MAX_BYTES)
                 .await
                 .map_err(StreamableHttpError::Client)?;
             let body = String::from_utf8_lossy(&bytes);
@@ -364,13 +364,13 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
                 Ok(StreamableHttpPostResponse::Sse(
                     http_response::sse(
                         response.bytes_stream(),
-                        max_sse_event_size.min(capsem_proto::MCP_FRAME_MAX_SIZE),
+                        max_sse_event_size.min(capsem_proto::MCP_PAYLOAD_MAX_BYTES),
                     ),
                     session_id,
                 ))
             }
             Some(ct) if ct.as_bytes().starts_with(JSON_MIME_TYPE.as_bytes()) => {
-                let bytes = http_response::body(response, capsem_proto::MCP_FRAME_MAX_SIZE)
+                let bytes = http_response::body(response, capsem_proto::MCP_PAYLOAD_MAX_BYTES)
                     .await
                     .map_err(StreamableHttpError::Client)?;
                 match serde_json::from_slice::<ServerJsonRpcMessage>(&bytes) {

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed: MCP HTTP and SSE response admission preserves the shared usable payload allowance, with separately bounded SSE framing and metadata.
+
 - Fixed: MCP HTTP capabilities enforce the shared usable payload ceiling before forwarding, independently of framing overhead.
 
 - Fixed: Guest MCP input is bounded while reading, rejects invalid correlation IDs before forwarding, and recovers at the next line without truncating valid requests.
