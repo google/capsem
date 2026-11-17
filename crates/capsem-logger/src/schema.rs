@@ -17,6 +17,7 @@ const SECURITY_EVENT_TYPE_CHECK: &str =
     "CHECK (event_type IN ('http.request', 'model.call', 'mcp.tool_call', 'mcp.tool_list', 'mcp.event', 'dns.query', 'file.event', 'file.import', 'file.export', 'process.exec', 'process.exec_complete', 'process.audit', 'credential.substitution', 'security.rule', 'security.ask', 'network.connect', 'network.connect_result', 'network.close', 'network.lifecycle', 'network.probe', 'network.probe_result'))";
 mod ddl;
 mod environment;
+pub(crate) use environment::is_pre_environment_ledger;
 mod integrity;
 pub use ddl::CREATE_SCHEMA;
 

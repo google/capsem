@@ -44,7 +44,7 @@ fn a_pre_v4_ledger_is_kept_aside_and_a_fresh_one_opens() {
                 .is_some_and(|name| name.starts_with("main.db.pre-v4-"))
         })
         .expect("the old ledger is kept");
-    let old = Connection::open(kept).unwrap();
+    let old = Connection::open(kept.join("main.db")).unwrap();
     let domain: String = old
         .query_row("SELECT domain FROM net_events", [], |row| row.get(0))
         .unwrap();
@@ -83,4 +83,138 @@ fn a_broken_current_ledger_still_fails_and_stays() {
         .expect("a ledger with no archive row is refused");
     assert!(error.to_string().contains("exactly one row, found 0"), "{error}");
     assert!(aside_files(dir.path()).is_empty());
+}
+
+fn pre_environment_ledger(path: &Path) {
+    drop(DbWriter::open(path, 8).unwrap());
+    let conn = Connection::open(path).unwrap();
+    conn.pragma_update(None, "foreign_keys", false).unwrap();
+    let tables = conn
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name GLOB 'environment_*'")
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(0))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    for table in tables {
+        conn.execute_batch(&format!("DROP TABLE {table}")).unwrap();
+    }
+    conn.execute(
+        "INSERT INTO host_events(timestamp_unix_ms,kind,actor,detail) VALUES(1,'service_started','operator',?1)",
+        [b"preserved-history".as_slice()],
+    )
+    .unwrap();
+}
+
+#[test]
+fn pre_environment_cohort_is_preserved_before_fresh_writer_opens() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("main.db");
+    pre_environment_ledger(&path);
+    let archive = super::archive_path_for_db(&path);
+    let canary = archive.join("preserved-cohort-canary");
+    std::fs::write(&canary, b"archive must remain exact").unwrap();
+    drop(DbWriter::open(&path, 8).expect("released pre-environment ledger must not prevent startup"));
+    let kept = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("main.db.pre-environment-")
+        })
+        .expect("old database kept");
+    let old = Connection::open(kept.join("main.db")).unwrap();
+    assert_eq!(
+        old.query_row("SELECT detail FROM host_events", [], |row| row.get::<_, Vec<u8>>(0))
+            .unwrap(),
+        b"preserved-history"
+    );
+    let kept_archive = kept.join("main.bodies");
+    assert_eq!(
+        std::fs::read(kept_archive.join("preserved-cohort-canary")).unwrap(),
+        b"archive must remain exact"
+    );
+    assert!(!canary.exists());
+    let fresh = Connection::open(&path).unwrap();
+    crate::schema::validate_existing_host_schema(&fresh).unwrap();
+    assert_eq!(
+        fresh
+            .query_row("SELECT COUNT(*) FROM host_events", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn missing_old_tables_and_partial_environment_formats_are_not_reset() {
+    for damage in [
+        "DROP TABLE host_events",
+        "CREATE TABLE environment_schema(id INTEGER PRIMARY KEY,version INTEGER)",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("main.db");
+        pre_environment_ledger(&path);
+        Connection::open(&path).unwrap().execute_batch(damage).unwrap();
+        assert!(DbWriter::open(&path, 8).is_err(), "damaged history was reset: {damage}");
+        assert!(!std::fs::read_dir(dir.path()).unwrap().any(|entry| entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains(".pre-environment-")));
+    }
+}
+
+#[test]
+fn interrupted_preservation_refuses_a_fresh_writer_even_if_database_already_moved() {
+    for database_present in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("main.db");
+        if database_present {
+            pre_archive_ledger(&path);
+        }
+        let pending = super::with_suffix(&path, ".set-aside-pending");
+        std::fs::create_dir(&pending).unwrap();
+        let error = DbWriter::open(&path, 8)
+            .err()
+            .expect("interrupted cohort must fail closed");
+        assert!(error.to_string().contains("interrupted ledger preservation"));
+        assert_eq!(path.exists(), database_present);
+    }
+}
+
+#[test]
+fn preserved_database_reads_committed_history_still_in_its_wal() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("main.db");
+    pre_environment_ledger(&path);
+    let connection = Connection::open(&path).unwrap();
+    connection.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
+    connection
+        .execute(
+            "INSERT INTO host_events(timestamp_unix_ms,kind,actor,detail) VALUES(2,'service_stopped','operator',?1)",
+            [b"wal-only-history".as_slice()],
+        )
+        .unwrap();
+    assert!(super::with_suffix(&path, "-wal").is_file());
+    let _lock = crate::writer::writer_lock::acquire(&path).unwrap();
+    let kept = super::set_aside_pre_archive_ledger(&path).unwrap().unwrap();
+    assert!(
+        super::with_suffix(&kept, "-wal").is_file(),
+        "SQLite must find the preserved WAL beside its database"
+    );
+    let reader = Connection::open(&kept).unwrap();
+    assert_eq!(
+        reader
+            .query_row("SELECT detail FROM host_events WHERE timestamp_unix_ms=2", [], |row| {
+                row.get::<_, Vec<u8>>(0)
+            })
+            .unwrap(),
+        b"wal-only-history"
+    );
+    // Keep the original connection alive until after recovery was proved: its
+    // last close would otherwise checkpoint and hide a broken companion name.
+    drop(reader);
+    drop(connection);
 }
