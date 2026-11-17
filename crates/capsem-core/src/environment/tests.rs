@@ -141,4 +141,5 @@ fn environment_change_impact_preserves_mixed_timing_and_ignores_revision_identit
     // with only live content must not manufacture a workload restart.
 }
 
+mod mcp_permissions;
 mod policy_inputs;
