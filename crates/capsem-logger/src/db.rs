@@ -126,6 +126,10 @@ pub(crate) struct ReaderIntrospection {
 }
 
 enum ReadRequest {
+    EnvironmentRevisions {
+        query: EnvironmentRevisionQuery,
+        reply: tokio::sync::oneshot::Sender<DbResult<Observed<Vec<EnvironmentRevisionRecord>>>>,
+    },
     Ready {
         /// Carries whether the ledger changed since the worker last looked, so
         /// the handle can expire read caches keyed on its epochs.
@@ -834,7 +838,9 @@ impl SessionDb {
 }
 
 mod bodies;
+mod environment;
 mod host;
+pub use environment::{EnvironmentRevisionQuery, EnvironmentRevisionRecord};
 mod hot_counters;
 mod maintenance;
 mod reader_worker;

@@ -50,6 +50,15 @@ pub(super) fn reader_loop(
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
         match request {
+            ReadRequest::EnvironmentRevisions { query, reply } => {
+                let result = observe_change(&reader).and_then(|observed| {
+                    environment::execute(&reader, &query).map(|value| Observed {
+                        changed: commit(&reader, observed),
+                        value,
+                    })
+                });
+                let _ = reply.send(result);
+            }
             ReadRequest::Ready { reply } => {
                 let started = Instant::now();
                 let result =
