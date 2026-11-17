@@ -126,6 +126,14 @@ pub(crate) fn test_state(
     let managed = managed_routes::Runtime::open(&run_dir, Default::default()).unwrap();
     let connections =
         connection_routes::Runtime::new(run_dir.join("credentials/broker.json"), managed.grant_authority());
+    let host_ledger = test_host_ledger(&run_dir);
+    let environment_files =
+        capsem_service::environment_files::EnvironmentFiles::open(&run_dir.parent().unwrap().join("environments"))
+            .unwrap();
+    let environments = Arc::new(capsem_service::environment_revisions::EnvironmentRevisions::new(
+        Arc::new(environment_files),
+        Arc::clone(&host_ledger),
+    ));
     ServiceState {
         managed,
         connections,
@@ -158,7 +166,8 @@ pub(crate) fn test_state(
         asset_status_path: asset_status_path_for_run_dir(&run_dir),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         plugin_policy_cache: GenerationCache::new("service.plugin_policy"),
-        host_ledger: test_host_ledger(&run_dir),
+        host_ledger,
+        environments,
         host_stats: Mutex::new(Default::default()),
         last_defunct_reconcile_ms: AtomicU64::new(0),
         containers: Default::default(),
@@ -755,3 +764,4 @@ fn terminal_metadata_is_in_inventory_and_invalidates_its_runtime_snapshot() {
         .revision += 1;
     assert_ne!(list_response_fingerprint(&state), before);
 }
+mod environment_runtime;

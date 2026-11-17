@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- Added: An environment revision coordinator with durable prepare, atomic TOML publication, per-environment serialization, cancellation-safe jobs and explicit recovery without a second journal.
+- Added: An environment revision coordinator with durable prepare, atomic TOML publication, per-environment serialization, cancellation-safe jobs and startup recovery without a second journal.
 
 - Added: Corporate skill, rule and MCP catalog source overrides with per-catalog system priority, OCI validation and refusal of overrides in ordinary user settings.
 

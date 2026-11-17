@@ -35,6 +35,36 @@ flowchart LR
 
 Environment variables can override the default settings and corp paths for testing.
 
+## Environment revision storage
+
+The service owns each environment's current document at
+`~/.capsem/environments/<id>/environment.toml`. Its identity and specification
+must match a complete committed revision in the logger-owned
+`~/.capsem/sessions/host.db`. Revision time comes from that ledger record.
+Hand-edited, missing, oversized or linked files cannot become current authority.
+
+```mermaid
+stateDiagram-v2
+  [*] --> Committing: persist prepared revision
+  Committing --> Committed: durably publish TOML
+  Committing --> Committed: recovery verifies prepared file
+  Committing --> RecoveredUnapplied: recovery verifies predecessor
+  RecoveredUnapplied --> Committing: explicit operator retry
+```
+
+One coordinator serializes each environment's commits and reads. It flushes
+the prepared revision before publishing the complete TOML file through a held
+private-directory descriptor, then commits the ledger row. Dropping a request's
+response does not cancel accepted work. Independent environments can progress
+concurrently.
+
+Before serving, startup recovery reads pending revisions in bounded cursor
+pages. A missing, unknown or mismatched file leaves the affected revision
+pending and reports an explicit failure. Other environments remain independent.
+History and recovery facts stay in the existing ledger and archive; there is no
+second journal or service-owned history cache. Purging a historical variable
+value requires first removing that value from the current configuration.
+
 ## Settings Grammar
 
 The settings TOML uses a formal grammar with four node types, distinguished by key presence:

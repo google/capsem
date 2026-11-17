@@ -252,6 +252,16 @@ async fn start_and_serve(args: Args, run_dir: PathBuf, on_ready: impl FnOnce(Arc
     // directory placed elsewhere (a short socket path under /tmp) once put
     // every such service on one shared ledger.
     let host_ledger = host_ledger::open_host_ledger(&capsem_foundation::paths::capsem_sessions_dir())?;
+    let environment_directory = capsem_foundation::paths::capsem_home().join("environments");
+    let environment_files = tokio::task::spawn_blocking(move || {
+        capsem_service::environment_files::EnvironmentFiles::open(&environment_directory)
+    })
+    .await
+    .context("open environment files worker")??;
+    let environments = Arc::new(capsem_service::environment_revisions::EnvironmentRevisions::new(
+        Arc::new(environment_files),
+        Arc::clone(&host_ledger),
+    ));
     let managed = managed_routes::Runtime::open(
         &run_dir,
         capsem_core::net::policy_config::load_managed_session_policy().map_err(anyhow::Error::msg)?,
@@ -290,6 +300,7 @@ async fn start_and_serve(args: Args, run_dir: PathBuf, on_ready: impl FnOnce(Arc
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         plugin_policy_cache: GenerationCache::new("service.plugin_policy"),
         host_ledger,
+        environments,
         host_stats: Mutex::new(Default::default()),
         last_defunct_reconcile_ms: AtomicU64::new(0),
         containers: Default::default(),
@@ -313,6 +324,17 @@ async fn start_and_serve(args: Args, run_dir: PathBuf, on_ready: impl FnOnce(Arc
         _test_tempdir: None,
     });
 
+    let recovery = state
+        .environments
+        .reconcile_pending(policy_mutation::unix_timestamp_ms())
+        .wait()
+        .await?;
+    info!(
+        committed = recovery.committed,
+        recovered_unapplied = recovery.recovered_unapplied,
+        failed = recovery.failed,
+        "environment startup reconciliation finished"
+    );
     state.hydrate_session_db_handles().await;
     state.hydrate_host_stats().await?;
     state

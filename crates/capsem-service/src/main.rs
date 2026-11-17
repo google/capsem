@@ -264,6 +264,8 @@ pub struct ServiceState {
     /// events and policy mutations. Routes call `write`; they must never open
     /// SQLite directly or hold a side `DbWriter`.
     host_ledger: Arc<capsem_logger::DbHandle>,
+    /// Owns current environment publication and recovery using the host ledger.
+    environments: Arc<capsem_service::environment_revisions::EnvironmentRevisions>,
     /// The `/stats` fold of the host ledger, see `host_ledger.rs`.
     host_stats: Mutex<host_ledger::HostStats>,
     /// Last wall-clock millisecond when preserved boot logs were scanned for

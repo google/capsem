@@ -43,6 +43,43 @@ struct Fixture {
     root: tempfile::TempDir,
     owner: Arc<EnvironmentRevisions>,
 }
+
+#[tokio::test]
+async fn environment_startup_recovery_pages_pending_rows_and_isolates_missing_files() {
+    let f = Fixture::new();
+    f.owner.commit(revision(1, 2, None), 10).wait().await.unwrap();
+    f.prepare(revision(1, 3, Some(2))).await;
+    let published = revision(8, 9, None);
+    f.prepare(published.clone()).await;
+    f.owner.files.publish_document(document(&published)).await.unwrap();
+    f.prepare(revision(10, 11, None)).await;
+    let summary = f.owner.recover_pending_owned(20, 1).await.unwrap();
+    assert_eq!(
+        summary,
+        RecoverySummary {
+            committed: 1,
+            recovered_unapplied: 1,
+            failed: 1
+        }
+    );
+    assert_eq!(f.state(3).await, EnvironmentRevisionState::RecoveredUnapplied);
+    assert_eq!(f.owner.load_current(&id(8)).await.unwrap().revision.revision_id, id(9));
+    assert!(f.owner.load_current(&id(10)).await.is_err());
+    let pending = f
+        .owner
+        .ledger
+        .environment_revisions(EnvironmentRevisionQuery::Page {
+            environment_id: None,
+            state: Some(EnvironmentRevisionState::Committing),
+            after_id: 0,
+            limit: 10,
+        })
+        .await
+        .unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].environment_id, id(10));
+    assert_eq!(f.owner.reconcile_pending(21).wait().await.unwrap().failed, 1);
+}
 impl Fixture {
     fn new() -> Self {
         let root = tempfile::tempdir().unwrap();

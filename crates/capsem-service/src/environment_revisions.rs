@@ -15,6 +15,8 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 use tokio::sync::oneshot;
+mod startup;
+pub use startup::RecoverySummary;
 
 /// Dropping the response cannot abort the accepted coordinator operation.
 pub struct RevisionJob<T> {
