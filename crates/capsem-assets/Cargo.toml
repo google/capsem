@@ -10,6 +10,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+capsem-proto = { path = "../capsem-proto" }
 capsem-crypto = { path = "../capsem-crypto" }
 anyhow = { workspace = true }
 capsem-foundation = { path = "../capsem-foundation" }

@@ -4,5 +4,6 @@
 //! dependencies on VM, policy, database, MCP, or application layers.
 
 pub mod asset_manager;
+pub mod catalogs;
 pub mod manifest_compat;
 pub mod oci;

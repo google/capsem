@@ -709,6 +709,7 @@ dependencies = [
  "axum",
  "capsem-crypto",
  "capsem-foundation",
+ "capsem-proto",
  "futures",
  "oci-client",
  "reqwest 0.12.28",

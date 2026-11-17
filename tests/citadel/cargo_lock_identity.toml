@@ -1,2 +1,2 @@
-sha256 = "091b02ddf75e7fa894bdc7499c01b936cb80963c0ce7e550c957149f9597817e"
-reason = "Deliberately update only async-executor1.14.0 to1.14.1 for the upstream use-after-free fix in the Linux desktop dependency chain. This invalidates native/guest builder caches for subsequent native qualification. The client-only continuation retains original qualified0.7.2 archives and native source f2b2a6d9b28d4582aec86b8911af388cf38c88ee; no already-public native package is rebuilt or relabeled. Earlier zstd and OCI security upgrades remain."
+sha256 = "a8451f3ba64b998b0551bbaa44a786421a10e38aef521c2e311321db81fd3be7"
+reason = "Deliberately add only the capsem-assets -> capsem-proto edge for shared catalog source descriptors, preserving the assets/config dependency boundary and all prior security upgrades. No third-party package versions change; guest/native builder caches are intentionally invalidated."
