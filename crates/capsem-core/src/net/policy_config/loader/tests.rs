@@ -1,5 +1,6 @@
 use super::*;
 use std::collections::HashMap;
+mod catalog_sources;
 
 #[test]
 fn enforcing_policy_refuses_any_broken_corporate_file() {

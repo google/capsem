@@ -230,8 +230,9 @@ manifests, OBOMs, and build ledgers.
 ### Admin Provisioning Trust Chain
 
 Corporate provisioning is corp-config driven. Do not put signing keys,
-catalog channels, build knobs, or release-process metadata inside `corp.toml`;
-it should only describe runtime behavior.
+build knobs, or release-process metadata inside `corp.toml`; it should only
+describe runtime behavior. Environment catalog source overrides belong in
+its typed `catalogs` section; catalog contents remain independent OCI data.
 
 The release and runtime evidence chain is:
 

@@ -103,6 +103,7 @@ fn has_scheme_authority_prefix(value: &str, scheme: &str) -> bool {
 /// Validate that a string is valid corp TOML (parseable as SettingsFile).
 pub fn validate_corp_toml(content: &str) -> Result<SettingsFile> {
     let file: SettingsFile = toml::from_str(content).context("invalid corp TOML")?;
+    crate::environment::validate_corporate_catalog_sources(&file).map_err(anyhow::Error::msg)?;
     super::loader::reject_retired_ai_setting_ids_in_content("corp TOML", content).map_err(anyhow::Error::msg)?;
     Ok(file)
 }

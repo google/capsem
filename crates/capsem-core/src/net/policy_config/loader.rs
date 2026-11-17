@@ -83,6 +83,7 @@ fn resolve_settings_document(path: &Path, mut file: SettingsFile) -> Result<Sett
     }
     file.validate_metadata_contract()
         .map_err(|e| format!("failed to validate {}: {e}", path.display()))?;
+    crate::environment::validate_corporate_catalog_sources(&file)?;
     Ok(file)
 }
 
@@ -339,6 +340,20 @@ fn merge_corp_files(files: impl IntoIterator<Item = SettingsFile>) -> SettingsFi
         // Image policy: first non-None wins, and replaces the user's.
         if corp.images.is_none() && file.images.is_some() {
             corp.images = file.images;
+        }
+        // Each catalog is independent; the first declared corporate source
+        // wins for that kind, without erasing lower-priority unrelated kinds.
+        if let Some(sources) = file.catalogs {
+            let target = corp.catalogs.get_or_insert_with(Default::default);
+            if target.skills.is_none() {
+                target.skills = sources.skills;
+            }
+            if target.rules.is_none() {
+                target.rules = sources.rules;
+            }
+            if target.mcp.is_none() {
+                target.mcp = sources.mcp;
+            }
         }
         if corp.managed_sessions.is_none() {
             corp.managed_sessions = file.managed_sessions;

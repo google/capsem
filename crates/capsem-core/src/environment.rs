@@ -4,6 +4,9 @@ use capsem_config::environment::EnvironmentSpecification;
 
 mod policy_inputs;
 pub use policy_inputs::EnvironmentPolicyInputs;
+mod catalog_sources;
+pub use catalog_sources::effective_catalog_source;
+pub(crate) use catalog_sources::validate_corporate_catalog_sources;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EnvironmentChangeKind {

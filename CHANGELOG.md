@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Corporate skill, rule and MCP catalog source overrides with per-catalog system priority, OCI validation and refusal of overrides in ordinary user settings.
+
 - Added: Optional skill, rule and MCP catalog source descriptors in release manifests, with OCI validation and preservation across binary and runtime releases.
 
 - Fixed: Enforce the shared package-registry selection count in environment drafts and canonical documents and expose the same limit to editors.

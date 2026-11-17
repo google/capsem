@@ -50,6 +50,7 @@ These preferences do not grant worker permissions or override security rules.
 | `profiles.rules` | User rule group; see [Enforcement rules](/reference/enforcement-rules/). |
 | `corp.rules` | Corporate rule group; cannot be minted by a user rule file. |
 | `images` | Catalog selection, permitted fetch sources, and admitted images. Corporate image policy replaces the user's section. |
+| `catalogs` | Corporate source replacements for environment skill, rule and MCP catalogs. These descriptors reference independently published OCI data. |
 | `network` | Router, DNS, supported upstream ports, and capture bounds. |
 | `managed_sessions` | Service-owned temporary VM lease/cleanup limits. |
 | `plugins` | Plugin mode and detection level; plugin decisions may tighten enforcement. |
@@ -63,6 +64,29 @@ Each runtime receives an acknowledged policy revision. Proxy reloads install
 one immutable revision for routing, DNS, plugins, provider identity, and
 response processing. Credential admission checks both the acknowledged runtime
 policy and current policy.
+
+## Environment catalog sources
+
+The selected release manifest may declare skill, rule and MCP catalog sources.
+An administrator can replace each source independently in `corp.toml`:
+
+```toml
+[catalogs.skills]
+reference = "registry.example/capsem/skills:approved"
+schema_version = 1
+
+[catalogs.mcp]
+reference = "registry.example/capsem/mcp:approved"
+schema_version = 1
+```
+
+Ordinary `settings.toml` cannot define this section. System corporate sources
+win conflicts with user-provisioned corporate sources for the same catalog;
+an unspecified catalog can still come from the lower-priority corporate file
+or the selected release manifest. A failing corporate source does not fall
+back to the public catalog. A source absent from both inputs is unavailable.
+Changing a source or refreshing discovery does not change approved environment
+selections. Catalog bytes are published independently of binary/runtime releases.
 
 ## Validation and schema
 
