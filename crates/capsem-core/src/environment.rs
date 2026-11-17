@@ -2,6 +2,9 @@
 //! Comparing bounded typed content never confers caller or revision authority.
 use capsem_config::environment::EnvironmentSpecification;
 
+mod policy_inputs;
+pub use policy_inputs::EnvironmentPolicyInputs;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EnvironmentChangeKind {
     Name,

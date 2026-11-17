@@ -140,3 +140,5 @@ fn environment_change_impact_preserves_mixed_timing_and_ignores_revision_identit
     // Revision IDs are intentionally absent from the inputs: a new revision
     // with only live content must not manufacture a workload restart.
 }
+
+mod policy_inputs;
