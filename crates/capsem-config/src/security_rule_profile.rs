@@ -6,6 +6,8 @@ use crate::condition::{evaluate_condition_with, validate_condition_with, Compile
 use crate::types::{default_true, PolicySubject};
 use crate::validation::{validate_identifier, validate_non_empty, validate_policy_target};
 
+mod environment;
+pub use environment::CompiledEnvironmentDetectionRule;
 mod sigma;
 use sigma::SigmaRule;
 

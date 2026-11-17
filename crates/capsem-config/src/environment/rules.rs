@@ -74,7 +74,6 @@ fn definition(id: &str, name: &str, condition: &str) -> Result<(), String> {
         || name.trim().is_empty()
         || !text(name, capsem_proto::ENVIRONMENT_MAX_NAME_BYTES)
         || !text(condition, capsem_proto::ENVIRONMENT_MAX_RULE_BYTES)
-        || crate::security_rule_profile::validate_security_event_match(condition).is_err()
     {
         return Err("invalid environment custom rule".into());
     }
@@ -119,18 +118,29 @@ pub(super) fn access<'a, C>(
 ) -> Result<(), String> {
     parameters(section, selected)?;
     for (id, rule) in &section.custom {
-        definition(id, &rule.name, &rule.condition)?;
+        rule.validate(id)?;
+    }
+    Ok(())
+}
+impl EnvironmentAccessRule {
+    pub(crate) fn validate_structure(&self, id: &str) -> Result<(), String> {
+        definition(id, &self.name, &self.condition)?;
         if !matches!(
-            rule.action,
+            self.action,
             SecurityRuleAction::Allow | SecurityRuleAction::Ask | SecurityRuleAction::Block
-        ) || rule
+        ) || self
             .priority
             .is_some_and(|priority| !(USER_PRIORITY_MIN..=USER_PRIORITY_MAX).contains(&priority))
         {
             return Err("environment access rules require a user priority and allow, ask or block".into());
         }
+        Ok(())
     }
-    Ok(())
+    pub fn validate(&self, id: &str) -> Result<(), String> {
+        self.validate_structure(id)?;
+        crate::security_rule_profile::validate_security_event_match(&self.condition)
+            .map_err(|_| "invalid environment access rule condition".into())
+    }
 }
 pub(super) fn detection<'a, C>(
     section: &EnvironmentDetectionRules<C>,
@@ -138,7 +148,17 @@ pub(super) fn detection<'a, C>(
 ) -> Result<(), String> {
     parameters(section, selected)?;
     for (id, rule) in &section.custom {
-        definition(id, &rule.name, &rule.condition)?;
+        rule.validate(id)?;
     }
     Ok(())
+}
+impl EnvironmentDetectionRule {
+    pub(crate) fn validate_structure(&self, id: &str) -> Result<(), String> {
+        definition(id, &self.name, &self.condition)
+    }
+    pub fn validate(&self, id: &str) -> Result<(), String> {
+        self.validate_structure(id)?;
+        crate::security_rule_profile::validate_security_event_match(&self.condition)
+            .map_err(|_| "invalid environment detection rule condition".into())
+    }
 }

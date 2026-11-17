@@ -124,3 +124,66 @@ fn environment_rule_counts_and_parameter_collections_enforce_exact_bounds() {
     values.push("extra".into());
     assert!(draft.validate().is_err());
 }
+
+#[test]
+fn environment_access_rules_compile_with_user_priority_and_environment_provenance() {
+    let rule: EnvironmentAccessRule =
+        toml::from_str("name='Network'\naction='block'\npriority=25\nmatch='http.host == \"blocked.example\"'")
+            .unwrap();
+    let compiled = crate::CompiledSecurityRule::from_environment_access("network", &rule).unwrap();
+    assert_eq!(compiled.rule_id, "environment.access.network");
+    assert_eq!(compiled.namespace, "environment.access");
+    assert_eq!(compiled.provider, "environment");
+    assert_eq!(compiled.priority, 25);
+    assert!(!compiled.corp_locked && !compiled.default_rule);
+    let blocked = serde_json::json!({"http":{"host":"blocked.example"}});
+    assert!(compiled.matches_security_event(&blocked).unwrap());
+    assert!(!compiled
+        .matches_security_event(&serde_json::json!({"http":{"host":"other.example"}}))
+        .unwrap());
+    let mut disabled = rule.clone();
+    disabled.enabled = false;
+    let rules = crate::SecurityRuleSet::new(vec![crate::CompiledSecurityRule::from_environment_access(
+        "network", &disabled,
+    )
+    .unwrap()]);
+    assert!(rules.evaluate(&blocked).unwrap().matched_rules().is_empty());
+    let mut corp = rule.clone();
+    corp.priority = Some(-10);
+    assert!(crate::CompiledSecurityRule::from_environment_access("network", &corp).is_err());
+    let mut invalid = rule;
+    invalid.condition = "untrusted.field == \"condition-value-canary\"".into();
+    assert!(
+        !crate::CompiledSecurityRule::from_environment_access("network", &invalid)
+            .unwrap_err()
+            .contains("condition-value-canary")
+    );
+}
+
+#[test]
+fn environment_detection_compilation_reports_severity_without_an_access_action() {
+    let mut rule: EnvironmentDetectionRule =
+        toml::from_str("name='Observe'\nlevel='high'\nmatch='http.host == \"observed.example\"'").unwrap();
+    let compiled = crate::CompiledEnvironmentDetectionRule::new("observe", &rule).unwrap();
+    assert_eq!(compiled.rule_id, "environment.detection.observe");
+    let event = serde_json::json!({"http":{"host":"observed.example"}});
+    assert_eq!(compiled.evaluate(&event).unwrap(), Some(crate::DetectionLevel::High));
+    assert_eq!(
+        compiled
+            .evaluate(&serde_json::json!({"http":{"host":"other.example"}}))
+            .unwrap(),
+        None
+    );
+    rule.enabled = false;
+    assert_eq!(
+        crate::CompiledEnvironmentDetectionRule::new("observe", &rule)
+            .unwrap()
+            .evaluate(&event)
+            .unwrap(),
+        None
+    );
+    rule.condition = "unknown.field == \"condition-value-canary\"".into();
+    assert!(!crate::CompiledEnvironmentDetectionRule::new("observe", &rule)
+        .unwrap_err()
+        .contains("condition-value-canary"));
+}
