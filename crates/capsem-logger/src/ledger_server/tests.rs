@@ -365,7 +365,7 @@ async fn environment_authority_cannot_be_forged_by_producer_admission() {
     use crate::events::environment::request::{EnvironmentRequestDecision, EnvironmentRequestDecisionKind};
     use crate::events::{EnvironmentRevisionState, EnvironmentRevisionTransition};
     let id = |n: u64| format!("00000000-0000-4000-8000-{n:012x}");
-    let operations = vec![
+    let mut operations = vec![
         WriteOp::EnvironmentRevisionTransition(EnvironmentRevisionTransition {
             environment_id: id(2),
             revision_id: id(3),
@@ -389,6 +389,21 @@ async fn environment_authority_cannot_be_forged_by_producer_admission() {
             actor: "operator".into(),
         }),
     ];
+    operations.extend(
+        crate::HostEventKind::ALL
+            .into_iter()
+            .filter(|kind| kind.as_str().starts_with("environment_"))
+            .map(|kind| {
+                WriteOp::HostEvent(crate::HostEvent {
+                    timestamp_unix_ms: 10,
+                    kind,
+                    session_id: None,
+                    actor: "operator".into(),
+                    detail: vec![0x80],
+                    trace_id: None,
+                })
+            }),
+    );
     let dir = tempfile::tempdir().unwrap();
     let server = Arc::new(LedgerServer::open(&dir.path().join("session.db")).unwrap());
     for role in [
@@ -513,3 +528,45 @@ async fn coordinator_environment_mutations_keep_the_existing_durability_path() {
 mod purge;
 
 mod environment;
+
+#[tokio::test]
+async fn coordinator_environment_audit_evidence_remains_durable() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Arc::new(LedgerServer::open(&dir.path().join("session.db")).unwrap());
+    let (sender, receiver, task) = connect(Arc::clone(&server), grant(LedgerClientRole::Coordinator)).await;
+    let events = crate::HostEventKind::ALL
+        .into_iter()
+        .filter(|kind| kind.as_str().starts_with("environment_"))
+        .map(|kind| {
+            WriteOp::HostEvent(crate::HostEvent {
+                timestamp_unix_ms: 10,
+                kind,
+                session_id: None,
+                actor: "operator".into(),
+                detail: vec![0x80],
+                trace_id: None,
+            })
+        })
+        .collect::<Vec<_>>();
+    let count = events.len();
+    assert!(
+        matches!(request(&sender,&receiver,1,LedgerCommand::AdmitBatch {events}).await,LedgerReply::AcceptedBatch {accepted,..} if usize::from(accepted)==count)
+    );
+    assert!(matches!(
+        request(&sender, &receiver, 2, LedgerCommand::Flush).await,
+        LedgerReply::Durable { .. }
+    ));
+    let rows = server
+        .db
+        .query(
+            "SELECT COUNT(*) FROM host_events WHERE actor='operator' AND kind LIKE 'environment_%'",
+            &[],
+        )
+        .await
+        .unwrap();
+    let rows: serde_json::Value = serde_json::from_str(&rows).unwrap();
+    assert_eq!(rows["rows"][0][0].as_u64(), Some(count as u64));
+    drop(sender);
+    drop(receiver);
+    task.await.unwrap().unwrap();
+}
