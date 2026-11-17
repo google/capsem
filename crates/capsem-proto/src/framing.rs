@@ -45,9 +45,17 @@ pub fn is_frame_too_large(error: &io::Error) -> bool {
 // Vec's ordinary amortized growth may double a nearly complete final frame
 // beyond its budget for one small trailing field. Keep amortization, capped at
 // the selected final ceiling, without eagerly allocating MAX_FRAME_SIZE per ping.
-struct FinalBuffer<'a> {
+pub struct FinalBuffer<'a> {
     bytes: &'a mut Vec<u8>,
     maximum: usize,
+}
+
+impl<'a> FinalBuffer<'a> {
+    /// Borrow final storage with checked, capped allocation growth. The caller
+    /// retains the buffer and can append protocol fragments without a copy.
+    pub fn new(bytes: &'a mut Vec<u8>, maximum: usize) -> Self {
+        Self { bytes, maximum }
+    }
 }
 
 impl Write for FinalBuffer<'_> {
