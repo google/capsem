@@ -29,6 +29,7 @@ mod environment;
 mod environment_applications;
 mod environment_references;
 mod environment_retention;
+mod environment_purges;
 mod environment_requests;
 mod legacy;
 mod model_rows;
@@ -236,6 +237,7 @@ pub enum WriteOp {
     EnvironmentRequestInvalidation(crate::events::environment::request::EnvironmentRequestInvalidation),
     EnvironmentSandboxReference(crate::events::environment::EnvironmentSandboxReferenceMutation),
     EnvironmentApplication(crate::events::environment::application::EnvironmentApplicationMutation),
+    PrepareEnvironmentVariablePurge(crate::events::environment::purge::PreparedEnvironmentVariablePurge),
     /// Registry rows of a network database; upserted by key, disk-only.
     Network(NetworkRecord),
     NetworkMembership(NetworkMembership),

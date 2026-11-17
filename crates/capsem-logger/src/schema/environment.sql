@@ -147,14 +147,18 @@ CREATE TABLE IF NOT EXISTS environment_variable_purges (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     purge_id TEXT NOT NULL UNIQUE,
     environment_id TEXT NOT NULL,
+    source_revision_id TEXT NOT NULL,
     variable_name TEXT NOT NULL,
     timestamp_unix_ms INTEGER NOT NULL,
     actor TEXT NOT NULL,
     state TEXT NOT NULL CHECK (state IN ('prepared','rewriting','committed','reclaim_pending','failed')),
     old_generation_id BLOB CHECK (old_generation_id IS NULL OR length(old_generation_id)=16),
     new_generation_id BLOB CHECK (new_generation_id IS NULL OR length(new_generation_id)=16),
-    failure_reason TEXT
+    failure_reason TEXT,
+    FOREIGN KEY(environment_id,source_revision_id) REFERENCES environment_revisions(environment_id,revision_id)
 );
+CREATE INDEX IF NOT EXISTS idx_environment_variable_purges_state ON environment_variable_purges(state,id);
+CREATE INDEX IF NOT EXISTS idx_environment_variable_purges_environment ON environment_variable_purges(environment_id,id);
 CREATE TABLE IF NOT EXISTS environment_revision_purges (
     purge_id TEXT NOT NULL REFERENCES environment_variable_purges(purge_id),
     revision_id TEXT NOT NULL REFERENCES environment_revisions(revision_id),
@@ -162,3 +166,10 @@ CREATE TABLE IF NOT EXISTS environment_revision_purges (
 );
 CREATE INDEX IF NOT EXISTS idx_environment_revision_purges_revision
     ON environment_revision_purges(revision_id,purge_id);
+
+CREATE TABLE IF NOT EXISTS environment_request_purges (
+    purge_id TEXT NOT NULL REFERENCES environment_variable_purges(purge_id),
+    request_id TEXT NOT NULL REFERENCES environment_requests(request_id),
+    PRIMARY KEY(purge_id,request_id)
+);
+CREATE INDEX IF NOT EXISTS idx_environment_request_purges_request ON environment_request_purges(request_id,purge_id);

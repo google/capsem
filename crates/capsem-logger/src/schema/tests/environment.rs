@@ -2,6 +2,7 @@ use super::*;
 
 const ENVIRONMENT_TABLES: &[&str] = &[
     "environment_revision_purges",
+    "environment_request_purges",
     "environment_variable_purges",
     "environment_revision_references",
     "environment_applications",

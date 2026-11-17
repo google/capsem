@@ -379,6 +379,7 @@ pub(crate) const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
             "id",
             "purge_id",
             "environment_id",
+            "source_revision_id",
             "variable_name",
             "timestamp_unix_ms",
             "actor",
@@ -389,4 +390,5 @@ pub(crate) const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
         ],
     ),
     ("environment_revision_purges", &["purge_id", "revision_id"]),
+    ("environment_request_purges", &["purge_id", "request_id"]),
 ];

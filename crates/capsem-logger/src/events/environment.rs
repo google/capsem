@@ -73,6 +73,7 @@ pub struct EnvironmentRevisionTransition {
 }
 
 pub mod application;
+pub mod purge;
 pub mod request;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

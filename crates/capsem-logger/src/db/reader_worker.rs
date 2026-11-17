@@ -50,6 +50,15 @@ pub(super) fn reader_loop(
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
         match request {
+            ReadRequest::EnvironmentVariablePurges { query, reply } => {
+                let result = observe_change(&reader).and_then(|observed| {
+                    environment::purges::execute(&reader, &query).map(|value| Observed {
+                        changed: commit(&reader, observed),
+                        value,
+                    })
+                });
+                let _ = reply.send(result);
+            }
             ReadRequest::EnvironmentApplications { query, reply } => {
                 let result = observe_change(&reader).and_then(|observed| {
                     environment::applications::execute(&reader, &query).map(|value| Observed {

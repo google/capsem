@@ -172,9 +172,38 @@ impl BodyArchive {
         Some(staged)
     }
 
+    pub(in crate::writer) fn required_reader(
+        &self,
+        conn: &Connection,
+    ) -> rusqlite::Result<capsem_archive::BodyLogReader> {
+        let state = crate::schema::archive_state(conn)?;
+        let directory = self
+            .directory
+            .as_ref()
+            .ok_or_else(|| archive_contract_error("required snapshot archive is unavailable"))?;
+        let reader = capsem_archive::BodyLogReader::open_generation_with_codecs(
+            directory,
+            state.header,
+            state.committed_end,
+            self.codecs.clone(),
+        )
+        .map_err(|_| archive_contract_error("required snapshot archive cannot be opened"))?;
+        Ok(reader)
+    }
+
     pub(in crate::writer) fn read_required_bytes(
         &self,
         conn: &Connection,
+        event_id: &str,
+        source: &str,
+    ) -> rusqlite::Result<Vec<u8>> {
+        let reader = self.required_reader(conn)?;
+        Self::read_required_bytes_with_reader(conn, &reader, event_id, source)
+    }
+
+    pub(in crate::writer) fn read_required_bytes_with_reader(
+        conn: &Connection,
+        reader: &capsem_archive::BodyLogReader,
         event_id: &str,
         source: &str,
     ) -> rusqlite::Result<Vec<u8>> {
@@ -195,18 +224,6 @@ impl BodyArchive {
                 .try_into()
                 .map_err(|_| archive_contract_error("invalid snapshot length"))?,
         };
-        let state = crate::schema::archive_state(conn)?;
-        let directory = self
-            .directory
-            .as_ref()
-            .ok_or_else(|| archive_contract_error("required snapshot archive is unavailable"))?;
-        let reader = capsem_archive::BodyLogReader::open_generation_with_codecs(
-            directory,
-            state.header,
-            state.committed_end,
-            self.codecs.clone(),
-        )
-        .map_err(|_| archive_contract_error("required snapshot archive cannot be opened"))?;
         let bytes = reader
             .read(reference)
             .map_err(|_| archive_contract_error("required snapshot archive cannot be read"))?;

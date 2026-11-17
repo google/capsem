@@ -4,6 +4,7 @@ use crate::events::{EnvironmentRevisionParent, EnvironmentRevisionState};
 use serde::{Deserialize, Serialize};
 
 pub(super) mod applications;
+pub(super) mod purges;
 pub(super) mod references;
 pub(super) mod requests;
 pub(super) mod snapshot;

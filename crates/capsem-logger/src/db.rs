@@ -126,6 +126,10 @@ pub(crate) struct ReaderIntrospection {
 }
 
 enum ReadRequest {
+    EnvironmentVariablePurges {
+        query: EnvironmentVariablePurgeQuery,
+        reply: tokio::sync::oneshot::Sender<DbResult<Observed<Vec<EnvironmentVariablePurgeRecord>>>>,
+    },
     EnvironmentApplications {
         query: EnvironmentApplicationQuery,
         reply: tokio::sync::oneshot::Sender<DbResult<Observed<Vec<EnvironmentApplicationRecord>>>>,
@@ -862,6 +866,9 @@ mod environment;
 mod host;
 pub use crate::events::environment::application::EnvironmentApplicationRecord;
 pub use environment::applications::EnvironmentApplicationQuery;
+pub use crate::events::environment::purge::EnvironmentVariablePurgeRecord;
+pub use environment::purges::EnvironmentVariablePurgeQuery;
+pub(crate) use environment::purges::{decode_purge_row, PURGE_COLUMNS};
 pub(crate) use environment::applications::{decode_application_row, APPLICATION_COLUMNS};
 pub use environment::references::{EnvironmentReferenceQuery, EnvironmentReferenceRecord};
 pub use environment::requests::{EnvironmentRequestQuery, EnvironmentRequestRecord, EnvironmentRequestSnapshot};
