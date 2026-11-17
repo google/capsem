@@ -193,3 +193,48 @@ fn catalog_contents_validate_rule_presets_without_claiming_publisher_authority()
         Some(CatalogContentError::UnusableEntry)
     );
 }
+
+#[test]
+fn catalog_contents_cached_requests_bind_source_and_digest_before_io() {
+    let catalog = SkillCatalogContents::decode(source(CatalogKind::Skills), digest(), bytes()).unwrap();
+    let pin = catalog.pin("sandbox", "1.0.0").unwrap();
+    assert_eq!(
+        SkillCatalogContents::cached_request(catalog.source(), &pin).unwrap(),
+        digest()
+    );
+    assert_eq!(
+        SkillCatalogContents::cached_request(&source(CatalogKind::Rules), &pin).err(),
+        Some(CatalogContentError::WrongKind)
+    );
+    let mut changed = pin.clone();
+    changed.catalog_reference = "registry.example/other:stable".into();
+    assert_eq!(
+        SkillCatalogContents::cached_request(catalog.source(), &changed).err(),
+        Some(CatalogContentError::PinMismatch)
+    );
+    changed = pin.clone();
+    changed.resolved_digest = "private-canary".into();
+    let error = SkillCatalogContents::cached_request(catalog.source(), &changed).unwrap_err();
+    assert_eq!(error, CatalogContentError::PinMismatch);
+    assert!(!format!("{error:?} {error}").contains("canary"));
+    let descriptor = CatalogSourceDescriptor {
+        reference: format!("registry.example/catalog@{}", digest()),
+        schema_version: 1,
+    };
+    let pinned_source = ValidatedCatalogSource::new(
+        CatalogKind::Skills,
+        SelectedCatalogSource {
+            source: &descriptor,
+            origin: CatalogSourceOrigin::Corporate,
+        },
+    )
+    .unwrap();
+    changed = pin;
+    changed.catalog_reference = pinned_source.reference().to_string();
+    assert!(SkillCatalogContents::cached_request(&pinned_source, &changed).is_ok());
+    changed.resolved_digest = format!("sha256:{}", "b".repeat(64));
+    assert_eq!(
+        SkillCatalogContents::cached_request(&pinned_source, &changed).err(),
+        Some(CatalogContentError::PinMismatch)
+    );
+}

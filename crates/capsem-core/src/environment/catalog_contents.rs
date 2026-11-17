@@ -1,6 +1,6 @@
 //! OCI catalog integrity and typed content admission, never caller approval.
 use capsem_assets::{
-    catalogs::ValidatedCatalogSource,
+    catalogs::{CatalogArtifact, ValidatedCatalogSource},
     oci::{Digest, Puller},
 };
 use capsem_config::{
@@ -111,13 +111,66 @@ impl<E: CatalogContentEntry> CatalogContents<E> {
             .fetch_environment_catalog(&source, staging_parent)
             .await
             .map_err(|_| CatalogContentError::Unavailable)?;
+        Self::decode_artifact(source, artifact, None).await
+    }
+
+    /// Explicit local reads for an existing pin. The registry caller must
+    /// separately admit it against current corporate policy and all known
+    /// revocations; cached bytes never establish that authority. There is no
+    /// discovery refresh or network fallback on this path.
+    pub async fn fetch_cached(
+        puller: &Puller,
+        source: &ValidatedCatalogSource,
+        pin: &EnvironmentCatalogPin,
+        staging_parent: &Path,
+    ) -> Result<Self, CatalogContentError> {
+        let digest = Self::cached_request(source, pin)?;
+        let artifact = puller
+            .fetch_environment_catalog_cached(source, &digest, staging_parent)
+            .await
+            .map_err(|_| CatalogContentError::Unavailable)?;
+        Self::decode_artifact(source.clone(), artifact, Some(pin.clone())).await
+    }
+
+    fn cached_request(
+        source: &ValidatedCatalogSource,
+        pin: &EnvironmentCatalogPin,
+    ) -> Result<Digest, CatalogContentError> {
+        if source.kind() != E::KIND {
+            return Err(CatalogContentError::WrongKind);
+        }
+        if pin.catalog_reference != source.reference().to_string() {
+            return Err(CatalogContentError::PinMismatch);
+        }
+        let digest = Digest::parse(&pin.resolved_digest).map_err(|_| CatalogContentError::PinMismatch)?;
+        if source
+            .reference()
+            .digest()
+            .is_some_and(|declared| declared != digest.as_str())
+        {
+            return Err(CatalogContentError::PinMismatch);
+        }
+        Ok(digest)
+    }
+
+    async fn decode_artifact(
+        source: ValidatedCatalogSource,
+        artifact: CatalogArtifact,
+        selected: Option<EnvironmentCatalogPin>,
+    ) -> Result<Self, CatalogContentError> {
         if artifact.kind() != E::KIND {
             return Err(CatalogContentError::WrongKind);
         }
         let digest = artifact.digest().clone();
-        tokio::task::spawn_blocking(move || Self::decode(source, digest, artifact.into_bytes()))
-            .await
-            .map_err(|_| CatalogContentError::WorkerFailed)?
+        tokio::task::spawn_blocking(move || {
+            let contents = Self::decode(source, digest, artifact.into_bytes())?;
+            if let Some(pin) = selected {
+                contents.entry_for_pin(&pin)?;
+            }
+            Ok(contents)
+        })
+        .await
+        .map_err(|_| CatalogContentError::WorkerFailed)?
     }
 
     fn decode(source: ValidatedCatalogSource, digest: Digest, bytes: Vec<u8>) -> Result<Self, CatalogContentError> {
