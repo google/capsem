@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 pub mod builtin_ledger;
+pub mod json_rpc_wire;
 
 pub use crate::mcp::{McpAuthConfig, McpAuthKind};
 use serde::{Deserialize, Serialize};

@@ -3,18 +3,18 @@ use super::*;
 #[test]
 fn mcp_payload_limit_is_independent_of_attribution_length() {
     for process in [String::new(), "x".repeat(MCP_FRAME_MAX_PROCESS_NAME_LEN)] {
-        assert!(encode_mcp_frame_header(1, 0, &process, MCP_PAYLOAD_MAX_BYTES).is_ok());
-        assert!(encode_mcp_frame_header(1, 0, &process, MCP_PAYLOAD_MAX_BYTES + 1).is_err());
+        assert!(encode_mcp_frame_header(1, 0, &process, MCP_JSON_RPC_MAX_BYTES).is_ok());
+        assert!(encode_mcp_frame_header(1, 0, &process, MCP_JSON_RPC_MAX_BYTES + 1).is_err());
     }
 }
 
 #[test]
 fn mcp_payload_decoder_rejects_excess_even_inside_the_physical_frame_bound() {
-    let mut frame = encode_mcp_frame(1, 0, "a", &vec![b'x'; MCP_PAYLOAD_MAX_BYTES]).unwrap();
+    let mut frame = encode_mcp_frame(1, 0, "a", &vec![b'x'; MCP_JSON_RPC_MAX_BYTES]).unwrap();
     frame.push(b'x');
     let total = (frame.len() - 4) as u32;
     frame[..4].copy_from_slice(&total.to_be_bytes());
-    frame[16..20].copy_from_slice(&((MCP_PAYLOAD_MAX_BYTES + 1) as u32).to_be_bytes());
+    frame[16..20].copy_from_slice(&((MCP_JSON_RPC_MAX_BYTES + 1) as u32).to_be_bytes());
     assert!(frame.len() - 4 <= MCP_FRAME_MAX_SIZE);
     assert!(decode_mcp_frame_body(&frame[4..]).is_err());
 }
