@@ -61,6 +61,20 @@ capture_enabled=false
 }
 
 async fn assert_snapshots(client: &LedgerClient, expected: &EnvironmentSpecification) {
+    let R::Revisions { records } = client
+        .environment_read(Q::Revisions {
+            query: capsem_logger::db::EnvironmentRevisionQuery::ForRequest { request_id: id(40) },
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("native indexed request result lookup")
+    };
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].request_id, Some(id(40)));
+    assert_eq!(records[0].environment_id, id(2));
+    assert_eq!(records[0].revision_id, id(3));
+    assert_eq!(records[0].state, EnvironmentRevisionState::Committed);
     let R::RequestSnapshot {
         snapshot: Some(snapshot),
     } = client
