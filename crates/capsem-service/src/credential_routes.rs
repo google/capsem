@@ -55,6 +55,15 @@ pub(crate) async fn inject(
 /// Called before declaring readiness, including after resume/restart. No
 /// credentials means no IPC work. File-backed material uses the existing store.
 pub(crate) async fn sync_memory(state: &Arc<ServiceState>, socket: &StdPath) -> Result<(), String> {
+    let owner = owner_connection::OwnerConnection::acquire(state, socket)?;
+    sync_owner_memory(state, &owner).await
+}
+
+pub(crate) async fn sync_owner_memory(
+    state: &Arc<ServiceState>,
+    owner: &owner_connection::OwnerConnection,
+) -> Result<(), String> {
+    owner.validate(state, false)?;
     let credentials = CredentialStore::global().memory_credentials()?;
     if credentials.is_empty() {
         return Ok(());
@@ -63,7 +72,7 @@ pub(crate) async fn sync_memory(state: &Arc<ServiceState>, socket: &StdPath) -> 
     let command = ServiceToProcess::InjectCredentials { id, credentials };
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        vm_files::send_ipc_command(state, socket, command, Some(5)),
+        vm_files::send_owner_command(state, owner, command, Some(5)),
     )
     .await;
     match result {

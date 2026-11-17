@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Security: Pin exec preparation, readiness credential handoff, and command dispatch to the original VM owner generation, refusing session replacement during asynchronous waits.
+
 - Security: Require explicit operator-issued delegated access for host MCP startup and programmatic servers; remove operator token-file/environment discovery and keep capabilities out of argv.
 
 - Added: TypeScript SDK `delegatedBearer` constructs explicitly scoped gateway credentials using the existing managed identity and capability formats, without local operator discovery.

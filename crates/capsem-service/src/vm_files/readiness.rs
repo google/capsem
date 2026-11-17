@@ -68,3 +68,18 @@ pub(crate) fn vm_ready_poll_opts(timeout_secs: u64) -> capsem_foundation::poll::
         ..capsem_foundation::poll::PollOpts::new("vm-ready", std::time::Duration::from_secs(timeout_secs))
     }
 }
+
+/// Exec retains one admitted generation across readiness and credential sync.
+pub(crate) async fn wait_for_owner_ready(
+    state: &Arc<ServiceState>,
+    owner: &owner_connection::OwnerConnection,
+    timeout_secs: u64,
+) -> Result<(), String> {
+    owner.validate(state, false)?;
+    tokio::select! {
+        result = wait_for_vm_ready(&owner.uds_path, timeout_secs, None, None) => result?,
+        () = owner.revoked() => return Err("VM owner ended before signalling ready".into()),
+    }
+    owner.validate(state, false)?;
+    crate::credential_routes::sync_owner_memory(state, owner).await
+}

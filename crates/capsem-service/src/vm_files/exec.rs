@@ -17,20 +17,27 @@ pub(crate) async fn handle_exec(
 ) -> Result<Json<ExecResponse>, AppError> {
     let timeout_secs =
         capsem_api::exec_timeout_secs(payload.timeout_secs).map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e))?;
-    let uds_path = running_uds_path(&state, &id)?;
+    // Capture before preparation yields: a reused id/path cannot retarget exec.
+    let owner = {
+        let instances = state.instances.lock().unwrap();
+        let instance = instances.get(&id).ok_or_else(|| AppError::vm_not_found(&id))?;
+        let owner = owner_connection::OwnerConnection::capture(instance);
+        drop(instances);
+        owner.map_err(|error| AppError::new(StatusCode::SERVICE_UNAVAILABLE, error))?
+    };
     let target = capsem_api::exec_target(
         payload.target,
         crate::container_setup::runs_container(&state, &id).await,
     )
     .map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e))?;
 
-    wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&id))
+    super::readiness::wait_for_owner_ready(&state, &owner, 30)
         .await
         .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
-    let res = send_ipc_command(
+    let res = send_owner_command(
         &state,
-        &uds_path,
+        &owner,
         ServiceToProcess::Exec {
             id: state.next_job_id(),
             command: payload.command,
@@ -67,3 +74,6 @@ pub(crate) fn proto_exec_target(target: capsem_api::ExecTarget) -> capsem_proto:
         capsem_api::ExecTarget::Vm => capsem_proto::ipc::ExecTarget::Vm,
     }
 }
+
+#[cfg(test)]
+mod tests;
