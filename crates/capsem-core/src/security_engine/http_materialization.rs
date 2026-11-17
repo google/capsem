@@ -49,6 +49,11 @@ pub(crate) fn materialize_http_request_for_upstream_with_credentials(
     };
 
     if !event.action_trace.contains(&PolicyActionId::CredentialBrokerSubstitute) {
+        if crate::credential_broker::has_brokered_http_references(&request.headers, request.query.as_deref()) {
+            return Err(SecurityActionError::new(
+                "opaque credential reference requires credential broker substitution",
+            ));
+        }
         return Ok(MaterializedHttpRequest {
             headers: request.headers.clone(),
             query: request.query.clone(),

@@ -1,16 +1,47 @@
 use super::*;
 
 #[test]
-fn http_materializer_without_substitute_action_keeps_reference() {
+fn http_materializer_without_substitute_action_refuses_references() {
     let (event, reference, _raw, _tmp, _store_guard, _user_config_guard, _lock) = brokered_anthropic_header_event();
+    for domain in ["api.anthropic.com", "unbound.example"] {
+        for (header, query) in [
+            (Some(reference.clone()), None),
+            (Some(format!("Bearer {reference}")), None),
+            (Some(format!(" bearer {reference} ")), None),
+            (None, Some(format!("key={reference}"))),
+            (
+                None,
+                Some(format!("other=ordinary&key={}", reference.replace(':', "%3A"))),
+            ),
+        ] {
+            let mut request_event = event.clone();
+            let request = request_event.http_request.as_mut().unwrap();
+            request.domain = domain.into();
+            request.ai_provider = None;
+            request.headers.clear();
+            if let Some(header) = header {
+                request
+                    .headers
+                    .insert("x-api-key", http::HeaderValue::from_str(&header).unwrap());
+            }
+            request.query = query;
+            let error = materialize_http_request_for_upstream(&request_event)
+                .expect_err("an opaque reference must never leave the proxy without substitution");
+            assert!(error.to_string().contains("requires credential broker substitution"));
+            assert!(!error.to_string().contains(&reference));
+        }
+    }
+}
 
+#[test]
+fn http_materializer_without_substitute_action_preserves_ordinary_requests() {
+    let mut headers = http::HeaderMap::new();
+    headers.insert("authorization", http::HeaderValue::from_static("Bearer ordinary-token"));
+    let request = HttpRequestSecurityEvent::new("example.com", None, headers, Some("key=ordinary%20value".into()));
+    let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http_request(request.clone());
     let materialized = materialize_http_request_for_upstream(&event).unwrap();
-
-    assert_eq!(
-        materialized.headers.get(http::header::AUTHORIZATION).unwrap(),
-        &http::HeaderValue::from_str(&reference).unwrap(),
-        "without a matched substitute action, materialization must stay reference-only"
-    );
+    assert_eq!(materialized.headers, request.headers);
+    assert_eq!(materialized.query, request.query);
     assert_eq!(materialized.credential_ref, None);
 }
 

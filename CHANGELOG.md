@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Security: Refuse forwarding opaque HTTP credential references when broker substitution has not been requested, including reference headers and percent-encoded query values.
+
 - Fixed: Diagnostic plugins no longer claim credential capture or substitution, and the shared plugin executor rejects non-broker changes to credential action requests.
 
 - Added: An environment revision coordinator with durable prepare, atomic TOML publication, per-environment serialization, cancellation-safe jobs and startup recovery without a second journal.

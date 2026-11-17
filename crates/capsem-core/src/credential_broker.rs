@@ -212,6 +212,21 @@ pub fn detect_http_body_credentials(
     found
 }
 
+/// Test the runtime substitution grammar without resolving stored credentials
+/// or constructing observations. Used to refuse forwarding opaque references
+/// when the broker has not requested substitution.
+pub(crate) fn has_brokered_http_references(headers: &http::HeaderMap, query: Option<&str>) -> bool {
+    headers
+        .values()
+        .any(|value| value.to_str().ok().and_then(header_broker_reference).is_some())
+        || query.is_some_and(|query| {
+            query.split('&').any(|part| {
+                part.split_once('=')
+                    .is_some_and(|(_, value)| percent_decode(value).is_ok_and(|decoded| is_broker_reference(&decoded)))
+            })
+        })
+}
+
 pub fn detect_brokered_http_references(
     domain: &str,
     ai_provider: Option<ProviderKind>,
