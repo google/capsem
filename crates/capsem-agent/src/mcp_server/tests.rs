@@ -4,6 +4,47 @@ use std::os::unix::io::{FromRawFd, IntoRawFd};
 use std::os::unix::net::UnixStream;
 
 #[test]
+fn input_content_bound_is_independent_of_identity_and_recovers_after_refusal() {
+    let empty = r#"{"jsonrpc":"2.0","method":"tools/call","params":{"text":""}}"#;
+    let overhead = empty.len();
+    let prefix = r#"{"jsonrpc":"2.0","method":"tools/call","params":{"text":""#;
+    let suffix = r#""},"id":""#;
+    let exact = format!(
+        "{prefix}{}{suffix}{}\"}}",
+        "x".repeat(capsem_proto::MCP_PAYLOAD_MAX_BYTES - overhead),
+        "\\u0000".repeat(capsem_proto::MCP_REQUEST_ID_MAX_BYTES)
+    );
+    let result = classify_input(exact.as_bytes()).unwrap();
+    assert_eq!(
+        result,
+        JsonRpcLineKind::Request {
+            json_id: Some(serde_json::json!("\0".repeat(capsem_proto::MCP_REQUEST_ID_MAX_BYTES)))
+        }
+    );
+    let too_large = format!(
+        r#"{{"jsonrpc":"2.0","method":"tools/call","params":{{"text":"{}"}},"id":1}}"#,
+        "x".repeat(capsem_proto::MCP_PAYLOAD_MAX_BYTES - overhead + 1)
+    );
+    let input = format!("{too_large}\n{exact}\n");
+    let mut lines = lines::McpLines::new(
+        std::io::Cursor::new(input.as_bytes()),
+        capsem_proto::MCP_JSON_RPC_MAX_BYTES,
+    );
+    let lines::LineRead::Message(first) = lines.next_line().unwrap() else {
+        panic!("physical envelope fits")
+    };
+    assert!(
+        classify_input(&first).is_err(),
+        "unused identity space must not admit oversized content"
+    );
+    let lines::LineRead::Message(next) = lines.next_line().unwrap() else {
+        panic!("next line survives")
+    };
+    assert_eq!(classify_input(&next).unwrap(), result);
+    assert!(classify_input(b"\xff").is_err());
+}
+
+#[test]
 fn correlation_identity_is_bounded_before_tracking() {
     for id in ["null", "[]", "{}", "true", "1.5"] {
         assert_eq!(

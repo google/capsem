@@ -104,7 +104,7 @@ fn main() {
     let mut next_stream_id = 1u32;
 
     let stdin = io::stdin();
-    let mut reader = lines::McpLines::new(stdin.lock(), capsem_proto::MCP_PAYLOAD_MAX_BYTES);
+    let mut reader = lines::McpLines::new(stdin.lock(), capsem_proto::MCP_JSON_RPC_MAX_BYTES);
 
     loop {
         let line = match reader.next_line() {
@@ -118,10 +118,10 @@ fn main() {
             }
             Ok(lines::LineRead::End) | Err(_) => break,
         };
-        let text = match std::str::from_utf8(&line) {
-            Ok(text) => text,
-            Err(_) => {
-                emit_input_error(&stdout, "MCP request is not UTF-8; request was not forwarded");
+        let kind = match classify_input(&line) {
+            Ok(kind) => kind,
+            Err(message) => {
+                emit_input_error(&stdout, message);
                 continue;
             }
         };
@@ -132,7 +132,6 @@ fn main() {
             next_stream_id = 1;
         }
 
-        let kind = classify_jsonrpc_line(text);
         let (stream_id, flags, pending_request) = match kind {
             JsonRpcLineKind::InvalidCorrelationId => {
                 emit_input_error(&stdout, "Invalid MCP correlation ID; request was not forwarded");
@@ -333,6 +332,16 @@ fn classify_jsonrpc_line(line: &str) -> JsonRpcLineKind {
             JsonRpcLineKind::Request { json_id: Some(id) }
         }
         _ => JsonRpcLineKind::InvalidCorrelationId,
+    }
+}
+
+fn classify_input(line: &[u8]) -> Result<JsonRpcLineKind, &'static str> {
+    let text = std::str::from_utf8(line).map_err(|_| "MCP request is not UTF-8; request was not forwarded")?;
+    capsem_proto::mcp_contracts::json_rpc_wire::validate_size(line)
+        .map_err(|_| "MCP request exceeds the transport limit; request was not forwarded")?;
+    match classify_jsonrpc_line(text) {
+        JsonRpcLineKind::InvalidCorrelationId => Err("Invalid MCP correlation ID; request was not forwarded"),
+        kind => Ok(kind),
     }
 }
 
