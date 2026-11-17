@@ -8,6 +8,7 @@ use crate::validation::{validate_identifier, validate_non_empty, validate_policy
 
 mod environment;
 pub use environment::{compile_environment_mcp_permissions, CompiledEnvironmentDetectionRule};
+mod rule_set;
 mod sigma;
 use sigma::SigmaRule;
 
@@ -409,11 +410,13 @@ pub struct CompiledSecurityRule {
 #[derive(Debug, Clone)]
 pub struct SecurityRuleSet {
     rules: Vec<CompiledSecurityRule>,
+    observations: Vec<CompiledEnvironmentDetectionRule>,
 }
 
 #[derive(Debug, Clone)]
 pub struct SecurityRuleEvaluation<'a> {
     matched_rules: Vec<&'a CompiledSecurityRule>,
+    observations: Vec<&'a CompiledEnvironmentDetectionRule>,
 }
 
 impl SecurityRuleProfile {
@@ -627,93 +630,6 @@ impl SecurityRuleProfile {
             });
         }
         Ok(())
-    }
-}
-
-impl SecurityRuleSet {
-    pub fn new(mut rules: Vec<CompiledSecurityRule>) -> Self {
-        rules.sort_by(|left, right| {
-            left.priority
-                .cmp(&right.priority)
-                .then_with(|| left.rule_id.cmp(&right.rule_id))
-        });
-        Self { rules }
-    }
-
-    pub fn compile_profile(profile: &SecurityRuleProfile, source: SecurityRuleSource) -> Result<Self, String> {
-        profile.compile(source).map(Self::new)
-    }
-
-    pub fn rules(&self) -> &[CompiledSecurityRule] {
-        &self.rules
-    }
-
-    pub fn evaluate<S>(&self, subject: &S) -> Result<SecurityRuleEvaluation<'_>, String>
-    where
-        S: PolicySubject + ?Sized,
-    {
-        let mut matched_rules = Vec::new();
-        for rule in &self.rules {
-            if !rule.enabled {
-                continue;
-            }
-            if rule.matches_security_event(subject)? {
-                matched_rules.push(rule);
-            }
-        }
-        Ok(SecurityRuleEvaluation { matched_rules })
-    }
-}
-
-impl<'a> SecurityRuleEvaluation<'a> {
-    pub fn matched_rules(&self) -> &[&'a CompiledSecurityRule] {
-        &self.matched_rules
-    }
-
-    pub fn detections(&self) -> Vec<&'a CompiledSecurityRule> {
-        self.matched_rules
-            .iter()
-            .copied()
-            .filter(|rule| rule.detection_level.is_some())
-            .collect()
-    }
-
-    pub fn rules_for_action(&self, action: SecurityRuleAction) -> Vec<&'a CompiledSecurityRule> {
-        self.matched_rules
-            .iter()
-            .copied()
-            .filter(|rule| rule.action == action)
-            .collect()
-    }
-
-    pub fn preprocess_rules(&self) -> Vec<&'a CompiledSecurityRule> {
-        self.matched_rules
-            .iter()
-            .copied()
-            .filter(|rule| {
-                matches!(
-                    rule.action,
-                    SecurityRuleAction::Preprocess | SecurityRuleAction::Rewrite
-                )
-            })
-            .collect()
-    }
-
-    pub fn postprocess_rules(&self) -> Vec<&'a CompiledSecurityRule> {
-        self.rules_for_action(SecurityRuleAction::Postprocess)
-    }
-
-    pub fn enforcement_rules(&self) -> Vec<&'a CompiledSecurityRule> {
-        self.matched_rules
-            .iter()
-            .copied()
-            .filter(|rule| {
-                matches!(
-                    rule.action,
-                    SecurityRuleAction::Allow | SecurityRuleAction::Ask | SecurityRuleAction::Block
-                )
-            })
-            .collect::<Vec<_>>()
     }
 }
 

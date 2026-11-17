@@ -2,6 +2,7 @@ use serde_json::json;
 
 use super::*;
 
+mod observations;
 mod yaml_migration;
 
 #[test]
