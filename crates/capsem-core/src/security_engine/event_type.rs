@@ -210,7 +210,8 @@ impl RuntimeSecurityEventType {
             | WriteOp::EnvironmentRevisionTransition(_)
             | WriteOp::PrepareEnvironmentRequest(_)
             | WriteOp::EnvironmentRequestDecision(_)
-            | WriteOp::EnvironmentRequestResult(_) => return None,
+            | WriteOp::EnvironmentRequestResult(_)
+            | WriteOp::EnvironmentSandboxReference(_) => return None,
             // Registry rows of a network database: the state a lifecycle
             // event describes, so they audit under the same type.
             WriteOp::Network(_) | WriteOp::NetworkMembership(_) | WriteOp::NetworkDeparture(_) => {

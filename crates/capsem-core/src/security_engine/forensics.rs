@@ -237,7 +237,8 @@ pub(super) fn logger_write_credential_ref(op: &WriteOp) -> Option<String> {
         | WriteOp::EnvironmentRevisionTransition(_)
         | WriteOp::PrepareEnvironmentRequest(_)
         | WriteOp::EnvironmentRequestDecision(_)
-        | WriteOp::EnvironmentRequestResult(_) => None,
+        | WriteOp::EnvironmentRequestResult(_)
+        | WriteOp::EnvironmentSandboxReference(_) => None,
         // Registry rows carry state, not a credential.
         WriteOp::Network(_) | WriteOp::NetworkMembership(_) | WriteOp::NetworkDeparture(_) => None,
     }
@@ -264,7 +265,8 @@ pub(super) fn logger_write_trace_id(op: &WriteOp) -> Option<String> {
         | WriteOp::EnvironmentRevisionTransition(_)
         | WriteOp::PrepareEnvironmentRequest(_)
         | WriteOp::EnvironmentRequestDecision(_)
-        | WriteOp::EnvironmentRequestResult(_) => None,
+        | WriteOp::EnvironmentRequestResult(_)
+        | WriteOp::EnvironmentSandboxReference(_) => None,
         WriteOp::Network(_) | WriteOp::NetworkMembership(_) | WriteOp::NetworkDeparture(_) => None,
     }
 }

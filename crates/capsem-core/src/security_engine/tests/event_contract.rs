@@ -706,7 +706,7 @@ async fn environment_history_is_not_a_runtime_security_event() {
 }
 
 #[tokio::test]
-async fn environment_request_records_never_enter_runtime_security_admission() {
+async fn host_environment_writes_never_enter_runtime_security_admission() {
     use capsem_logger::events::environment::request::{
         EnvironmentRequestDecision, EnvironmentRequestDecisionKind, EnvironmentRequestPayload,
         EnvironmentRequestResult, PreparedEnvironmentRequest,
@@ -742,6 +742,20 @@ async fn environment_request_records_never_enter_runtime_security_admission() {
             timestamp_unix_ms: 3,
             actor: "operator".into(),
         }),
+        WriteOp::EnvironmentSandboxReference(
+            capsem_logger::events::environment::EnvironmentSandboxReferenceMutation {
+                session_id: id(4),
+                generation: id(5),
+                kind: capsem_logger::events::environment::EnvironmentSandboxReferenceKind::Desired,
+                expected: None,
+                revision: Some(capsem_logger::events::EnvironmentRevisionParent {
+                    environment_id: id(2),
+                    revision_id: id(3),
+                }),
+                timestamp_unix_ms: 4,
+                actor: "operator".into(),
+            },
+        ),
     ];
     for record in records {
         let kind = record.kind();
