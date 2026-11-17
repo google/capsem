@@ -15,7 +15,7 @@ pub enum EnvironmentVariablePurgeQuery {
     },
 }
 impl EnvironmentVariablePurgeQuery {
-    fn validate(&self) -> DbResult<()> {
+    pub(crate) fn validate(&self) -> DbResult<()> {
         let valid = match self {
             Self::Get { purge_id } => valid_id(purge_id),
             Self::Page {

@@ -865,6 +865,7 @@ impl SessionDb {
 
 mod bodies;
 mod environment;
+pub(crate) use environment::valid_id as valid_environment_id;
 mod host;
 pub use crate::events::environment::application::EnvironmentApplicationRecord;
 pub use crate::events::environment::purge::EnvironmentVariablePurgeRecord;

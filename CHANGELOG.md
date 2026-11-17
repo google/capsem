@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Typed environment reads through the owning ledger channel for revisions, requests, partial histories, sandbox references, application facts and purge status, with bounded replies and exact query correlation.
+
 - Added: Typed request history retains purged draft fields, explicit variable markers and original approval/staleness attribution, while distinguishing unavailable intent and refusing full replay.
 
 - Added: Typed revision history distinguishes complete, purged-partial and unavailable values, preserving unrelated fields and explicit purge markers while full replay remains disabled.

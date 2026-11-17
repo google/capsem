@@ -18,7 +18,7 @@ pub enum EnvironmentApplicationQuery {
     },
 }
 impl EnvironmentApplicationQuery {
-    fn validate(&self) -> DbResult<()> {
+    pub(crate) fn validate(&self) -> DbResult<()> {
         let target_valid =
             |target: &EnvironmentRequestTarget| valid_id(&target.session_id) && valid_id(&target.generation);
         let valid = match self {

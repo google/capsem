@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 use crate::events::environment::purge::{EnvironmentVariablePurgeExecution, EnvironmentVariablePurgeRecord};
 use crate::{BodyDirection, RetainOutcome, WriteOp};
 
+mod environment;
+pub use environment::{LedgerEnvironmentQuery, LedgerEnvironmentReply};
+
 /// Every large result streams in independently bounded pieces.
 pub const MAX_LEDGER_STREAM_CHUNK_BYTES: usize = 256 * 1024;
 pub const MAX_LEDGER_QUERY_ROWS: usize = 2_000;
@@ -55,6 +58,9 @@ pub enum LedgerCommand {
     Query {
         query: LedgerQuery,
     },
+    EnvironmentRead {
+        query: LedgerEnvironmentQuery,
+    },
     ReadBodies {
         event_id: String,
     },
@@ -79,7 +85,9 @@ impl LedgerOperation for LedgerCommand {
         match self {
             Self::Admit { .. } | Self::AdmitBatch { .. } => LedgerCapability::Admit,
             Self::Flush => LedgerCapability::Flush,
-            Self::Query { .. } | Self::ReadBodies { .. } | Self::Counters => LedgerCapability::Read,
+            Self::Query { .. } | Self::EnvironmentRead { .. } | Self::ReadBodies { .. } | Self::Counters => {
+                LedgerCapability::Read
+            }
             Self::Retain { .. } | Self::PurgeVariableHistory { .. } => LedgerCapability::Retain,
             Self::ExportWarc => LedgerCapability::Export,
             Self::Snapshot { .. } => LedgerCapability::Snapshot,
@@ -98,6 +106,7 @@ impl LedgerOperation for LedgerCommand {
                 .validate()
                 .map_err(|_| LedgerProtocolError::InvalidOperation)?,
             Self::Query { query } => query.validate()?,
+            Self::EnvironmentRead { query } => query.validate()?,
             Self::ReadBodies { event_id } if !valid_event_id(event_id) => {
                 return Err(LedgerProtocolError::InvalidOperation)
             }
@@ -285,6 +294,9 @@ pub enum LedgerReply {
     Query {
         sets: Vec<LedgerRows>,
     },
+    EnvironmentRead {
+        reply: Box<LedgerEnvironmentReply>,
+    },
     Counters {
         counters: Box<LedgerCounters>,
         read_cache_epoch: u64,
@@ -334,6 +346,7 @@ impl LedgerReply {
             }
             Self::Durable { .. } | Self::Counters { .. } | Self::BodiesComplete | Self::Retained { .. } => true,
             Self::VariableHistoryPurged { record } => record.validate().is_ok(),
+            Self::EnvironmentRead { reply } => reply.validate().is_ok(),
             Self::Query { sets } => {
                 sets.len() <= MAX_LEDGER_RESULT_SETS && sets.iter().all(|rows| rows.validate().is_ok())
             }

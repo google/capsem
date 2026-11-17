@@ -13,7 +13,7 @@ pub enum EnvironmentReferenceQuery {
 }
 
 impl EnvironmentReferenceQuery {
-    fn validate(&self) -> DbResult<()> {
+    pub(crate) fn validate(&self) -> DbResult<()> {
         let valid = match self {
             Self::CurrentEnvironment { environment_id } => valid_id(environment_id),
             Self::Sandbox { session_id, generation } => valid_id(session_id) && valid_id(generation),

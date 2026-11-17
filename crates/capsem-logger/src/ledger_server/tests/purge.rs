@@ -7,7 +7,7 @@ fn id(n: u64) -> String {
     format!("00000000-0000-4000-8000-{n:012x}")
 }
 
-async fn prepared(server: &LedgerServer) {
+pub(super) async fn revisions(server: &LedgerServer) {
     for (number, previous, value) in [(3, None, Some("purge worker canary")), (4, Some(3), None)] {
         let mut specification: capsem_config::environment::EnvironmentSpecification =
             toml::from_str("name='development'").unwrap();
@@ -44,6 +44,10 @@ async fn prepared(server: &LedgerServer) {
             .unwrap();
         server.db.flush().await.unwrap();
     }
+}
+
+pub(super) async fn prepared(server: &LedgerServer) {
+    revisions(server).await;
     server
         .db
         .write(WriteOp::PrepareEnvironmentVariablePurge(

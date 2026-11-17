@@ -482,10 +482,10 @@ async fn dispatch_prepared(
     if response.request_id() != request_id {
         return Err("ledger response id mismatch".into());
     }
-    match response.outcome() {
+    match response.into_outcome() {
         LedgerOutcome::Success { reply } => {
             reply.validate().map_err(|error| error.to_string())?;
-            Ok(reply.clone())
+            Ok(reply)
         }
         LedgerOutcome::Failure { failure } => Err(format!("ledger {:?}: {}", failure.code(), failure.message())),
     }

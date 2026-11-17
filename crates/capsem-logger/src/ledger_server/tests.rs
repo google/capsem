@@ -511,3 +511,5 @@ async fn coordinator_environment_mutations_keep_the_existing_durability_path() {
 }
 
 mod purge;
+
+mod environment;

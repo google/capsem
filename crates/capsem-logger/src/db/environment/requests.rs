@@ -26,7 +26,7 @@ pub enum EnvironmentRequestQuery {
 }
 
 impl EnvironmentRequestQuery {
-    fn validate(&self) -> DbResult<()> {
+    pub(crate) fn validate(&self) -> DbResult<()> {
         let valid = match self {
             Self::Get { request_id } => valid_id(request_id),
             Self::Page {

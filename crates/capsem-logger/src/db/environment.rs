@@ -28,12 +28,12 @@ pub enum EnvironmentRevisionQuery {
     },
 }
 
-fn valid_id(value: &str) -> bool {
+pub(crate) fn valid_id(value: &str) -> bool {
     uuid::Uuid::parse_str(value).is_ok_and(|id| id.to_string() == value && !id.is_nil())
 }
 
 impl EnvironmentRevisionQuery {
-    fn validate(&self) -> DbResult<()> {
+    pub(crate) fn validate(&self) -> DbResult<()> {
         let valid = match self {
             Self::Get {
                 environment_id,

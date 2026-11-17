@@ -18,6 +18,7 @@ use crate::ledger_protocol::{
 };
 use crate::{DbHandle, ReadCacheDomain, StoredBody};
 
+mod environment;
 mod queries;
 
 type ServerSender = ipc_channel::Sender<LedgerServerMessage>;
@@ -181,6 +182,17 @@ impl LedgerServer {
             }
             LedgerCommand::Query { query } => match queries::execute(&self.db, query).await {
                 Ok(sets) => send_success(sender, request_id, LedgerReply::Query { sets }).await,
+                Err(error) => Err(storage(error)),
+            },
+            LedgerCommand::EnvironmentRead { query } => match environment::execute(&self.db, query).await {
+                Ok(reply) => {
+                    send_success(
+                        sender,
+                        request_id,
+                        LedgerReply::EnvironmentRead { reply: Box::new(reply) },
+                    )
+                    .await
+                }
                 Err(error) => Err(storage(error)),
             },
             LedgerCommand::ReadBodies { event_id } => match self.db.read_bodies(&event_id).await {

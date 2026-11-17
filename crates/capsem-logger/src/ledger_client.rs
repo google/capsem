@@ -14,8 +14,8 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::events::environment::purge::{EnvironmentVariablePurgeExecution, EnvironmentVariablePurgeRecord};
 use crate::ledger_protocol::{
-    LedgerBodyMetadata, LedgerClientMessage, LedgerCommand, LedgerExportSummary, LedgerQuery, LedgerReply, LedgerRows,
-    LedgerServerMessage,
+    LedgerBodyMetadata, LedgerClientMessage, LedgerCommand, LedgerEnvironmentQuery, LedgerEnvironmentReply,
+    LedgerExportSummary, LedgerQuery, LedgerReply, LedgerRows, LedgerServerMessage,
 };
 use crate::{RetainOutcome, StoredBody};
 
@@ -38,6 +38,10 @@ type ClientSender = ipc_channel::Sender<LedgerClientMessage>;
 type ClientReceiver = ipc_channel::Receiver<LedgerServerMessage>;
 
 enum Command {
+    EnvironmentRead {
+        query: LedgerEnvironmentQuery,
+        reply: oneshot::Sender<Result<LedgerEnvironmentReply, String>>,
+    },
     Query {
         query: LedgerQuery,
         reply: oneshot::Sender<Result<Vec<LedgerRows>, String>>,
@@ -116,6 +120,13 @@ impl LedgerClient {
         let (reply, result) = oneshot::channel();
         self.send(Command::Query { query, reply }).await?;
         receive_result(result, "query").await
+    }
+
+    pub async fn environment_read(&self, query: LedgerEnvironmentQuery) -> Result<LedgerEnvironmentReply, String> {
+        query.validate().map_err(|error| error.to_string())?;
+        let (reply, result) = oneshot::channel();
+        self.send(Command::EnvironmentRead { query, reply }).await?;
+        receive_result(result, "environment read").await
     }
 
     pub async fn counters(&self) -> Result<Arc<LedgerCounters>, String> {
@@ -260,6 +271,24 @@ async fn dispatch(
                 });
             finish(reply, result)
         }
+        Command::EnvironmentRead { query, reply } => {
+            // Keep only bounded control filters for reply correlation. Snapshot
+            // and body payloads are moved out of their decoded envelopes.
+            let expected = query.clone();
+            let result = one_reply(sender, receiver, request_id, LedgerCommand::EnvironmentRead { query })
+                .await
+                .and_then(|response| match response {
+                    LedgerReply::EnvironmentRead { reply } => {
+                        if reply.matches_query(&expected) {
+                            Ok(*reply)
+                        } else {
+                            Err("ledger environment reply does not match the requested scope or shape".into())
+                        }
+                    }
+                    response => Err(unexpected("environment read", response)),
+                });
+            finish(reply, result)
+        }
         Command::Counters { reply } => {
             let result = one_reply(sender, receiver, request_id, LedgerCommand::Counters)
                 .await
@@ -381,10 +410,10 @@ async fn receive_reply(receiver: &ClientReceiver, request_id: u64) -> Result<Led
             response.request_id()
         ));
     }
-    match response.outcome() {
+    match response.into_outcome() {
         LedgerOutcome::Success { reply } => {
             reply.validate().map_err(|error| error.to_string())?;
-            Ok(reply.clone())
+            Ok(reply)
         }
         LedgerOutcome::Failure { failure } => Err(format!("ledger {:?}: {}", failure.code(), failure.message())),
     }
@@ -556,6 +585,9 @@ fn fail_pending(commands: &mut mpsc::Receiver<Command>, reason: &str) {
     while let Ok(command) = commands.try_recv() {
         match command {
             Command::Query { reply, .. } => {
+                let _ = reply.send(Err(reason.to_string()));
+            }
+            Command::EnvironmentRead { reply, .. } => {
                 let _ = reply.send(Err(reason.to_string()));
             }
             Command::Counters { reply } => {

@@ -237,3 +237,5 @@ async fn history_offset_beyond_sqlite_integer_range_is_an_empty_page() {
 }
 
 mod purge;
+
+mod environment;
