@@ -306,3 +306,4 @@ fn descriptor_owner_no_external_write_validation_accepts0755_without_chmod() {
     }
     assert_eq!(std::fs::read(path).unwrap(), b"preserve");
 }
+mod atomic_at;

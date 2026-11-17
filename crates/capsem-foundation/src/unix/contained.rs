@@ -213,7 +213,7 @@ where
     bits.try_into().expect("Unix permission bits fit mode_t")
 }
 
-fn check_component(name: &OsStr) -> io::Result<()> {
+pub(super) fn check_component(name: &OsStr) -> io::Result<()> {
     let bytes = name.as_bytes();
     if bytes.is_empty() || bytes == b"." || bytes == b".." || bytes.contains(&b'/') || bytes.contains(&0) {
         return Err(io::Error::new(

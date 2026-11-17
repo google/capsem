@@ -1,6 +1,6 @@
 //! Filesystem operations with owner-only creation and atomic publication.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fs::{DirBuilder, File, OpenOptions};
 use std::io::{self, Read, Write};
 #[cfg(target_os = "macos")]
@@ -9,7 +9,9 @@ use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsE
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod atomic;
 mod durability;
+pub use atomic::atomic_write_private_at;
 mod extents;
 
 pub use durability::{set_mode, sync, sync_before_barrier, sync_filesystem};
@@ -361,11 +363,7 @@ pub fn create_private_sibling(path: &Path) -> io::Result<PrivateSibling> {
     })?;
 
     loop {
-        let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let mut temporary_name = OsString::from(".");
-        temporary_name.push(name);
-        temporary_name.push(format!(".tmp.{}.{sequence}", std::process::id()));
-        let temporary = parent.join(temporary_name);
+        let temporary = parent.join(temporary_name(name));
         let opened = OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -395,6 +393,14 @@ pub fn create_private_sibling(path: &Path) -> io::Result<PrivateSibling> {
             Err(error) => return Err(error),
         }
     }
+}
+
+fn temporary_name(name: &OsStr) -> OsString {
+    let sequence = TEMP_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let mut temporary = OsString::from(".");
+    temporary.push(name);
+    temporary.push(format!(".tmp.{}.{sequence}", std::process::id()));
+    temporary
 }
 
 fn refused(path: &Path, reason: &str) -> io::Error {
