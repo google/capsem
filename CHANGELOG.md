@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed: MCP response-limit errors retain correlation when a POST SSE stream resumes over GET; request completion also releases pending IDs after transport errors or cancellation.
+
 - Fixed: Asynchronous MCP replies delivered over GET now report oversized responses explicitly and reopen only the receive channel, preserving later calls without replaying operations.
 
 - Security: Time-box the unpatched Picomatch advisory in upstream static-site and JavaScript build/test tooling through December 17, 2026; shipped Node runtime dependency graphs do not contain it.

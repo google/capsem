@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use rmcp::model::{ClientJsonRpcMessage, ClientNotification, JsonRpcMessage, RequestId};
 use sse_stream::Sse;
 
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub(super) struct PendingResponses(Arc<Mutex<HashSet<RequestId>>>);
 
 pub(super) struct PendingRequest {
@@ -15,6 +15,13 @@ pub(super) struct PendingRequest {
 }
 
 impl PendingResponses {
+    pub(super) fn release_when_done(&self, id: RequestId) -> PendingRequest {
+        PendingRequest {
+            pending: self.clone(),
+            id: Some(id),
+        }
+    }
+
     pub(super) fn track(&self, message: &ClientJsonRpcMessage) -> PendingRequest {
         let id = match message {
             JsonRpcMessage::Request(request) => {

@@ -6,6 +6,7 @@ use capsem_proto::mcp_aggregator::{
 };
 use capsem_proto::mcp_contracts::{McpAuthConfig, McpAuthKind, McpServerDef};
 use capsem_proto::mcp_worker::{McpHttpRole, McpWorkerBootstrap, MCP_SERVER_HEADER};
+use futures::StreamExt;
 use http_body_util::{combinators::BoxBody, BodyExt, Full, StreamBody};
 use hyper::body::{Bytes, Incoming};
 use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -38,6 +39,8 @@ fn definition() -> McpServerDef {
 
 #[derive(Clone)]
 struct AsyncReplies {
+    resumed: bool,
+    resumptions: Arc<Mutex<HashMap<String, Bytes>>>,
     sender: tokio::sync::mpsc::Sender<Bytes>,
     receiver: Arc<tokio::sync::Mutex<tokio::sync::mpsc::Receiver<Bytes>>>,
 }
@@ -49,6 +52,26 @@ async fn reply(
 ) -> http::Response<BoxBody<Bytes, Infallible>> {
     if request.method() == http::Method::GET {
         if let Some(replies) = asynchronous {
+            if replies.resumed {
+                let bytes = request
+                    .headers()
+                    .get("Last-Event-Id")
+                    .and_then(|value| value.to_str().ok())
+                    .and_then(|cursor| replies.resumptions.lock().unwrap().remove(cursor));
+                return match bytes {
+                    Some(bytes) => http::Response::builder()
+                        .header(http::header::CONTENT_TYPE, "text/event-stream")
+                        .body(BodyExt::boxed(StreamBody::new(
+                            futures::stream::once(async move { Ok::<_, Infallible>(hyper::body::Frame::data(bytes)) })
+                                .chain(futures::stream::pending()),
+                        )))
+                        .unwrap(),
+                    None => http::Response::builder()
+                        .status(405)
+                        .body(Full::new(Bytes::new()).boxed())
+                        .unwrap(),
+                };
+            }
             let stream = futures::stream::unfold(replies.receiver, |receiver| async move {
                 let bytes = receiver.lock().await.recv().await?;
                 Some((Ok::<_, Infallible>(hyper::body::Frame::data(bytes)), receiver))
@@ -112,6 +135,18 @@ async fn reply(
     let bytes = serde_json::to_vec(&serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result})).unwrap();
     if let Some(replies) = &asynchronous {
         if message["method"] == "tools/call" {
+            if replies.resumed {
+                let cursor = format!("reply-{id}");
+                replies.resumptions.lock().unwrap().insert(
+                    cursor.clone(),
+                    Bytes::from(format!("data: {}\r\n\r\n", String::from_utf8(bytes).unwrap())),
+                );
+                return http::Response::builder()
+                    .header(http::header::CONTENT_TYPE, "text/event-stream")
+                    .header("Mcp-Session-Id", "fixture-session")
+                    .body(Full::new(Bytes::from(format!("id: {cursor}\nretry: 0\n\n"))).boxed())
+                    .unwrap();
+            }
             replies
                 .sender
                 .send(Bytes::from(format!(
@@ -151,15 +186,20 @@ async fn reply(
 
 #[tokio::test]
 async fn binary_confines_before_ready_and_keeps_its_capabilities_after_refresh() {
-    native_calls(false).await;
+    native_calls(false, false).await;
 }
 
 #[tokio::test]
 async fn binary_preserves_boundary_and_refusal_recovery_for_accepted_get_replies() {
-    native_calls(true).await;
+    native_calls(true, false).await;
 }
 
-async fn native_calls(asynchronous: bool) {
+#[tokio::test]
+async fn binary_preserves_refusals_when_post_sse_resumes_with_get_cursor() {
+    native_calls(true, true).await;
+}
+
+async fn native_calls(asynchronous: bool, resumed: bool) {
     let directory = tempfile::tempdir().unwrap();
     let (control, child_control) = UnixStream::pair().unwrap();
     let (coordinator_http, worker_http) = UnixStream::pair().unwrap();
@@ -172,6 +212,8 @@ async fn native_calls(asynchronous: bool) {
     let counted_calls = calls.clone();
     let (sender, receiver) = tokio::sync::mpsc::channel(1);
     let replies = asynchronous.then(|| AsyncReplies {
+        resumed,
+        resumptions: Arc::new(Mutex::new(HashMap::new())),
         sender,
         receiver: Arc::new(tokio::sync::Mutex::new(receiver)),
     });
@@ -353,6 +395,16 @@ async fn native_calls(asynchronous: bool) {
         requests.len() >= 5,
         "initialization, refresh and tool call must use the channel"
     );
+    if resumed {
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|(_, headers)| headers.contains_key("Last-Event-Id"))
+                .count(),
+            11,
+            "every resumed reply must use its POST-issued cursor"
+        );
+    }
     for (uri, headers) in requests.iter() {
         assert_eq!(uri, "https://configured.invalid/mcp");
         assert_eq!(headers[MCP_SERVER_HEADER], "assigned");

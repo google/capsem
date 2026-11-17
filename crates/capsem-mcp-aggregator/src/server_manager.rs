@@ -19,7 +19,7 @@ mod http_get;
 mod http_pending;
 mod http_response;
 
-use futures::stream::BoxStream;
+use futures::{stream::BoxStream, StreamExt};
 use http::header::{ACCEPT, WWW_AUTHENTICATE};
 use http::{HeaderName, HeaderValue};
 use rmcp::model::{
@@ -43,6 +43,22 @@ use capsem_proto::mcp_contracts::*;
 /// several of these in a `ServerPool`.
 struct RunningServer {
     client: RunningService<RoleClient, ()>,
+    pending: http_pending::PendingResponses,
+}
+
+#[derive(Debug)]
+struct RequestPeer {
+    peer: Peer<RoleClient>,
+    pending: http_pending::PendingResponses,
+}
+
+impl RunningServer {
+    fn request_peer(&self) -> RequestPeer {
+        RequestPeer {
+            peer: self.client.peer().clone(),
+            pending: self.pending.clone(),
+        }
+    }
 }
 
 /// A pool of one-or-more rmcp connections to a single MCP server. Stdio
@@ -362,12 +378,20 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
 
         match content_type.as_deref() {
             Some(ct) if ct.as_bytes().starts_with(EVENT_STREAM_MIME_TYPE.as_bytes()) => {
+                pending.retain();
+                let pending = self.pending.clone();
                 Ok(StreamableHttpPostResponse::Sse(
                     http_response::post_sse(
                         response.bytes_stream(),
                         max_sse_event_size.min(capsem_proto::MCP_JSON_RPC_MAX_BYTES),
                         response_id,
-                    ),
+                    )
+                    .inspect(move |item| {
+                        if let Ok(event) = item {
+                            pending.complete(event);
+                        }
+                    })
+                    .boxed(),
                     session_id,
                 ))
             }
@@ -402,16 +426,17 @@ impl StreamableHttpClient for CapsemMcpHttpClient {
 
 /// Send one request to a peer, cancelling it upstream when `timeout` elapses.
 async fn request_with_timeout(
-    peer: Peer<RoleClient>,
+    peer: RequestPeer,
     request: ClientRequest,
     timeout: Option<Duration>,
 ) -> Result<ServerResult, ServiceError> {
     let mut options = PeerRequestOptions::no_options();
     options.timeout = timeout;
-    peer.send_request_with_option(request, options)
-        .await?
-        .await_response()
-        .await
+    let handle = peer.peer.send_request_with_option(request, options).await?;
+    // Own cleanup through POST/SSE/GET transitions, success, errors, timeout,
+    // and cancellation of this future; HTTP headers do not end the request.
+    let _pending = peer.pending.release_when_done(handle.id.clone());
+    handle.await_response().await
 }
 
 /// Manages host-side MCP server connections and provides a unified tool catalog.
@@ -504,11 +529,15 @@ impl McpServerManager {
             bail!("MCP stdio pool exceeds its granted peer count");
         }
 
-        let client = if def.is_stdio() {
-            self.connect_stdio(def, 0).await?
+        let server = if def.is_stdio() {
+            RunningServer {
+                client: self.connect_stdio(def, 0).await?,
+                pending: http_pending::PendingResponses::default(),
+            }
         } else {
             self.connect_http(def).await?
         };
+        let client = &server.client;
 
         // Fetch tools with automatic pagination
         match client.list_all_tools().await {
@@ -614,10 +643,13 @@ impl McpServerManager {
         // peers — they expose the same catalog by construction (same
         // binary, same env), so re-querying just costs latency.
         let mut peers = Vec::with_capacity(pool_size);
-        peers.push(RunningServer { client });
+        peers.push(server);
         for i in 1..pool_size {
             match self.connect_stdio(def, i as u32).await {
-                Ok(extra) => peers.push(RunningServer { client: extra }),
+                Ok(extra) => peers.push(RunningServer {
+                    client: extra,
+                    pending: http_pending::PendingResponses::default(),
+                }),
                 Err(e) => {
                     warn!(
                         server = %def.name,
@@ -649,7 +681,7 @@ impl McpServerManager {
     }
 
     /// Connect to an HTTP MCP server.
-    async fn connect_http(&self, def: &McpServerDef) -> Result<RunningService<RoleClient, ()>> {
+    async fn connect_http(&self, def: &McpServerDef) -> Result<RunningServer> {
         let mut config = StreamableHttpClientTransportConfig::with_uri(def.url.as_str());
         if let Some(auth) = def.auth.as_ref().filter(|_| self.capabilities.is_none()) {
             let token = capsem_credentials::resolve_broker_reference_for_provider(
@@ -681,10 +713,13 @@ impl McpServerManager {
             .capabilities
             .as_ref()
             .map(|(http, _)| (http.clone(), def.name.clone()));
+        let pending = client.pending.clone();
         let transport = StreamableHttpClientTransport::with_client(client, config);
-        ().serve(transport)
+        let client = ()
+            .serve(transport)
             .await
-            .with_context(|| format!("failed to connect to HTTP MCP server '{}'", def.name))
+            .with_context(|| format!("failed to connect to HTTP MCP server '{}'", def.name))?;
+        Ok(RunningServer { client, pending })
     }
 
     /// Spawn and connect to a stdio MCP server subprocess.
@@ -760,7 +795,7 @@ impl McpServerManager {
     /// For pooled servers, the peer is round-robin-picked across the pool
     /// when the original name is in `pool_safe_tools`; otherwise it pins
     /// to `peers[0]`.
-    pub fn lookup_tool_peer(&self, namespaced_name: &str) -> Result<(Peer<RoleClient>, String)> {
+    fn lookup_tool_peer(&self, namespaced_name: &str) -> Result<(RequestPeer, String)> {
         let (server_name, original_name) = parse_namespaced(namespaced_name)
             .ok_or_else(|| anyhow::anyhow!("invalid namespaced tool name: {namespaced_name}"))?;
         let pool = self
@@ -768,13 +803,13 @@ impl McpServerManager {
             .get(server_name)
             .ok_or_else(|| anyhow::anyhow!("MCP server not running: {server_name}"))?;
         let server = pool.pick(original_name);
-        Ok((server.client.peer().clone(), original_name.to_string()))
+        Ok((server.request_peer(), original_name.to_string()))
     }
 
     /// Look up a resource's peer and original URI. Resource URIs are not
     /// pool-routed (pool_safe_tools applies to tool names only); they pin
     /// to `peers[0]`.
-    pub fn lookup_resource_peer(&self, namespaced_uri: &str) -> Result<(Peer<RoleClient>, String)> {
+    fn lookup_resource_peer(&self, namespaced_uri: &str) -> Result<(RequestPeer, String)> {
         let (server_name, original_uri) = parse_resource_uri(namespaced_uri)
             .ok_or_else(|| anyhow::anyhow!("invalid namespaced resource URI: {namespaced_uri}"))?;
         let pool = self
@@ -782,12 +817,12 @@ impl McpServerManager {
             .get(server_name)
             .ok_or_else(|| anyhow::anyhow!("MCP server not running: {server_name}"))?;
         let server = &pool.peers[0];
-        Ok((server.client.peer().clone(), original_uri.to_string()))
+        Ok((server.request_peer(), original_uri.to_string()))
     }
 
     /// Look up a prompt's peer and original name. Prompts pin to
     /// `peers[0]` (pool routing applies to tool calls only).
-    pub fn lookup_prompt_peer(&self, namespaced_name: &str) -> Result<(Peer<RoleClient>, String)> {
+    fn lookup_prompt_peer(&self, namespaced_name: &str) -> Result<(RequestPeer, String)> {
         let (server_name, original_name) = parse_namespaced(namespaced_name)
             .ok_or_else(|| anyhow::anyhow!("invalid namespaced prompt name: {namespaced_name}"))?;
         let pool = self
@@ -795,7 +830,7 @@ impl McpServerManager {
             .get(server_name)
             .ok_or_else(|| anyhow::anyhow!("MCP server not running: {server_name}"))?;
         let server = &pool.peers[0];
-        Ok((server.client.peer().clone(), original_name.to_string()))
+        Ok((server.request_peer(), original_name.to_string()))
     }
 
     /// Route a tools/call: parse namespace, strip prefix, forward to server.

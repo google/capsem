@@ -43,3 +43,17 @@ fn cancelled_accepted_requests_are_not_retained_until_a_reply_arrives() {
     drop(pending.track(&cancelled));
     assert!(pending.refuse_all().is_empty());
 }
+
+#[test]
+fn request_owner_clears_an_id_retained_across_post_sse_and_get() {
+    let pending = PendingResponses::default();
+    let request_owner = pending.release_when_done(RequestId::Number(3));
+    let mut post_headers = pending.track(&request(3));
+    post_headers.retain();
+    drop(post_headers);
+    assert!(pending.0.lock().unwrap().contains(&RequestId::Number(3)));
+    // Covers success, transport failure and cancellation of the awaiting
+    // future; cleanup does not depend on a cancellation POST succeeding.
+    drop(request_owner);
+    assert!(pending.refuse_all().is_empty());
+}
