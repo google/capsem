@@ -1,6 +1,7 @@
 //! The SQL half of generation publication, exercised on a real ledger.
 
 use super::*;
+use crate::writer::retention_faults::RetentionFault;
 
 const FIRST: i64 = capsem_archive::FILE_HEADER_BYTES as i64;
 const SECOND: i64 = FIRST + 84; // An unreferenced gap separates the source blocks.

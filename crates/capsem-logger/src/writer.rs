@@ -440,6 +440,7 @@ fn writer_channel(capacity: usize) -> (WriterSender, WriterReceiver) {
     )
 }
 
+mod archive_publication;
 mod barriers;
 mod batch;
 mod operation;

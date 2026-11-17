@@ -15,10 +15,12 @@ use capsem_foundation::unix::contained::{ContainedDir, ContainedOpenOptions};
 use capsem_foundation::unix::lock::{self, LockMode};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
-use tracing::warn;
 
+use super::archive_publication::{
+    cleanup_unpublished, close_archive_block, publish_root, publish_transaction, sync_candidate, PublicationOutcome,
+    PublishError,
+};
 use super::bodies::{archive_lock_path_for_db, BodyArchive};
-use super::retention_faults::{take_retention_failure_for_tests, RetentionFault};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RetainOutcome {
@@ -27,57 +29,6 @@ pub struct RetainOutcome {
     pub rows_dropped: u64,
     /// Logical bytes removed. An old inode may remain pinned by a reader.
     pub bytes_reclaimed: u64,
-}
-
-#[derive(Debug)]
-enum PublicationOutcome {
-    NotPublished {
-        phase: &'static str,
-        cause: String,
-        orphan_cleanup_pending: bool,
-    },
-    Published {
-        outcome: RetainOutcome,
-        old_generation: GenerationId,
-        new_generation: GenerationId,
-        gc_pending: bool,
-    },
-    OutcomeUnknown {
-        phase: &'static str,
-        cause: String,
-    },
-}
-
-impl PublicationOutcome {
-    fn into_result(self) -> Result<RetainOutcome, String> {
-        match self {
-            Self::NotPublished {
-                phase,
-                cause,
-                orphan_cleanup_pending,
-            } => Err(format!(
-                "archive generation was not published during {phase}: {cause}; orphan cleanup pending: {orphan_cleanup_pending}"
-            )),
-            Self::Published {
-                outcome,
-                old_generation,
-                new_generation,
-                gc_pending,
-            } => {
-                if gc_pending {
-                    warn!(
-                        ?old_generation,
-                        ?new_generation,
-                        "archive generation published; old-generation GC remains pending"
-                    );
-                }
-                Ok(outcome)
-            }
-            Self::OutcomeUnknown { phase, cause } => Err(format!(
-                "archive publication outcome is unknown during {phase}: {cause}; archiving is unavailable until recovery"
-            )),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -101,7 +52,7 @@ pub(super) fn retain_bodies(
         return Err("session body retention needs a flushed archive; blocks are still waiting for index rows".into());
     }
     let _workset = super::environment_retention::Workset(conn);
-    close_open_block(conn, bodies)?;
+    close_archive_block(conn, bodies)?;
     let directory = bodies
         .generation_directory()
         .ok_or("session body archive is not open; nothing was retained")?
@@ -153,36 +104,7 @@ pub(super) fn retain_bodies(
         )
         .into_result();
     }
-    if take_retention_failure_for_tests(directory.path(), RetentionFault::CandidateSync) {
-        return cleanup_unpublished(
-            &directory,
-            candidate,
-            generation_id,
-            "candidate-sync",
-            "injected retained-generation sync failure".into(),
-        )
-        .into_result();
-    }
-    if let Err(error) = candidate.sync() {
-        return cleanup_unpublished(
-            &directory,
-            candidate,
-            generation_id,
-            "candidate-sync",
-            error.to_string(),
-        )
-        .into_result();
-    }
-    if let Err(error) = directory.sync() {
-        return cleanup_unpublished(
-            &directory,
-            candidate,
-            generation_id,
-            "directory-sync",
-            error.to_string(),
-        )
-        .into_result();
-    }
+    let candidate = sync_candidate(&directory, candidate)?;
 
     let archive_lock = lock::acquire_existing_until(
         &archive_lock_path_for_db(&db_path),
@@ -252,23 +174,6 @@ pub(super) fn retain_bodies(
     .into_result()
 }
 
-fn close_open_block(conn: &Connection, bodies: &mut BodyArchive) -> Result<(), String> {
-    bodies.close_block();
-    let committed = conn.unchecked_transaction().and_then(|tx| {
-        bodies.commit_index_rows(&tx)?;
-        tx.commit()
-    });
-    match committed {
-        Ok(()) => {
-            bodies.index_rows_committed();
-            Ok(())
-        }
-        Err(error) => Err(format!(
-            "session body retention could not index the block it closed; nothing was retained: {error}"
-        )),
-    }
-}
-
 fn open_source(directory: &ContainedDir, expected: FileHeader, committed_end: u64) -> Result<File, String> {
     let name = expected.generation_id.file_name();
     let mut source = directory
@@ -330,12 +235,6 @@ fn copy_survivors(
     Ok(copied)
 }
 
-#[derive(Debug)]
-enum PublishError {
-    BeforeCommit(String),
-    CommitUnknown(String),
-}
-
 fn publish_index(
     conn: &Connection,
     cutoff: &str,
@@ -345,25 +244,9 @@ fn publish_index(
     expected_blocks: u64,
     path: &std::path::Path,
 ) -> Result<(u64, u64), PublishError> {
-    let tx = conn
-        .unchecked_transaction()
-        .map_err(|error| PublishError::BeforeCommit(error.to_string()))?;
-    let counts = publish_inside_transaction(&tx, cutoff, old, generation_id, new_end, expected_blocks, path)
-        .map_err(|error| PublishError::BeforeCommit(error.to_string()))?;
-    if take_retention_failure_for_tests(path, RetentionFault::CommitUnknownBefore) {
-        drop(tx);
-        return Err(PublishError::CommitUnknown(
-            "injected uncertain COMMIT with G authoritative".into(),
-        ));
-    }
-    tx.commit()
-        .map_err(|error| PublishError::CommitUnknown(error.to_string()))?;
-    if take_retention_failure_for_tests(path, RetentionFault::CommitUnknownAfter) {
-        return Err(PublishError::CommitUnknown(
-            "injected uncertain COMMIT with H authoritative".into(),
-        ));
-    }
-    Ok(counts)
+    publish_transaction(conn, path, |tx| {
+        publish_inside_transaction(tx, cutoff, old, generation_id, new_end, expected_blocks, path)
+    })
 }
 
 fn publish_inside_transaction(
@@ -391,38 +274,7 @@ fn publish_inside_transaction(
             "candidate copied {expected_blocks} blocks ending at {new_end}, but SQL remapped {remapped} ending at {remapped_end}"
         )));
     }
-    let revision = old
-        .revision
-        .checked_add(1)
-        .and_then(|revision| i64::try_from(revision).ok())
-        .ok_or_else(|| rusqlite::Error::InvalidParameterName("archive_state revision overflow".into()))?;
-    let new_end = i64::try_from(new_end)
-        .map_err(|_| rusqlite::Error::InvalidParameterName("generation extent exceeds SQLite INTEGER".into()))?;
-    let changed = tx.execute(
-        "UPDATE archive_state
-         SET generation_id = ?1, committed_end = ?2, revision = ?3
-         WHERE singleton = 1 AND archive_id = ?4 AND generation_id = ?5
-               AND committed_end = ?6 AND revision = ?7",
-        params![
-            generation_id.as_bytes().as_slice(),
-            new_end,
-            revision,
-            old.header.archive_id.as_bytes().as_slice(),
-            old.header.generation_id.as_bytes().as_slice(),
-            old.committed_end as i64,
-            old.revision as i64,
-        ],
-    )?;
-    if changed != 1 {
-        return Err(rusqlite::Error::InvalidParameterName(
-            "archive_state changed before publication".into(),
-        ));
-    }
-    if take_retention_failure_for_tests(path, RetentionFault::IndexTransaction) {
-        return Err(rusqlite::Error::InvalidParameterName(
-            "injected retention publication failure".into(),
-        ));
-    }
+    publish_root(tx, old, generation_id, new_end, path)?;
     Ok((blocks as u64, (rows + expired) as u64))
 }
 
@@ -475,26 +327,6 @@ fn move_block(tx: &Transaction<'_>, from: u64, to: u64) -> rusqlite::Result<()> 
         params![from, to],
     )?;
     Ok(())
-}
-
-fn cleanup_unpublished(
-    directory: &ContainedDir,
-    candidate: BodyLogWriter,
-    generation_id: GenerationId,
-    phase: &'static str,
-    cause: String,
-) -> PublicationOutcome {
-    drop(candidate);
-    let name = generation_id.file_name();
-    let orphan_cleanup_pending = directory
-        .remove_private_file(OsStr::new(&name))
-        .and_then(|()| directory.sync())
-        .is_err();
-    PublicationOutcome::NotPublished {
-        phase,
-        cause,
-        orphan_cleanup_pending,
-    }
 }
 
 fn io_string(error: std::io::Error) -> String {
