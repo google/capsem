@@ -16,7 +16,11 @@ async fn oversized_result_returns_error_then_preserves_next_reply() {
     write_bounded_response(&mut writer, &oversized).await.unwrap();
     let first: AggregatorResponse = read_frame(&mut reader).await.unwrap().unwrap();
     assert_eq!(first.id, 7);
-    assert!(matches!(first.body, AggregatorResult::Error { .. }));
+    let AggregatorResult::Error { error } = first.body else {
+        panic!("oversized result must be an error")
+    };
+    assert!(error.contains("exceeds"));
+    assert!(error.contains("tool may already have run"), "{error}");
     let next = AggregatorResponse {
         id: 8,
         body: AggregatorResult::Ok { ok: true },

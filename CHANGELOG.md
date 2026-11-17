@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed: Oversized MCP result errors state that the tool may already have run, preserving request correlation and the next reply.
+
 - Fixed: MCP aggregator IPC refuses oversized output during bounded encoding, without allocating the complete oversized result first.
 
 - Changed: Host MCP tools return complete structured gateway results without duplicate JSON text mirrors or the 16 KiB mirror threshold.

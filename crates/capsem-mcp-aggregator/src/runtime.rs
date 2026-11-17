@@ -43,7 +43,7 @@ async fn write_bounded_response<W: tokio::io::AsyncWrite + Unpin>(
             let fallback = AggregatorResponse {
                 id: response.id,
                 body: AggregatorResult::Error {
-                    error: "MCP result exceeds the aggregator frame limit".to_string(),
+                    error: "MCP result exceeds the aggregator frame limit; the tool may already have run".to_string(),
                 },
             };
             write_frame(writer, &fallback).await
