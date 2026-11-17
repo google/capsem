@@ -6,6 +6,69 @@ use crate::format::FILE_HEADER_BYTES;
 use crate::tests::{archive, XorShift};
 use crate::{BodyLogWriter, SegmentWritten};
 
+#[test]
+fn captured_readers_hold_selected_generation_leases_through_unlink() {
+    use capsem_foundation::unix::lock::{try_lock_descriptor, DescriptorLockAttempt, LockMode};
+    let dir = tempfile::tempdir().unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let directory = ContainedDir::open_root(dir.path()).unwrap();
+    let generation = crate::GenerationId::generate();
+    let mut writer = BodyLogWriter::create_generation(&directory, crate::ArchiveId::generate(), generation).unwrap();
+    let reference = writer.stage(b"captured configuration").unwrap();
+    writer.close_block().unwrap();
+    writer.sync().unwrap();
+    let header = writer.header();
+    let end = writer.end();
+    drop(writer);
+    let path = dir.path().join(generation.file_name());
+    let first = BodyLogReader::open_generation(&directory, header, end).unwrap();
+    let second = BodyLogReader::from_descriptor(File::open(&path).unwrap(), header, end).unwrap();
+    let legacy = BodyLogReader::open(&path).unwrap();
+    let observer = match try_lock_descriptor(File::open(&path).unwrap(), LockMode::Exclusive).unwrap() {
+        DescriptorLockAttempt::Contended(file) => file,
+        _ => panic!("captured readers must pin reclamation"),
+    };
+    std::fs::remove_file(&path).unwrap();
+    assert_eq!(first.read(reference).unwrap(), b"captured configuration");
+    assert_eq!(second.read(reference).unwrap(), b"captured configuration");
+    drop(first);
+    drop(second);
+    let observer = match try_lock_descriptor(observer, LockMode::Exclusive).unwrap() {
+        DescriptorLockAttempt::Contended(file) => file,
+        _ => panic!("last path-based reader still holds the old inode"),
+    };
+    drop(legacy);
+    assert!(matches!(
+        try_lock_descriptor(observer, LockMode::Exclusive).unwrap(),
+        DescriptorLockAttempt::Acquired(_)
+    ));
+}
+
+#[test]
+fn reader_refuses_generation_under_exclusive_reclamation_without_waiting() {
+    use capsem_foundation::unix::lock::{try_lock_descriptor, DescriptorLockAttempt, LockMode};
+    let dir = tempfile::tempdir().unwrap();
+    let path = archive(&dir);
+    let mut writer = BodyLogWriter::open(&path).unwrap();
+    writer.stage(b"configuration").unwrap();
+    writer.close_block().unwrap();
+    writer.sync().unwrap();
+    let header = writer.header();
+    let end = writer.end();
+    drop(writer);
+    let held = match try_lock_descriptor(File::open(&path).unwrap(), LockMode::Exclusive).unwrap() {
+        DescriptorLockAttempt::Acquired(held) => held,
+        _ => panic!("no reader yet"),
+    };
+    assert!(
+        matches!(BodyLogReader::from_descriptor(File::open(&path).unwrap(),header,end),
+        Err(ArchiveError::Io(error)) if error.kind()==std::io::ErrorKind::WouldBlock)
+    );
+    drop(held);
+    BodyLogReader::from_descriptor(File::open(&path).unwrap(), header, end).unwrap();
+}
+
 /// Three segments of one open block, one body each, and where they landed.
 fn three_segments(path: &Path) -> (Vec<(BodyRef, Vec<u8>)>, Vec<SegmentWritten>) {
     let mut writer = BodyLogWriter::open(path).unwrap();

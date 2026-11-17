@@ -32,13 +32,15 @@ use crate::writer::refuse_symlink;
 use crate::{ArchiveCodecs, ArchiveError, BlockDecoder, Result};
 use capsem_foundation::unix::contained::{ContainedDir, ContainedOpenOptions};
 use capsem_foundation::unix::fs as unix_fs;
+use capsem_foundation::unix::lock::{try_lock_descriptor, DescriptorLock, DescriptorLockAttempt, LockMode};
 
 /// Reads bodies back out of one `session.bodies`.
 ///
 /// One per thread: the file handle and the block cursor live behind
 /// `RefCell`, so this is `Send` but not `Sync`.
 pub struct BodyLogReader {
-    file: RefCell<File>,
+    // The captured inode stays visibly leased even after its path is unlinked.
+    file: RefCell<DescriptorLock>,
     /// The path this reader was opened on, and the file that was there at the
     /// time. Retention replaces the archive by renaming a compacted copy over
     /// it -- see `file_was_replaced`.
@@ -156,7 +158,17 @@ impl BodyLogReader {
         Ok(reader)
     }
 
-    fn from_descriptor_unchecked(mut file: File, committed_end: u64, codecs: ArchiveCodecs) -> Result<Self> {
+    fn from_descriptor_unchecked(file: File, committed_end: u64, codecs: ArchiveCodecs) -> Result<Self> {
+        let mut file = match try_lock_descriptor(file, LockMode::Shared)? {
+            DescriptorLockAttempt::Acquired(lease) => lease,
+            DescriptorLockAttempt::Contended(_) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WouldBlock,
+                    "archive generation is exclusively leased for reclamation",
+                )
+                .into());
+            }
+        };
         if committed_end < FILE_HEADER_BYTES as u64 {
             return Err(ArchiveError::BadFileHeader);
         }
