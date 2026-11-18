@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Fixed: Fork checks original source generation and revision expectations before freezing or allocating a destination, and retains its copy under service ownership after HTTP disconnection. Publication conflicts remove only the unpublished copy; unconfirmed persistence identifies the retained VM for reconciliation.
 
+- Fixed: Cold saved workloads prepare fresh approved variables, startup controls and resource limits for their new owner while reusing verified carried image bytes. Reprepared files pass through the ordinary import policy; refused imports or changed owners cannot publish them.
+
 - Fixed: Start and resume reject stale generation and environment expectations before launch, retain producer ownership after HTTP disconnection, and wait for the original workload owner. Native restore locks release before the long startup wait; failed cleanup cannot retire a replacement generation.
 
 - Added: Operator VM readiness reads identify the original generation and the intent-specific boot, desired or saved revision. Historical timing is verified, and changed selections are refused before a wait plan is returned.

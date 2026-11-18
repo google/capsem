@@ -2,6 +2,8 @@ use super::*;
 use crate::tests::*;
 use capsem_logger::events::PreparedEnvironmentRevision;
 
+mod carried;
+
 fn id(n: u64) -> String {
     format!("00000000-0000-4000-8000-{n:012x}")
 }

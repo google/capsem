@@ -3,7 +3,12 @@ use super::*;
 
 /// Missing differs from corrupt: a saved workload cannot silently become a
 /// fresh setup merely because its durable launch record is unreadable.
-pub(crate) fn recorded_image(state: &ServiceState, id: &str) -> Result<Option<String>, String> {
+pub(crate) struct RecordedImage {
+    pub(crate) resolved: String,
+    pub(crate) manifest: String,
+}
+
+pub(crate) fn recorded_image(state: &ServiceState, id: &str) -> Result<Option<RecordedImage>, String> {
     let session = resolve_session_dir(state, id).map_err(AppError::into_message)?;
     if !session
         .join(LAUNCH_RECORD)
@@ -13,10 +18,14 @@ pub(crate) fn recorded_image(state: &ServiceState, id: &str) -> Result<Option<St
         return Ok(None);
     }
     let record = read_launch_record(&session).ok_or("invalid recorded workload identity")?;
-    record
-        .resolved
-        .map(Some)
-        .ok_or_else(|| "recorded workload has no immutable image identity".into())
+    Ok(Some(RecordedImage {
+        resolved: record
+            .resolved
+            .ok_or("recorded workload has no immutable image identity")?,
+        manifest: record
+            .manifest
+            .ok_or("recorded workload has no immutable manifest identity")?,
+    }))
 }
 
 impl ContainerSetups {

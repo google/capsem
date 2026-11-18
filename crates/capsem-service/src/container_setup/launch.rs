@@ -1,6 +1,64 @@
 //! One generation-owned image admission, staging and execution pipeline.
 use super::*;
 
+/// Reuse admitted immutable bytes while sending every freshly prepared control
+/// through the ordinary import boundary. Retirement joins blocking publishers.
+pub(crate) async fn stage_carried_plan(
+    state: &Arc<ServiceState>,
+    owner: &Arc<crate::owner_connection::OwnerConnection>,
+    image: &str,
+    manifest: &str,
+    files: Vec<stage::StagedFile>,
+) -> Result<(), String> {
+    owner.validate(state, false)?;
+    if files.is_empty() {
+        return Ok(());
+    }
+    let checked_owner = Arc::clone(owner);
+    state
+        .off_worker(move |state| {
+            checked_owner.validate(&state, false)?;
+            if !super::relaunch::needs_relaunch(&state, checked_owner.id()) {
+                return Err("running workload controls cannot be replaced".to_string());
+            }
+            Ok(())
+        })
+        .await
+        .map_err(AppError::into_message)??;
+    let generation = {
+        let instances = state.instances.lock().unwrap();
+        let _instance = instances
+            .get(owner.id())
+            .filter(|instance| instance.generation == owner.generation())
+            .ok_or("carried workload owner changed before staging")?;
+        // Admit the setup record while this original owner is still registered.
+        let generation = state.containers.begin(owner.id(), image);
+        drop(instances);
+        generation
+    };
+    let lease = state
+        .containers
+        .work_lease(owner.id(), generation)
+        .ok_or("carried workload staging cancelled")?;
+    tokio::select! {
+        () = state.containers.wait_for_predecessors(owner.id(), generation) => {},
+        () = lease.cancelled() => return Err("carried workload staging cancelled".into()),
+    }
+    owner.validate(state, false)?;
+    if !state.containers.advance(owner.id(), generation, |status| {
+        status.state = ContainerState::Staging;
+        status.digest = Some(manifest.to_owned());
+        status.resolved = Some(image.to_owned());
+    }) {
+        return Err("carried workload staging cancelled".into());
+    }
+    for file in files {
+        owner.validate(state, false)?;
+        stage_file(state, owner.id(), generation, file).await?;
+    }
+    owner.validate(state, false)
+}
+
 /// Pull, stage and start `spec` in VM `id` in the background.
 pub(crate) fn start(state: &Arc<ServiceState>, id: String, spec: ContainerSpec) {
     start_workload(state, id, spec, None);

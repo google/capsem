@@ -20,7 +20,7 @@ mod activity;
 mod launch;
 #[cfg(test)]
 use launch::run;
-pub(crate) use launch::{start, start_selected};
+pub(crate) use launch::{stage_carried_plan, start, start_selected};
 mod cache_owners;
 mod metadata;
 pub(crate) use metadata::{recorded_image, source_app};

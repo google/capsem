@@ -44,7 +44,7 @@ pub(crate) async fn prepare_image(state: &Arc<ServiceState>, id: &str, attach: b
             .await
             .map_err(crate::AppError::from)?;
         let admitted = admission.admit_saved(&requested).await.map_err(crate::AppError::from)?;
-        if recorded != admitted.to_string() {
+        if recorded.resolved != admitted.to_string() {
             return Err(unavailable(
                 "recorded workload does not match the selected environment image".into(),
             ));
@@ -52,17 +52,48 @@ pub(crate) async fn prepare_image(state: &Arc<ServiceState>, id: &str, attach: b
         let context = selected
             .context()
             .map_err(|_| unavailable("invalid environment launch identity".into()))?;
-        let owner = selected.owner;
-        state
+        let owner = Arc::clone(&selected.owner);
+        let startup = selected.startup;
+        let manifest = recorded.manifest.clone();
+        let files = state
             .off_worker(move |state| {
                 owner.validate(&state, false)?;
                 let session = crate::resolve_session_dir(&state, owner.id()).map_err(crate::AppError::into_message)?;
-                capsem_core::container::workspace_owner::rebind_environment(&session, &context)
-                    .map_err(|error| format!("rebind trusted environment launch: {error:#}"))?;
-                owner.validate(&state, false)
+                let (ram_mb, cpus) = {
+                    let instances = state.instances.lock().unwrap();
+                    let instance = instances
+                        .get(owner.id())
+                        .filter(|instance| instance.generation == owner.generation())
+                        .ok_or("environment preparation owner changed")?;
+                    let resources = (instance.ram_mb, instance.cpus);
+                    drop(instances);
+                    resources
+                };
+                let resources =
+                    capsem_core::container::workload_resources(ram_mb, cpus).map_err(|error| error.to_string())?;
+                let plan = capsem_core::container::workspace_owner::plan_environment(
+                    &session,
+                    &manifest,
+                    &context,
+                    &variables,
+                    startup.as_ref(),
+                    resources,
+                )
+                .map_err(|error| format!("prepare trusted environment launch: {error:#}"))?;
+                owner.validate(&state, false)?;
+                Ok::<_, String>(plan)
             })
             .await?
             .map_err(unavailable)?;
+        crate::container_setup::stage_carried_plan(
+            state,
+            &selected.owner,
+            &recorded.resolved,
+            &recorded.manifest,
+            files,
+        )
+        .await
+        .map_err(unavailable)?;
         return Ok(false);
     }
     let spec = capsem_api::ContainerSpec {
