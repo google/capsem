@@ -41,6 +41,9 @@ impl State {
 pub(super) struct Lease(Arc<State>);
 
 impl Activity {
+    pub(super) fn generation(&self) -> u64 {
+        self.0.generation
+    }
     pub(super) fn new(id: &str, generation: u64, retiring: &Retiring) -> Self {
         Self(Arc::new(State {
             id: id.into(),

@@ -1,6 +1,44 @@
 use super::*;
 
 #[tokio::test]
+async fn replacement_setup_waits_for_retired_launch_writer() {
+    let seen = Arc::new(Mutex::new(None));
+    let fx = fixture(FixtureImages {
+        access: seen.clone(),
+        ..images()
+    });
+    let previous = fx.state.containers.begin("box", "previous");
+    let lease = fx.state.containers.work_lease("box", previous).unwrap();
+    let session = fx.workspace.parent().unwrap().parent().unwrap().to_owned();
+    let (release, wait) = std::sync::mpsc::channel();
+    let writer = tokio::task::spawn_blocking(move || {
+        let _lease = lease;
+        wait.recv().unwrap();
+        capsem_core::session::publish_launch_control(&session, "options.json", b"previous generation").unwrap();
+    });
+    let owner = owner_accepting_stage_and_launch(&fx.uds_path);
+    start(&fx.state, "box".into(), spec(Some(RegistryAccess::default())));
+    let pulled_before_retirement = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while seen.lock().unwrap().is_none() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .is_ok();
+    release.send(()).unwrap();
+    writer.await.unwrap();
+    owner.await.unwrap();
+    wait_for(&fx.state, "box", |status| status.state == ContainerState::Starting).await;
+    assert!(
+        !pulled_before_retirement,
+        "replacement reached image work before the previous control writer retired"
+    );
+    let session = fx.workspace.parent().unwrap().parent().unwrap();
+    let options = std::fs::read(capsem_core::session::image_share_path(session).join("options.json")).unwrap();
+    assert!(String::from_utf8(options).unwrap().contains("serve"));
+}
+
+#[tokio::test]
 async fn bound_shutdown_releases_vz_guard_before_waiting_for_its_child_reaper() {
     let state = crate::tests::make_test_state();
     let id = "bound-retirement";

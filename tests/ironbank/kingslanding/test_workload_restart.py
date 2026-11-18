@@ -26,7 +26,7 @@ def test_saved_workload_refreshes_its_controller_and_terminal_after_restarts(ser
     # literal stopped testing resume when the console code moved to a helper.
     stale = b'raise SystemExit("stale controller executed before refresh")\n'
     with image_session(service, tmp_path, "restart-terminal") as vm_id:
-        stage = vm_session_dir(service.tmp_dir, client, vm_id) / "guest/workspace/.capsem-image"
+        stage = vm_session_dir(service.tmp_dir, client, vm_id) / "image"
         options = (stage / "options.json").read_bytes()
         result = workload_exec(client, vm_id, "printf preserved > restart-proof.txt")
         assert result["exit_code"] == 0, result

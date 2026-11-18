@@ -1,5 +1,5 @@
-//! Service-owned container workloads: pull an OCI image on the host, stage it
-//! into the VM's workspace and start the guest launcher.
+//! Service-owned container workloads: pull an OCI image on the host, stage
+//! host-owned controls on its read-only share and start the guest launcher.
 //!
 //! The service coordinates; it never forwards workload bytes. Registry access
 //! lives only in the setup task and is dropped with it.
@@ -107,6 +107,17 @@ impl Default for ContainerSetups {
 }
 
 impl ContainerSetups {
+    /// Aborting an async setup cannot stop its already-running blocking
+    /// writer. A successor must drain those leases before changing the share.
+    async fn wait_for_predecessors(&self, id: &str, generation: u64) {
+        let retired = self.retiring.lock().unwrap().get(id).cloned().unwrap_or_default();
+        for activity in retired {
+            if activity.generation() != generation {
+                activity.wait().await;
+            }
+        }
+    }
+
     pub(crate) fn environment_catalog_puller(&self) -> anyhow::Result<capsem_assets::oci::Puller> {
         self.source.environment_catalog_puller()
     }
@@ -306,6 +317,10 @@ pub(crate) fn start(state: &Arc<ServiceState>, id: String, spec: ContainerSpec) 
 }
 
 async fn run(state: &Arc<ServiceState>, id: &str, generation: u64, spec: ContainerSpec) -> Result<(), String> {
+    state.containers.wait_for_predecessors(id, generation).await;
+    if !state.containers.advance(id, generation, |_| {}) {
+        return Err("container setup was cancelled".into());
+    }
     let started = std::time::Instant::now();
     // One resolver for every entrypoint: a catalog name becomes the pinned
     // digest it names here, and is an explicit reference from then on.
@@ -907,8 +922,8 @@ async fn share_image(
     .map_err(|e| format!("share image: {e:#}"))
 }
 
-/// Write one staged control file into the VM's workspace through the same
-/// contained, no-follow writer and import ledger a file upload uses.
+/// Audit the control import, then publish it on the host-only read-only share.
+/// The workspace receives markers only; it never supplies executable controls.
 async fn stage_file(
     state: &Arc<ServiceState>,
     id: &str,
@@ -920,16 +935,7 @@ async fn stage_file(
         .work_lease(id, generation)
         .ok_or("container stage cancelled")?;
     let path = format!("{}/{}", capsem_core::container::STAGE, file.name);
-    let target_id = id.to_owned();
-    let target_path = path.clone();
-    let (parent, name, lease) = state
-        .off_worker(move |state| {
-            let (parent, name) = resolve_workspace_target(&state, &target_id, &target_path, true)?;
-            Ok::<_, AppError>((parent, name, lease))
-        })
-        .await
-        .map_err(AppError::into_message)?
-        .map_err(AppError::into_message)?;
+    let session_dir = resolve_session_dir(state, id).map_err(AppError::into_message)?;
     let preview = file_security_preview_bytes(&file.bytes);
     let size = file.bytes.len() as u64;
     let uds_path = running_uds_path(state, id).map_err(AppError::into_message)?;
@@ -940,13 +946,16 @@ async fn stage_file(
     {
         return Err(format!("file import policy rewrote staged image file {}", file.name));
     }
+    if !state.containers.advance(id, generation, |_| {}) {
+        return Err("container stage was cancelled".into());
+    }
     tokio::task::spawn_blocking(move || -> Result<(), String> {
         let _lease = lease;
-        use std::io::Write;
-        parent
-            .open_file(&name, ContainedOpenOptions::write_create_truncate(0o644))
-            .and_then(|mut output| output.write_all(&file.bytes))
-            .map_err(|e| format!("write staged {}: {e}", file.name))
+        capsem_core::session::open_workspace(&session_dir)
+            .and_then(|workspace| workspace.descend_or_create(capsem_core::container::STAGE.as_ref(), 0o700))
+            .map_err(|error| format!("prepare workload runtime markers: {error}"))?;
+        capsem_core::session::publish_launch_control(&session_dir, &file.name, &file.bytes)
+            .map_err(|e| format!("write trusted launch control {}: {e:#}", file.name))
     })
     .await
     .map_err(|e| format!("stage task: {e}"))?

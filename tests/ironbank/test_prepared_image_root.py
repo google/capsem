@@ -19,15 +19,17 @@ def assert_prepared_root(client, vm_id, expected):
 import json
 from pathlib import Path
 mounts = []
+options = []
 for entry in Path("/proc").glob("[0-9]*/cmdline"):
     try:
         argv = entry.read_bytes().split(bytes([0]))
-        if b"/root/.capsem-image/launch.py" in argv and b"--detached" in argv:
+        if b"/run/capsem-image/launch.py" in argv and b"--detached" in argv:
             mounts.append((entry.parent / "mounts").read_text())
+            options.append(json.loads((entry.parent / "root/run/capsem-image/options.json").read_text()))
     except FileNotFoundError:
         pass
 print(json.dumps({
-    "options": json.loads(Path("/root/.capsem-image/options.json").read_text()),
+    "options": options,
     "mounts": mounts,
     "raw_roots": list(map(str, Path("/var/lib/capsem/roots").glob("*/ready"))),
 }))
@@ -43,7 +45,8 @@ print(json.dumps({
     )
     assert result["exit_code"] == 0, result
     actual = json.loads(exec_output_text(result))
-    assert actual["options"]["rootfs"] == expected
+    assert len(actual["options"]) == 1, actual["options"]
+    assert actual["options"][0]["rootfs"] == expected
     assert actual["raw_roots"] == []
     assert len(actual["mounts"]) == 1, actual["mounts"]
     assert any(

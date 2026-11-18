@@ -1,11 +1,9 @@
 //! A recorded workload under a new owner: a fork, a `--from` clone, a resume.
 //!
-//! The guest relaunches a `ready` stage on every boot (capsem-init), so mostly
-//! the host side needs restoring: the live status that routes exec into the
-//! workload, and the surface grant. A stage whose first launch died before
-//! `ready` is the one case the owner starts itself (`needs_relaunch`). An exposure lives in the VM owner process
-//! that made it, so a new owner never inherits one; it is granted again once
-//! the workload runs.
+//! Cold boots await service policy admission before restarting the recorded
+//! workload from host-owned controls. Live runtime markers prevent duplicate
+//! starts on reconnect. An exposure belongs to its original VM owner, so a
+//! new owner receives a fresh one after the workload reports running.
 //!
 //! The image itself needs nothing from here. A relaunch unpacks from the
 //! session's own image share, which is host-only and survives a stop, or not
@@ -133,13 +131,18 @@ pub(crate) async fn restore_ready(state: &Arc<ServiceState>, id: &str) -> Result
     Ok(())
 }
 
-/// Whether VM `id` holds a staged workload its boot did not start: capsem-init
-/// relaunches only a stage the launcher marked `ready`, which it does once the
-/// image is unpacked. A first launch that died before then left a stage with
-/// its options and no marker, which nothing else would ever start. A boot that
-/// found `ready` launched it already, so this never starts a second workload.
+/// Cold boots clear runtime markers and await service policy admission. A
+/// service reconnect to a live workload must not start it a second time.
 pub(crate) fn needs_relaunch(state: &ServiceState, id: &str) -> bool {
-    staged_marker(state, id, "options.json") && !staged_marker(state, id, capsem_core::container::STAGE_READY)
+    let trusted = resolve_session_dir(state, id).ok().is_some_and(|session| {
+        ContainedDir::open_root(&session)
+            .and_then(|root| root.descend(capsem_core::session::IMAGE_SHARE_DIR.as_ref()))
+            .and_then(|image| image.entry_kind("options.json".as_ref()))
+            .is_ok_and(|kind| kind == Some(EntryKind::File))
+    });
+    trusted
+        && !staged_marker(state, id, capsem_core::container::STAGE_RUNNING)
+        && !staged_marker(state, id, capsem_core::container::STAGE_EXITED)
 }
 
 /// Start VM `id`'s staged workload the way a create does, detached.
@@ -152,6 +155,13 @@ fn relaunch_in_background(state: &Arc<ServiceState>, id: &str, generation: u64) 
     };
     let (state, id) = (Arc::clone(state), id.to_owned());
     tokio::spawn(async move {
+        tokio::select! {
+            () = state.containers.wait_for_predecessors(&id, generation) => {},
+            () = lease.cancelled() => return,
+        }
+        if !state.containers.advance(&id, generation, |_| {}) {
+            return;
+        }
         let reply = tokio::select! {
             reply = send_ipc_command(
             &state,

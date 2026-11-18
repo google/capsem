@@ -204,26 +204,41 @@ async fn a_bare_vm_does_not_wait_for_a_workload_marker() {
     assert!(state.containers.status("box").is_none());
 }
 
-/// capsem-init relaunches only a stage it finds `ready`; a first launch that
-/// died before writing it leaves a stage nothing would start again. The new
-/// owner relaunches exactly that case, and never one the boot already took.
+/// Only trusted controls can request a relaunch. A cold boot's retained ready
+/// marker cannot suppress it, while a live or exited workload is not repeated.
 #[tokio::test]
-async fn only_a_staged_workload_that_never_got_ready_is_relaunched_by_the_owner() {
+async fn trusted_controls_and_runtime_markers_determine_service_relaunch() {
     let dir = tempfile::tempdir().unwrap();
     let state = Arc::new(make_test_state_owned());
     let session = dir.path().join("session");
     let stage = session.join("guest/workspace").join(capsem_core::container::STAGE);
     std::fs::create_dir_all(&stage).unwrap();
-    insert_fake_instance_with_session_dir(&state, "box", 1, session);
+    insert_fake_instance_with_session_dir(&state, "box", 1, session.clone());
 
     assert!(!needs_relaunch(&state, "box"), "nothing staged, nothing to launch");
     std::fs::write(stage.join("options.json"), b"{}").unwrap();
+    assert!(
+        !needs_relaunch(&state, "box"),
+        "writable options cannot authorize a launch"
+    );
+    capsem_core::session::publish_launch_control(&session, "options.json", b"{}").unwrap();
     assert!(needs_relaunch(&state, "box"), "staged but never ready");
     std::fs::write(stage.join(capsem_core::container::STAGE_READY), b"1\n").unwrap();
     assert!(
-        !needs_relaunch(&state, "box"),
-        "the boot relaunches a ready stage itself"
+        needs_relaunch(&state, "box"),
+        "a cold boot awaits service admission even with a ready marker"
     );
+    for marker in [
+        capsem_core::container::STAGE_RUNNING,
+        capsem_core::container::STAGE_EXITED,
+    ] {
+        std::fs::write(stage.join(marker), b"1\n").unwrap();
+        assert!(
+            !needs_relaunch(&state, "box"),
+            "a live or exited workload must not repeat"
+        );
+        std::fs::remove_file(stage.join(marker)).unwrap();
+    }
 }
 
 fn stage_of(session_dir: &std::path::Path) -> std::path::PathBuf {
@@ -236,12 +251,9 @@ fn stage_of(session_dir: &std::path::Path) -> std::path::PathBuf {
 fn staged(session_dir: &std::path::Path, markers: &[&str]) {
     let stage = stage_of(session_dir);
     std::fs::create_dir_all(&stage).unwrap();
-    std::fs::write(
-        stage.join("options.json"),
-        serde_json::to_vec(&serde_json::json!({"workspace_owner": "image_user"})).unwrap(),
-    )
-    .unwrap();
-    std::fs::write(stage.join("launch.py"), capsem_core::container::LAUNCHER).unwrap();
+    capsem_core::session::publish_launch_control(session_dir, "options.json", br#"{"workspace_owner":"image_user"}"#)
+        .unwrap();
+    capsem_core::session::publish_launch_control(session_dir, "launch.py", capsem_core::container::LAUNCHER).unwrap();
     for marker in markers {
         std::fs::write(stage.join(marker), "1\n").unwrap();
     }
@@ -264,19 +276,15 @@ fn a_clone_starts_without_its_sources_run_markers() {
         .unwrap()
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
         .collect();
-    assert_eq!(
-        left,
-        std::iter::once(STAGE_READY)
-            .chain(std::iter::once("options.json"))
-            .chain(capsem_core::container::LAUNCHER_FILES.iter().map(|(name, _)| *name))
-            .map(String::from)
-            .collect()
-    );
+    assert_eq!(left, std::iter::once(STAGE_READY.to_string()).collect());
+    let controls = capsem_core::session::image_share_path(&clone);
+    assert!(controls.join("options.json").is_file());
+    assert!(controls.join("launch.py").is_file());
 }
 
 #[cfg(target_os = "linux")]
 #[test]
-fn forgetting_a_run_upgrades_legacy_stage_before_the_next_boot() {
+fn forgetting_a_run_refuses_writable_legacy_controls_before_the_next_boot() {
     let dir = tempfile::tempdir().unwrap();
     let session = dir.path().join("session");
     let stage = stage_of(&session);
@@ -285,17 +293,12 @@ fn forgetting_a_run_upgrades_legacy_stage_before_the_next_boot() {
     std::fs::write(stage.join("launch.py"), b"legacy").unwrap();
     std::fs::write(stage.join(capsem_core::container::STAGE_RUNNING), b"1\n").unwrap();
 
-    forget_previous_run(&session).unwrap();
-
-    let options: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(stage.join("options.json")).unwrap()).unwrap();
-    assert_eq!(options["workspace_owner"], "image_user");
-    assert_eq!(options["env"]["KEEP"], "yes");
-    assert_eq!(
-        std::fs::read(stage.join("launch.py")).unwrap(),
-        capsem_core::container::LAUNCHER
-    );
-    assert!(!stage.join(capsem_core::container::STAGE_RUNNING).exists());
+    assert!(forget_previous_run(&session).unwrap_err().contains("guest-writable"));
+    assert_eq!(std::fs::read(stage.join("launch.py")).unwrap(), b"legacy");
+    assert!(stage.join(capsem_core::container::STAGE_RUNNING).exists());
+    assert!(!capsem_core::session::image_share_path(&session)
+        .join("options.json")
+        .exists());
 }
 
 /// The stage is guest-written: a marker replaced by a link is removed as the

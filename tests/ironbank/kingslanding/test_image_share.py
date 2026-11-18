@@ -1,13 +1,9 @@
-"""An image reaches its VM through a read-only share holding only its blobs.
+"""Images and trusted launch controls reach the VM on a read-only share.
 
-`capsem create --image` used to copy every layer of the image into the
-workspace stage, which the guest can write. The stage now keeps two small
-control files and not one layer byte; the image's blobs sit in the session's
-host-only image share, each named by its SHA-256, which the VM owner attaches
-as a read-only VirtioFS device. Read-only is the device's property: guest
-root mounting it without `ro`, or remounting it read-write, still cannot
-create, change, rename or remove anything in it. A fork links its source's
-blobs instead of reading anything back from the guest.
+The writable stage holds runtime markers. Host-owned options, controllers
+and verified image blobs stay on a device that refuses guest writes even
+after a read-write remount. Forks link immutable blobs and copy controls;
+guest-writable fake controls never replace the trusted inputs on restart.
 """
 
 import hashlib
@@ -26,10 +22,10 @@ __all__ = ["service"]
 
 pytestmark = pytest.mark.integration
 
-#: What the workspace stage may hold: the launcher's inputs and its markers.
-CONTROL_FILES = {"options.json"} | {
-    path.name
-    for path in (Path(__file__).resolve().parents[3] / "guest/artifacts/container").glob("*.py")
+#: Trusted control inventory, separate from image blobs and runtime markers.
+CONTROL_FILES = {
+    "options.json", "launch.py", "runtime_console.py", "runtime_pty.py",
+    "runtime_terminal.py", "runtime_userns.py", "runtime_workspace.py", "runtime_home.py",
 }
 MARKERS = {"ready", "running", "failed", "exited"}
 MOUNT = "/run/image-share-probe"
@@ -53,7 +49,7 @@ def image_blobs(share, manifest):
 def assert_stage_holds_no_image(session, layers):
     stage = stage_of(session)
     names = {path.name for path in stage.iterdir()}
-    assert CONTROL_FILES <= names <= CONTROL_FILES | MARKERS, names
+    assert {"ready", "running"} <= names <= MARKERS, names
     for path in stage.iterdir():
         # The launcher's source is the largest control file, a few dozen KiB.
         assert path.stat().st_size < 64 * 1024, path
@@ -114,37 +110,52 @@ def test_the_image_reaches_the_guest_through_a_read_only_share_of_its_blobs(serv
         created(service, tmp_path, reference, certificate, "image-share") as vm,
     ):
         session = vm_session_dir(service.tmp_dir, client, vm["id"])
-        options = json.loads((stage_of(session) / "options.json").read_text())
+        options = json.loads((share_of(session) / "options.json").read_text())
         manifest = options["manifest"]
         share = share_of(session)
         expected, document = image_blobs(share, manifest)
         listed = {path.name for path in share.iterdir()}
-        assert listed == expected, "the share holds that image's blobs and nothing else"
+        assert listed == expected | CONTROL_FILES, "the share holds verified blobs and trusted controls"
         for path in share.iterdir():
             assert path.is_file() and not path.is_symlink(), path
-            assert hashlib.sha256(path.read_bytes()).hexdigest() == path.name, path
-            assert path.stat().st_mode & 0o777 == 0o444, path
+            if path.name in expected:
+                assert hashlib.sha256(path.read_bytes()).hexdigest() == path.name, path
+                assert path.stat().st_mode & 0o777 == 0o444, path
         assert_stage_holds_no_image(session, document["layers"])
 
         victim = document["layers"][0]["digest"].removeprefix("sha256:")
-        output = run(client, vm["id"], guest_probe(expected, victim), target="vm")
-        (tmp_path / "guest-probe.txt").write_text(output)
-        seen = fields(output)
-        assert set(seen["LIST"].split()) == expected, output
-        assert seen["HASHES"].split() == sorted(expected), "the guest reads the verified bytes"
-        assert set(seen["AFTER"].split()) == expected, output
-        assert "WROTE:" not in output, output
+        originals = {name: (share / name).read_bytes() for name in CONTROL_FILES}
+        for selected in [victim, "options.json", "launch.py"]:
+            output = run(client, vm["id"], guest_probe(expected, selected), target="vm")
+            (tmp_path / f"guest-probe-{selected}.txt").write_text(output)
+            seen = fields(output)
+            assert set(seen["LIST"].split()) == listed, output
+            assert seen["HASHES"].split() == sorted(expected), "the guest reads the verified bytes"
+            assert set(seen["AFTER"].split()) == listed, output
+            assert "WROTE:" not in output, output
+        assert run(client, vm["id"], "test ! -r /run/capsem-image/options.json && test ! -r /workspace/.capsem-image/options.json && echo private").strip() == "private"
         # The host's copy is untouched, whatever the guest tried.
-        assert {path.name for path in share.iterdir()} == expected
+        assert {path.name for path in share.iterdir()} == listed
         assert hashlib.sha256((share / victim).read_bytes()).hexdigest() == victim
+        assert {name: (share / name).read_bytes() for name in CONTROL_FILES} == originals
+        # Fake controls in the writable workspace cannot replace launch inputs
+        # on the next generation or a fork.
+        run(client, vm["id"], "printf 'raise SystemExit(99)\\n' > /root/.capsem-image/launch.py; printf '{}' > /root/.capsem-image/options.json", target="vm")
 
         # A fork links its source's blobs; nothing comes back from the guest.
         fork_id = client.post(f"/vms/{vm['id']}/fork", {"name": "image-share-fork"})["id"]
         try:
             fork = vm_session_dir(service.tmp_dir, client, fork_id)
-            assert {path.name for path in share_of(fork).iterdir()} == expected
+            assert {path.name for path in share_of(fork).iterdir()} == listed
             for name in expected:
                 assert (share_of(fork) / name).stat().st_ino == (share / name).stat().st_ino, name
-            assert_stage_holds_no_image(fork, document["layers"])
+            for name in CONTROL_FILES:
+                assert (share_of(fork) / name).read_bytes() == originals[name]
+                assert (share_of(fork) / name).stat().st_ino != (share / name).stat().st_ino
+            assert "error" not in client.post(f"/vms/{fork_id}/resume", {}, timeout=120)
+            assert run(client, fork_id, "printf TRUSTED_FORK").strip() == "TRUSTED_FORK"
+            assert "error" not in client.post(f"/vms/{vm['id']}/stop", {}, timeout=60)
+            assert "error" not in client.post(f"/vms/{vm['id']}/resume", {}, timeout=120)
+            assert run(client, vm["id"], "printf TRUSTED_RESUME").strip() == "TRUSTED_RESUME"
         finally:
             client.delete(f"/vms/{fork_id}/delete")

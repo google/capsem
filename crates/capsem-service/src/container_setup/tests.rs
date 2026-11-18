@@ -257,7 +257,11 @@ async fn staged_workload_waits_for_guest_readiness_before_launching() {
     std::fs::write(fx.uds_path.with_extension("launched"), b"launched\n").unwrap();
     start(&fx.state, "box".into(), spec(None));
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        while !fx.workspace.join(".capsem-image/launch.py").exists() {
+        let session = fx.workspace.parent().unwrap().parent().unwrap();
+        while !capsem_core::session::image_share_path(session)
+            .join("launch.py")
+            .exists()
+        {
             tokio::task::yield_now().await;
         }
     })
@@ -553,15 +557,18 @@ async fn setup_stages_the_plan_through_the_import_ledger_then_launches_detached(
         }
         other => panic!("setup must end with the detached launch, got {other:?}"),
     }
-    let stage = fx.workspace.join(".capsem-image");
+    let session = fx.workspace.parent().unwrap().parent().unwrap();
+    let stage = capsem_core::session::image_share_path(session);
+    assert!(!fx.workspace.join(".capsem-image/options.json").exists());
     let mut names: Vec<_> = std::fs::read_dir(&stage)
         .unwrap()
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
         .collect();
     names.sort();
     let mut expected_names = control_file_names();
+    expected_names.extend([MANIFEST_BLOB, CONFIG_BLOB, LAYER_BLOB]);
     expected_names.sort_unstable();
-    assert_eq!(names, expected_names, "only control files are staged");
+    assert_eq!(names, expected_names, "controls and blobs stay on the read-only share");
     for file in walk(&fx.workspace) {
         let bytes = std::fs::read(&file).unwrap();
         assert!(
@@ -570,9 +577,7 @@ async fn setup_stages_the_plan_through_the_import_ledger_then_launches_detached(
             file.display()
         );
     }
-    // The image is in the session's host-only share, every blob and nothing
-    // else, read-only.
-    let session = fx.workspace.parent().unwrap().parent().unwrap();
+    // Blob inventory excludes the trusted controls sharing this device.
     assert_eq!(
         capsem_core::session::image_share_blobs(session).unwrap(),
         [MANIFEST_BLOB, CONFIG_BLOB, LAYER_BLOB]
@@ -699,7 +704,8 @@ async fn registry_credentials_never_reach_the_owner_or_the_staged_workload() {
     );
     let sent = format!("{messages:?}");
     let mut staged = String::new();
-    for entry in walk(&fx.workspace) {
+    let session = fx.workspace.parent().unwrap().parent().unwrap();
+    for entry in walk(&capsem_core::session::image_share_path(session)) {
         staged.push_str(&String::from_utf8_lossy(&std::fs::read(entry).unwrap()));
     }
     assert!(
@@ -756,7 +762,9 @@ async fn cancel_during_staging_never_launches_the_workload() {
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     assert!(fx.state.containers.status("box").is_none());
     assert!(
-        !fx.workspace.join(".capsem-image/launch.py").exists(),
+        !capsem_core::session::image_share_path(fx.workspace.parent().unwrap().parent().unwrap())
+            .join("launch.py")
+            .exists(),
         "staging must stop at the cancellation"
     );
 }
