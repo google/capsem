@@ -314,8 +314,14 @@ fn managed_session_policy_from_paths(
     capsem_config::ManagedSessionPolicy::resolve(user.as_ref(), corp.as_ref())
 }
 
-/// Corp constraints from every available path (system + user-provisioned).
-/// First path wins per-key (/etc/capsem/corp.toml overrides ~/.capsem/corp.toml).
+/// Enforcement-only corporate reads. Local UI/user settings do not select
+/// catalog authority; a broken corporate file remains an error.
+pub fn load_corp_policy_files() -> Result<SettingsFile, String> {
+    policy_files_from_paths(None, &corp_config_paths()).map(|(_, corporate)| corporate)
+}
+
+/// Corporate UI view, retaining the warning-and-empty fallback for repair.
+/// First path wins per key; enforcement uses `load_corp_policy_files`.
 pub fn load_corp_files() -> SettingsFile {
     merge_corp_files(corp_config_paths().into_iter().filter_map(|path| {
         load_settings_file(&path)

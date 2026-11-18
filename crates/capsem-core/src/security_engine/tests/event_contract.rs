@@ -825,3 +825,20 @@ async fn host_environment_writes_never_enter_runtime_security_admission() {
         assert!(!called.get(), "host-only {kind} entered the runtime writer callback");
     }
 }
+
+#[test]
+fn observed_catalog_revocations_have_no_sandbox_event_or_credential_attribution() {
+    let op = WriteOp::ObserveCatalogRevocation(capsem_logger::catalog_revocations::CatalogRevocation {
+        key: capsem_logger::catalog_revocations::CatalogRevocationKey {
+            kind: capsem_config::catalogs::CatalogKind::Skills,
+            source_repository: "registry.example/team/skills".into(),
+            entry_id: "review".into(),
+            version: "1.0.0".into(),
+        },
+        catalog_digest: format!("sha256:{}", "a".repeat(64)),
+        observed_at_unix_ms: 1,
+    });
+    assert_eq!(RuntimeSecurityEventType::for_write_op(&op), None);
+    assert_eq!(super::super::forensics::logger_write_credential_ref(&op), None);
+    assert_eq!(super::super::forensics::logger_write_trace_id(&op), None);
+}

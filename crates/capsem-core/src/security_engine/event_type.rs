@@ -214,6 +214,7 @@ impl RuntimeSecurityEventType {
             | WriteOp::EnvironmentRequestInvalidation(_)
             | WriteOp::EnvironmentApplication(_)
             | WriteOp::PrepareEnvironmentVariablePurge(_)
+            | WriteOp::ObserveCatalogRevocation(_)
             | WriteOp::EnvironmentSandboxReference(_) => return None,
             // Registry rows of a network database: the state a lifecycle
             // event describes, so they audit under the same type.
