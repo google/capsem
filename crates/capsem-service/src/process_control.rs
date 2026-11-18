@@ -70,6 +70,9 @@ fn signal_name(signal: Signal) -> &'static str {
     match signal {
         Signal::Terminate => "SIGTERM",
         Signal::Kill => "SIGKILL",
+        Signal::Interrupt => "SIGINT",
+        Signal::Hangup => "SIGHUP",
+        Signal::Quit => "SIGQUIT",
     }
 }
 
