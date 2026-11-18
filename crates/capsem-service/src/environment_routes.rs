@@ -11,7 +11,7 @@ use capsem_api::{
     AgentOperation,
 };
 use capsem_core::environment::EnvironmentResolutionError;
-use capsem_service::environment_revisions::{EnvironmentCreateCoordinator, EnvironmentCreateError};
+use capsem_service::environment_revisions::{EnvironmentMutationCoordinator, EnvironmentMutationError};
 mod sources;
 use capsem_core::managed_sessions::LeaseClock;
 use capsem_logger::db::EnvironmentReferenceQuery;
@@ -95,13 +95,13 @@ pub(crate) async fn create(
     Json(request): Json<EnvironmentCreateRequest>,
 ) -> Result<Json<EnvironmentMutationResponse>, AppError> {
     actor.require_operator()?;
-    let owner = Arc::new(EnvironmentCreateCoordinator::new(state.environments.clone()));
+    let owner = Arc::new(EnvironmentMutationCoordinator::new(state.environments.clone()));
     let job = owner.submit(request, sources::Sources(state)).map_err(creation_error)?;
     job.wait().await.map(Json).map_err(creation_error)
 }
 
-fn creation_error(error: EnvironmentCreateError) -> AppError {
-    use EnvironmentCreateError as Create;
+fn creation_error(error: EnvironmentMutationError) -> AppError {
+    use EnvironmentMutationError as Create;
     let status = match error {
         Create::InvalidIntent | Create::Resolution(EnvironmentResolutionError::InvalidIntent) => {
             StatusCode::BAD_REQUEST

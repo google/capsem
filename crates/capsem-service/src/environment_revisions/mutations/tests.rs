@@ -56,7 +56,7 @@ impl EnvironmentPinResolver for Source {
 struct Fixture {
     _root: tempfile::TempDir,
     revisions: Arc<EnvironmentRevisions>,
-    creates: Arc<EnvironmentCreateCoordinator>,
+    creates: Arc<EnvironmentMutationCoordinator>,
 }
 impl Fixture {
     fn new() -> Self {
@@ -64,7 +64,7 @@ impl Fixture {
         let files = Arc::new(EnvironmentFiles::open(&root.path().join("environments")).unwrap());
         let ledger = Arc::new(DbHandle::open(&root.path().join("host.db")).unwrap());
         let revisions = Arc::new(EnvironmentRevisions::new(files, ledger));
-        let creates = Arc::new(EnvironmentCreateCoordinator::new(revisions.clone()));
+        let creates = Arc::new(EnvironmentMutationCoordinator::new(revisions.clone()));
         Self {
             _root: root,
             revisions,
@@ -159,7 +159,7 @@ async fn contradictory_intent_is_refused_without_resolving_or_modifying_the_save
                 .wait()
                 .await
                 .unwrap_err(),
-            EnvironmentCreateError::Conflict
+            EnvironmentMutationError::Conflict
         );
     }
     assert_eq!(source.calls.load(Ordering::SeqCst), 1);
@@ -206,7 +206,7 @@ async fn source_failure_never_creates_an_approval_or_revision() {
     };
     assert_eq!(
         f.creates.submit(request(4), source).unwrap().wait().await.unwrap_err(),
-        EnvironmentCreateError::Resolution(EnvironmentResolutionError::Unavailable)
+        EnvironmentMutationError::Resolution(EnvironmentResolutionError::Unavailable)
     );
     assert!(f
         .revisions
@@ -237,7 +237,7 @@ async fn creation_reconciles_after_reopening_the_host_ledger_without_resolving_a
     let ledger = Arc::new(DbHandle::open(&root.path().join("host.db")).unwrap());
     let files = Arc::new(EnvironmentFiles::open(&root.path().join("environments")).unwrap());
     let revisions = Arc::new(EnvironmentRevisions::new(files, ledger));
-    let creates = Arc::new(EnvironmentCreateCoordinator::new(revisions.clone()));
+    let creates = Arc::new(EnvironmentMutationCoordinator::new(revisions.clone()));
     let unavailable = Source {
         fail: true,
         ..Source::default()
@@ -363,3 +363,5 @@ async fn abandoned_pending_creation_expires_without_approval_or_source_refresh()
         EnvironmentRequestInvalidationKind::Expired
     );
 }
+
+mod changes;

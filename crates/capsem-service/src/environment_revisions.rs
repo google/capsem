@@ -15,9 +15,9 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 use tokio::sync::oneshot;
-mod creates;
+mod mutations;
 mod receipts;
-pub use creates::{EnvironmentCreateCoordinator, EnvironmentCreateError, EnvironmentCreateJob};
+pub use mutations::{EnvironmentMutationCoordinator, EnvironmentMutationError, EnvironmentMutationJob};
 mod startup;
 pub use startup::RecoverySummary;
 
@@ -133,11 +133,23 @@ impl EnvironmentRevisions {
         mode: CommitMode,
     ) -> Result<EnvironmentRevisionRecord, EnvironmentFileError> {
         validate_id(&revision.environment_id)?;
+        let lock = self.lock_for(&revision.environment_id)?;
+        let guard = lock.lock().await;
+        self.commit_locked(revision, at, mode, &guard).await
+    }
+    /// The mutation owner may already hold this environment's guard across
+    /// its final base check and decision. Keep publication on the same rail.
+    async fn commit_locked(
+        &self,
+        revision: PreparedEnvironmentRevision,
+        at: i64,
+        mode: CommitMode,
+        _guard: &tokio::sync::MutexGuard<'_, ()>,
+    ) -> Result<EnvironmentRevisionRecord, EnvironmentFileError> {
+        validate_id(&revision.environment_id)?;
         if at < revision.timestamp_unix_ms {
             return Err(EnvironmentFileError::InvalidDocument);
         }
-        let lock = self.lock_for(&revision.environment_id)?;
-        let _guard = lock.lock().await;
         self.reconcile_locked(&revision.environment_id, at).await?;
         let (revision, content) = encode_revision(revision).await?;
         let id = revision.environment_id.clone();
