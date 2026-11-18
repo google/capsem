@@ -33,6 +33,7 @@ pub mod mcp_aggregator;
 pub mod mcp_contracts;
 pub mod mcp_worker;
 pub mod poll;
+pub mod preparation;
 pub mod privatelink;
 pub mod proxy_control;
 pub mod proxy_credentials;
