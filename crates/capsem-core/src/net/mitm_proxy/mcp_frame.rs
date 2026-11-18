@@ -854,7 +854,7 @@ async fn evaluate_mcp_security_event(
     let (rules, plugin_policy) = endpoint.policy_snapshot();
     let result = async {
         let mut evaluation =
-            evaluate_security_boundary(&rules, Arc::clone(&plugin_policy), event).map_err(|error| error.to_string())?;
+            evaluate_security_boundary(&rules, plugin_policy.clone(), event).map_err(|error| error.to_string())?;
         if evaluation.enforcement.action == SecurityEnforcementAction::Ask {
             Box::pin(crate::security_engine::approval::enforcement::resolve_proxy(
                 db,
@@ -867,7 +867,7 @@ async fn evaluate_mcp_security_event(
             ))
             .await?;
             let (current_rules, current_plugins) = endpoint.policy_snapshot();
-            if !Arc::ptr_eq(&rules, &current_rules) || !Arc::ptr_eq(&plugin_policy, &current_plugins) {
+            if !Arc::ptr_eq(&rules, &current_rules) || !plugin_policy.same_snapshot(&current_plugins) {
                 evaluation.enforcement.action = SecurityEnforcementAction::Block;
                 evaluation.enforcement.reason = Some("MCP policy changed while approval was pending".into());
             }

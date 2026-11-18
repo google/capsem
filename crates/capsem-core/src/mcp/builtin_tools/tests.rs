@@ -179,7 +179,7 @@ fn is_builtin_tool_rejects_unknown() {
 #[test]
 fn builtin_http_security_allows_when_no_rule_matches() {
     let rules = default_dev_security_rules();
-    let result = evaluate_builtin_http_request("https://github.com/foo/bar", "GET", &rules, &BTreeMap::new());
+    let result = evaluate_builtin_http_request("https://github.com/foo/bar", "GET", &rules, BTreeMap::new());
     assert!(result.is_ok());
     assert_eq!(result.unwrap().domain, "github.com");
 }
@@ -187,7 +187,7 @@ fn builtin_http_security_allows_when_no_rule_matches() {
 #[test]
 fn builtin_http_security_blocks_matching_rule() {
     let rules = default_dev_security_rules();
-    let result = evaluate_builtin_http_request("https://evil-unknown-domain.xyz/hack", "GET", &rules, &BTreeMap::new());
+    let result = evaluate_builtin_http_request("https://evil-unknown-domain.xyz/hack", "GET", &rules, BTreeMap::new());
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("blocked"));
 }
@@ -195,7 +195,7 @@ fn builtin_http_security_blocks_matching_rule() {
 #[test]
 fn builtin_http_security_rejects_invalid_url() {
     let rules = default_dev_security_rules();
-    let result = evaluate_builtin_http_request("not a url at all", "GET", &rules, &BTreeMap::new());
+    let result = evaluate_builtin_http_request("not a url at all", "GET", &rules, BTreeMap::new());
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("invalid URL"));
 }
@@ -283,7 +283,7 @@ async fn call_unknown_builtin_returns_error() {
         &serde_json::json!({}),
         &client,
         &rules,
-        &BTreeMap::new(),
+        BTreeMap::new(),
         Some(serde_json::json!(1)),
         &mut Vec::new(),
     )
@@ -301,7 +301,7 @@ async fn fetch_http_missing_url_returns_error() {
         &serde_json::json!({}),
         &client,
         &rules,
-        &BTreeMap::new(),
+        BTreeMap::new(),
         Some(serde_json::json!(1)),
         &mut Vec::new(),
     )
@@ -324,7 +324,7 @@ async fn fetch_http_blocked_domain() {
         &serde_json::json!({"url": "https://evil-unknown-domain.xyz/"}),
         &client,
         &rules,
-        &BTreeMap::new(),
+        BTreeMap::new(),
         Some(serde_json::json!(1)),
         &mut Vec::new(),
     )
@@ -343,7 +343,7 @@ async fn grep_http_missing_pattern_returns_error() {
         &serde_json::json!({"url": "https://example.com"}),
         &client,
         &rules,
-        &BTreeMap::new(),
+        BTreeMap::new(),
         Some(serde_json::json!(1)),
         &mut Vec::new(),
     )
@@ -365,7 +365,7 @@ async fn grep_http_invalid_regex() {
         &serde_json::json!({"url": "https://github.com", "pattern": "[invalid"}),
         &client,
         &rules,
-        &BTreeMap::new(),
+        BTreeMap::new(),
         Some(serde_json::json!(1)),
         &mut Vec::new(),
     )
@@ -451,7 +451,7 @@ fn text_ct_empty() {
 #[test]
 fn builtin_http_security_rejects_ftp() {
     let rules = default_dev_security_rules();
-    let result = evaluate_builtin_http_request("ftp://example.com/file", "GET", &rules, &BTreeMap::new());
+    let result = evaluate_builtin_http_request("ftp://example.com/file", "GET", &rules, BTreeMap::new());
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("only http"));
 }
@@ -459,7 +459,7 @@ fn builtin_http_security_rejects_ftp() {
 #[test]
 fn builtin_http_security_rejects_file() {
     let rules = default_dev_security_rules();
-    let result = evaluate_builtin_http_request("file:///etc/passwd", "GET", &rules, &BTreeMap::new());
+    let result = evaluate_builtin_http_request("file:///etc/passwd", "GET", &rules, BTreeMap::new());
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("only http"));
 }
@@ -467,7 +467,7 @@ fn builtin_http_security_rejects_file() {
 #[test]
 fn builtin_http_security_rejects_data_uri() {
     let rules = default_dev_security_rules();
-    let result = evaluate_builtin_http_request("data:text/html,<h1>hi</h1>", "GET", &rules, &BTreeMap::new());
+    let result = evaluate_builtin_http_request("data:text/html,<h1>hi</h1>", "GET", &rules, BTreeMap::new());
     assert!(result.is_err());
     assert!(result.unwrap_err().contains("only http"));
 }
@@ -475,7 +475,7 @@ fn builtin_http_security_rejects_data_uri() {
 #[test]
 fn builtin_http_security_rejects_javascript() {
     let rules = default_dev_security_rules();
-    let result = evaluate_builtin_http_request("javascript:alert(1)", "GET", &rules, &BTreeMap::new());
+    let result = evaluate_builtin_http_request("javascript:alert(1)", "GET", &rules, BTreeMap::new());
     assert!(result.is_err());
     // reqwest::Url::parse may reject this as invalid, either way it errors
     assert!(result.is_err());
@@ -484,7 +484,7 @@ fn builtin_http_security_rejects_javascript() {
 #[test]
 fn builtin_http_security_rejects_empty_url() {
     let rules = default_dev_security_rules();
-    let result = evaluate_builtin_http_request("", "GET", &rules, &BTreeMap::new());
+    let result = evaluate_builtin_http_request("", "GET", &rules, BTreeMap::new());
     assert!(result.is_err());
 }
 
@@ -590,7 +590,7 @@ async fn fetch_http_rejects_ftp_scheme() {
         &serde_json::json!({"url": "ftp://example.com/file"}),
         &client,
         &rules,
-        &BTreeMap::new(),
+        BTreeMap::new(),
         Some(serde_json::json!(1)),
         &mut Vec::new(),
     )
@@ -609,7 +609,7 @@ async fn fetch_http_rejects_file_scheme() {
         &serde_json::json!({"url": "file:///etc/passwd"}),
         &client,
         &rules,
-        &BTreeMap::new(),
+        BTreeMap::new(),
         Some(serde_json::json!(1)),
         &mut Vec::new(),
     )
@@ -628,7 +628,7 @@ async fn fetch_http_rejects_data_uri() {
         &serde_json::json!({"url": "data:text/plain,hello"}),
         &client,
         &rules,
-        &BTreeMap::new(),
+        BTreeMap::new(),
         Some(serde_json::json!(1)),
         &mut Vec::new(),
     )
@@ -645,7 +645,7 @@ async fn fetch_http_url_is_number_not_string() {
         &serde_json::json!({"url": 42}),
         &client,
         &rules,
-        &BTreeMap::new(),
+        BTreeMap::new(),
         Some(serde_json::json!(1)),
         &mut Vec::new(),
     )
@@ -664,7 +664,7 @@ async fn fetch_http_url_is_null() {
         &serde_json::json!({"url": null}),
         &client,
         &rules,
-        &BTreeMap::new(),
+        BTreeMap::new(),
         Some(serde_json::json!(1)),
         &mut Vec::new(),
     )
@@ -689,7 +689,7 @@ async fn fetch_http_start_index_negative_defaults_to_zero() {
         }),
         &client,
         &rules,
-        &BTreeMap::new(),
+        BTreeMap::new(),
         Some(serde_json::json!(1)),
         &mut Vec::new(),
     )
@@ -713,7 +713,7 @@ async fn grep_http_empty_pattern_rejected() {
         &serde_json::json!({"url": "https://github.com", "pattern": ""}),
         &client,
         &rules,
-        &BTreeMap::new(),
+        BTreeMap::new(),
         Some(serde_json::json!(1)),
         &mut Vec::new(),
     )
@@ -732,7 +732,7 @@ async fn grep_http_missing_url_returns_error() {
         &serde_json::json!({"pattern": "test"}),
         &client,
         &rules,
-        &BTreeMap::new(),
+        BTreeMap::new(),
         Some(serde_json::json!(1)),
         &mut Vec::new(),
     )
@@ -751,7 +751,7 @@ async fn grep_http_url_is_number() {
         &serde_json::json!({"url": 123, "pattern": "test"}),
         &client,
         &rules,
-        &BTreeMap::new(),
+        BTreeMap::new(),
         Some(serde_json::json!(1)),
         &mut Vec::new(),
     )
@@ -770,7 +770,7 @@ async fn grep_http_rejects_ftp_scheme() {
         &serde_json::json!({"url": "ftp://example.com", "pattern": "test"}),
         &client,
         &rules,
-        &BTreeMap::new(),
+        BTreeMap::new(),
         Some(serde_json::json!(1)),
         &mut Vec::new(),
     )
@@ -795,7 +795,7 @@ async fn grep_http_regex_catastrophic_backtracking_safe() {
         }),
         &client,
         &rules,
-        &BTreeMap::new(),
+        BTreeMap::new(),
         Some(serde_json::json!(1)),
         &mut Vec::new(),
     )
@@ -821,7 +821,7 @@ async fn http_headers_missing_url() {
         &serde_json::json!({}),
         &client,
         &rules,
-        &BTreeMap::new(),
+        BTreeMap::new(),
         Some(serde_json::json!(1)),
         &mut Vec::new(),
     )
@@ -840,7 +840,7 @@ async fn http_headers_rejects_ftp_scheme() {
         &serde_json::json!({"url": "ftp://example.com"}),
         &client,
         &rules,
-        &BTreeMap::new(),
+        BTreeMap::new(),
         Some(serde_json::json!(1)),
         &mut Vec::new(),
     )
@@ -861,7 +861,7 @@ async fn http_headers_invalid_method_falls_back_to_head() {
         &serde_json::json!({"url": format!("{}/", fixture.base_url), "method": "POST"}),
         &client,
         &rules,
-        &BTreeMap::new(),
+        BTreeMap::new(),
         Some(serde_json::json!(1)),
         &mut Vec::new(),
     )
@@ -884,7 +884,7 @@ async fn http_headers_method_case_sensitive() {
         &serde_json::json!({"url": format!("{}/", fixture.base_url), "method": "get"}),
         &client,
         &rules,
-        &BTreeMap::new(),
+        BTreeMap::new(),
         Some(serde_json::json!(1)),
         &mut Vec::new(),
     )

@@ -20,11 +20,25 @@ impl Default for SecurityPluginPolicy {
     }
 }
 impl SecurityPluginPolicy {
-    pub(super) fn configuration(
-        &self,
-        id: &str,
-        direction: PluginDirection,
-    ) -> Option<Cow<'_, CompiledPluginConfiguration>> {
+    /// Number of resolved plugin identities, including explicitly disabled ones.
+    pub fn configured_plugin_count(&self) -> usize {
+        match self {
+            Self::Settings(policy) => policy.len(),
+            Self::Environment(_) => PluginId::ALL.len(),
+        }
+    }
+
+    /// Snapshot identity, not configuration equality or publication authority.
+    /// Cloning retains identity; replacing an immutable policy does not.
+    pub fn same_snapshot(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Settings(left), Self::Settings(right)) => Arc::ptr_eq(left, right),
+            (Self::Environment(left), Self::Environment(right)) => Arc::ptr_eq(left, right),
+            _ => false,
+        }
+    }
+
+    pub fn configuration(&self, id: &str, direction: PluginDirection) -> Option<Cow<'_, CompiledPluginConfiguration>> {
         match self {
             Self::Settings(policy) => policy
                 .get(id)
@@ -132,5 +146,16 @@ impl std::fmt::Debug for SecurityPluginPolicy {
             Self::Settings(policy) => formatter.debug_tuple("Settings").field(policy).finish(),
             Self::Environment(_) => formatter.write_str("Environment(..)"),
         }
+    }
+}
+
+impl From<&SecurityPluginPolicy> for SecurityPluginPolicy {
+    fn from(policy: &SecurityPluginPolicy) -> Self {
+        policy.clone()
+    }
+}
+impl From<&BTreeMap<String, SecurityPluginConfig>> for SecurityPluginPolicy {
+    fn from(policy: &BTreeMap<String, SecurityPluginConfig>) -> Self {
+        Self::Settings(Arc::new(policy.clone()))
     }
 }

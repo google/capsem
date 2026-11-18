@@ -62,9 +62,9 @@ fn proxy_with_gateway() -> (Arc<MitmProxyConfig>, Arc<DbWriter>, Called) {
         Arc::new(std::sync::RwLock::new(Arc::clone(
             config.engine.policy().snapshot().security_rules(),
         ))),
-        Arc::new(std::sync::RwLock::new(Arc::clone(
-            config.engine.policy().snapshot().plugins(),
-        ))),
+        Arc::new(std::sync::RwLock::new(
+            config.engine.policy().snapshot().plugins().clone(),
+        )),
         Arc::new(tokio::sync::Semaphore::new(4)),
         McpTimeouts::default(),
     )));

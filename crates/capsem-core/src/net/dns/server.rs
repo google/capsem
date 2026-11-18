@@ -409,11 +409,7 @@ impl DnsHandler {
                 )
                 .await
         } else {
-            evaluate_security_boundary(
-                policy.security_rules(),
-                Arc::clone(policy.plugins()),
-                dns_security_event,
-            )
+            evaluate_security_boundary(policy.security_rules(), policy.plugins().clone(), dns_security_event)
         };
         let dns_evaluation = match evaluation {
             Ok(evaluation) => evaluation,

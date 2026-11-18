@@ -10,7 +10,6 @@
 //! and [`super::dns::private::PrivateNames`] capabilities. None exposes a
 //! filesystem path, process handle, resolver socket, or arbitrary dial.
 
-use std::collections::BTreeMap;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -21,12 +20,12 @@ use capsem_logger::{DbWriter, WriteOp};
 use crate::credential_broker::{BrokeredCredential, BrokeredUpstreamCredentials, CredentialObservation};
 use crate::mcp::policy::McpConfig;
 use crate::net::ai_traffic::provider::ProviderKind;
-use crate::security_engine::{MaterializedHttpRequest, SecurityActionError, SecurityBoundaryEvaluation, SecurityEvent};
+use crate::security_engine::{
+    MaterializedHttpRequest, SecurityActionError, SecurityBoundaryEvaluation, SecurityEvent, SecurityPluginPolicy,
+};
 
 use super::policy::NetworkMechanics;
-use super::policy_config::{
-    active_policy_digest, ActivePolicyFile, ModelEndpointRegistry, SecurityPluginConfig, SecurityRuleSet,
-};
+use super::policy_config::{active_policy_digest, ActivePolicyFile, ModelEndpointRegistry, SecurityRuleSet};
 
 pub type ProxyCapabilityFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -165,7 +164,7 @@ impl ProxyEngine {
         registered: Option<tokio::sync::oneshot::Sender<capsem_proto::approval::ApprovalRegistration>>,
     ) -> Result<SecurityBoundaryEvaluation, SecurityActionError> {
         let rules = Arc::clone(snapshot.security_rules());
-        let plugins = Arc::clone(snapshot.plugins());
+        let plugins = snapshot.plugins().clone();
         let credentials = Arc::clone(&self.credentials);
         let mut evaluation = off_runtime(move || {
             crate::security_engine::evaluate_security_boundary_with_credentials(&rules, plugins, credentials, event)
@@ -290,7 +289,7 @@ pub struct ProxyPolicySnapshot {
     digest: String,
     network: NetworkMechanics,
     security_rules: Arc<SecurityRuleSet>,
-    plugins: Arc<BTreeMap<String, SecurityPluginConfig>>,
+    plugins: SecurityPluginPolicy,
     model_endpoints: ModelEndpointRegistry,
 }
 
@@ -299,14 +298,14 @@ impl ProxyPolicySnapshot {
         digest: String,
         network: NetworkMechanics,
         security_rules: SecurityRuleSet,
-        plugins: BTreeMap<String, SecurityPluginConfig>,
+        plugins: impl Into<SecurityPluginPolicy>,
         model_endpoints: ModelEndpointRegistry,
     ) -> Self {
         Self {
             digest,
             network,
             security_rules: Arc::new(security_rules),
-            plugins: Arc::new(plugins),
+            plugins: plugins.into(),
             model_endpoints,
         }
     }
@@ -323,7 +322,7 @@ impl ProxyPolicySnapshot {
         &self.security_rules
     }
 
-    pub fn plugins(&self) -> &Arc<BTreeMap<String, SecurityPluginConfig>> {
+    pub fn plugins(&self) -> &SecurityPluginPolicy {
         &self.plugins
     }
 

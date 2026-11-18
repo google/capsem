@@ -36,7 +36,7 @@ fn unified_endpoint_reads_rules_and_plugins_from_one_live_revision() {
     let (second_rules, second_plugins) = endpoint.policy_snapshot();
 
     assert!(!Arc::ptr_eq(&first_rules, &second_rules));
-    assert!(!Arc::ptr_eq(&first_plugins, &second_plugins));
+    assert!(!first_plugins.same_snapshot(&second_plugins));
 }
 
 struct ScopedToolsFixture {

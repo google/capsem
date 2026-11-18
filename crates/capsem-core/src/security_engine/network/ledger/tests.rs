@@ -16,7 +16,7 @@ async fn unmatched_network_deny_has_a_primary_row_and_closed_audit_fails() {
     let engine = NetworkSecurity {
         db: db.clone(),
         rules: Arc::new(RwLock::new(Arc::new(rules))),
-        plugins: Arc::new(RwLock::new(Arc::new(BTreeMap::new()))),
+        plugins: Arc::new(RwLock::new(crate::security_engine::SecurityPluginPolicy::default())),
     };
     let event = SecurityEvent::new(RuntimeSecurityEventType::NetworkConnect)
         .with_network(NetworkSecurityEvent::Flow(super::super::tests::private_flow()));
@@ -63,7 +63,7 @@ match = 'network.mode == "private"'
     let engine = NetworkSecurity {
         db: db.clone(),
         rules: Arc::new(RwLock::new(Arc::new(rules))),
-        plugins: Arc::new(RwLock::new(Arc::new(plugins))),
+        plugins: Arc::new(RwLock::new(plugins.into())),
     };
     let event = SecurityEvent::new(RuntimeSecurityEventType::NetworkConnect)
         .with_network(NetworkSecurityEvent::Flow(super::super::tests::private_flow()));

@@ -41,9 +41,9 @@ async fn internal_http_response_disconnect_drains_original_tool_audit() {
             Arc::new(std::sync::RwLock::new(Arc::clone(
                 config.engine.policy().snapshot().security_rules(),
             ))),
-            Arc::new(std::sync::RwLock::new(Arc::clone(
-                config.engine.policy().snapshot().plugins(),
-            ))),
+            Arc::new(std::sync::RwLock::new(
+                config.engine.policy().snapshot().plugins().clone(),
+            )),
             Arc::new(tokio::sync::Semaphore::new(4)),
             McpTimeouts::default(),
         )

@@ -229,7 +229,7 @@ async fn enforce(
             event_id,
             context.observed.event_type(),
             Arc::clone(context.policy.security_rules()),
-            Arc::clone(context.policy.plugins()),
+            context.policy.plugins().clone(),
             evaluation.event,
             current_unix_ms(),
             "mcp_over_http_response",

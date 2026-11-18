@@ -47,7 +47,7 @@ pub struct CompiledActivePolicy {
     pub network: crate::net::policy::NetworkMechanics,
     pub dns_upstreams: Vec<SocketAddr>,
     pub security_rules: SecurityRuleSet,
-    pub plugins: BTreeMap<String, SecurityPluginConfig>,
+    pub plugins: crate::security_engine::SecurityPluginPolicy,
     pub model_endpoints: ModelEndpointRegistry,
     pub mcp: McpConfig,
 }
@@ -146,7 +146,7 @@ impl ActivePolicyFile {
             network: merged.network,
             dns_upstreams,
             security_rules: merged.security_rules,
-            plugins: self.plugins.clone(),
+            plugins: self.plugins.clone().into(),
             model_endpoints: merged.model_endpoints,
             mcp: self.mcp.clone().unwrap_or_default(),
         })

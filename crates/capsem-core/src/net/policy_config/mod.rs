@@ -33,7 +33,7 @@ pub use tree::load_settings_tree;
 
 /// Immutable plugin configuration selected for one runtime generation.
 pub type PluginPolicy = std::collections::BTreeMap<String, SecurityPluginConfig>;
-pub type PluginPolicySnapshot = std::sync::Arc<PluginPolicy>;
+pub type PluginPolicySnapshot = crate::security_engine::SecurityPluginPolicy;
 /// Live policy handle whose writers replace a snapshot and readers clone its Arc.
 pub type SharedPluginPolicy = std::sync::Arc<std::sync::RwLock<PluginPolicySnapshot>>;
 

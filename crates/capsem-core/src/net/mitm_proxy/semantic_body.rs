@@ -85,10 +85,17 @@ pub(super) fn has_content_match(event: Option<&crate::security_engine::SecurityE
 }
 
 pub(super) fn inspection_enabled(snapshot: &crate::net::proxy_engine::ProxyPolicySnapshot, inbound: bool) -> bool {
-    snapshot.plugins().iter().any(|(id, config)| {
-        (id == "pii_filter" || (id == "secret_exfiltration" && !inbound))
-            && config.mode != capsem_config::SecurityPluginMode::Disable
-            && config.content.direction.includes(inbound)
+    let direction = if inbound {
+        crate::environment::PluginDirection::Inbound
+    } else {
+        crate::environment::PluginDirection::Outbound
+    };
+    ["pii_filter", "secret_exfiltration"].into_iter().any(|id| {
+        (id != "secret_exfiltration" || !inbound)
+            && snapshot
+                .plugins()
+                .configuration(id, direction)
+                .is_some_and(|config| config.mode != capsem_config::SecurityPluginMode::Disable)
     })
 }
 
@@ -97,9 +104,15 @@ pub(super) fn utf8_enabled(
     inbound: bool,
     headers: &http::HeaderMap,
 ) -> bool {
-    let enabled = snapshot.plugins().get("utf8_guard").is_some_and(|config| {
-        config.mode != capsem_config::SecurityPluginMode::Disable && config.content.direction.includes(inbound)
-    });
+    let direction = if inbound {
+        crate::environment::PluginDirection::Inbound
+    } else {
+        crate::environment::PluginDirection::Outbound
+    };
+    let enabled = snapshot
+        .plugins()
+        .configuration("utf8_guard", direction)
+        .is_some_and(|config| config.mode != capsem_config::SecurityPluginMode::Disable);
     if !enabled {
         return false;
     }

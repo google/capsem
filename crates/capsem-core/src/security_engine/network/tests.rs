@@ -480,7 +480,9 @@ async fn an_exposure_row_is_recorded_without_a_network_or_connection() {
     let security = ledger::NetworkSecurity {
         db: std::sync::Arc::new(capsem_logger::DbWriter::open_in_memory(8).unwrap()),
         rules: std::sync::Arc::new(std::sync::RwLock::new(std::sync::Arc::new(rules("")))),
-        plugins: std::sync::Arc::new(std::sync::RwLock::new(std::sync::Arc::new(BTreeMap::new()))),
+        plugins: std::sync::Arc::new(std::sync::RwLock::new(
+            crate::security_engine::SecurityPluginPolicy::default(),
+        )),
     };
     let event = SecurityEvent::new(RuntimeSecurityEventType::NetworkLifecycle)
         .with_network(exposure(NetworkLifecycleAction::Restored, 6379));

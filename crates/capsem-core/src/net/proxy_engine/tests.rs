@@ -90,7 +90,11 @@ fn runtime_policy_compiles_exact_bytes_without_a_path() {
         .iter()
         .any(|rule| rule.rule_id == "profiles.rules.worker_http"));
     assert_eq!(
-        snapshot.plugins()["credential_broker"].mode,
+        snapshot
+            .plugins()
+            .configuration("credential_broker", crate::environment::PluginDirection::Outbound)
+            .unwrap()
+            .mode,
         SecurityPluginMode::Rewrite
     );
     assert_eq!(runtime.dns_upstreams(), &["127.0.0.1:5353".parse().unwrap()]);
@@ -382,4 +386,44 @@ async fn credential_materialization_allows_independent_runtime_progress() {
         "Bearer scoped-secret"
     );
     progress.await.unwrap();
+}
+
+#[test]
+fn typed_plugin_snapshot_keeps_directional_options_after_policy_replacement() {
+    let options = toml::from_str("[pii_filter.outbound]\nmode='block'\n[pii_filter.inbound]\nmode='block'\n[pii_filter.inbound.options]\nemail=false").unwrap();
+    let compiled =
+        Arc::new(crate::environment::CompiledEnvironmentPlugins::resolve(&options, &Default::default()).unwrap());
+    let handle = ProxyPolicyHandle::new(ProxyPolicySnapshot::new(
+        "blake3:typed".into(),
+        NetworkMechanics::new(),
+        SecurityRuleSet::new(Vec::new()),
+        compiled,
+        ModelEndpointRegistry::default(),
+    ));
+    let captured = handle.snapshot();
+    assert!(captured.plugins().same_snapshot(&captured.plugins().clone()));
+    let equal_replacement = crate::security_engine::SecurityPluginPolicy::from(Arc::new(
+        crate::environment::CompiledEnvironmentPlugins::resolve(&options, &Default::default()).unwrap(),
+    ));
+    assert!(!captured.plugins().same_snapshot(&equal_replacement));
+    handle.replace(revision(2));
+    assert!(!captured.plugins().same_snapshot(handle.snapshot().plugins()));
+    for (inbound, allowed) in [(false, false), (true, true)] {
+        let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(
+            crate::security_engine::HttpSecurityEvent {
+                status: inbound.then(|| "200".into()),
+                body: Some("person@example.com".into()),
+                ..Default::default()
+            },
+        );
+        let evaluated = crate::security_engine::evaluate_security_boundary(
+            captured.security_rules(),
+            captured.plugins().clone(),
+            event,
+        )
+        .unwrap();
+        assert_eq!(evaluated.enforcement.is_allowed(), allowed);
+    }
+    assert_eq!(captured.digest(), "blake3:typed");
+    assert_ne!(handle.snapshot().digest(), captured.digest());
 }

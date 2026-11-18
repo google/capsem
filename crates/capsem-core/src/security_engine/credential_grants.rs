@@ -6,19 +6,20 @@ use capsem_credentials::GrantCapability;
 
 struct Snapshot {
     rules: SecurityRuleSet,
-    plugins: Arc<BTreeMap<String, SecurityPluginConfig>>,
+    plugins: SecurityPluginPolicy,
 }
 impl Snapshot {
     fn new(policy: &ActivePolicyFile) -> Result<Self, String> {
+        let compiled = policy.compile_runtime()?;
         Ok(Self {
-            rules: policy.compile_security_rule_set()?,
-            plugins: Arc::new(policy.plugins.clone()),
+            rules: compiled.security_rules,
+            plugins: compiled.plugins,
         })
     }
     fn admits(&self, capability: &GrantCapability) -> bool {
         if !self
             .plugins
-            .get("credential_broker")
+            .configuration("credential_broker", crate::environment::PluginDirection::Outbound)
             .is_some_and(|plugin| plugin.mode == SecurityPluginMode::Rewrite)
         {
             return false;
@@ -42,7 +43,7 @@ impl Snapshot {
                 .with_tcp(TcpSecurityEvent {
                     port: url.port_or_known_default().map(|port| port.to_string()),
                 });
-            evaluate_security_boundary(&self.rules, Arc::clone(&self.plugins), event)
+            evaluate_security_boundary(&self.rules, self.plugins.clone(), event)
                 .is_ok_and(|evaluation| evaluation.enforcement.is_allowed())
         })
     }

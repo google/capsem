@@ -167,7 +167,14 @@ local = false
         .rules()
         .iter()
         .any(|rule| rule.rule_id == "profiles.rules.runtime_http"));
-    assert_eq!(runtime.plugins["credential_broker"].mode, SecurityPluginMode::Rewrite);
+    assert_eq!(
+        runtime
+            .plugins
+            .configuration("credential_broker", crate::environment::PluginDirection::Outbound)
+            .unwrap()
+            .mode,
+        SecurityPluginMode::Rewrite
+    );
     assert!(!runtime.mcp.server_enabled["local"]);
     assert_eq!(runtime.model_endpoints, expected_endpoints);
     assert!(runtime.network.log_bodies);

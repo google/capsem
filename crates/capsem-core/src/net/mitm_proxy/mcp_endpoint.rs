@@ -157,7 +157,7 @@ impl McpEndpointState {
             ),
             McpEndpointPolicy::Unified(policy) => {
                 let snapshot = policy.snapshot();
-                (Arc::clone(snapshot.security_rules()), Arc::clone(snapshot.plugins()))
+                (Arc::clone(snapshot.security_rules()), snapshot.plugins().clone())
             }
         }
     }

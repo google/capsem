@@ -167,7 +167,7 @@ impl PendingTelemetryCompletion {
                 event_id,
                 RuntimeSecurityEventType::HttpRequest,
                 Arc::clone(&rules),
-                Arc::clone(&plugin_policy),
+                plugin_policy.clone(),
                 net_security_event,
                 current_unix_ms(),
                 "http",
@@ -402,7 +402,7 @@ impl ChunkHook for TelemetryHook {
         let db = Arc::clone(&self.deps.db);
         let credentials = Arc::clone(&self.deps.credentials);
         let rules = Arc::clone(req_ctx.policy_snapshot.security_rules());
-        let plugin_policy = Arc::clone(req_ctx.policy_snapshot.plugins());
+        let plugin_policy = req_ctx.policy_snapshot.plugins().clone();
         let credential_injections = req_ctx.credential_injections;
         record_telemetry_stage(stage_started, "ledger_deps_clone");
 

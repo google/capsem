@@ -5,6 +5,7 @@
 //! - `grep_http`: fetch a URL and search for a regex pattern
 //! - `http_headers`: return HTTP headers for a URL
 
+#[cfg(test)]
 use std::collections::BTreeMap;
 use std::net::IpAddr;
 use std::time::Instant;
@@ -16,7 +17,8 @@ use serde_json::Value;
 use capsem_proto::mcp_contracts::builtin_ledger::{BuiltinLedgerRecord, HttpDecision, HttpRequestRecord};
 use capsem_proto::mcp_contracts::{JsonRpcResponse, McpToolDef, ToolAnnotations};
 
-use crate::net::policy_config::{SecurityPluginConfig, SecurityRuleSet};
+use crate::net::policy_config::SecurityRuleSet;
+use crate::security_engine::SecurityPluginPolicy;
 
 mod html_extract;
 mod upstream;
@@ -260,10 +262,12 @@ pub async fn call_builtin_tool(
     arguments: &Value,
     http: &BuiltinHttpClient,
     security_rules: &SecurityRuleSet,
-    plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
+    plugin_policy: impl Into<SecurityPluginPolicy>,
     request_id: Option<Value>,
     ledger: &mut Vec<BuiltinLedgerRecord>,
 ) -> JsonRpcResponse {
+    let plugin_policy = plugin_policy.into();
+    let plugin_policy = &plugin_policy;
     match local_name {
         "fetch_http" => handle_fetch_http(arguments, http, security_rules, plugin_policy, request_id, ledger).await,
         "grep_http" => handle_grep_http(arguments, http, security_rules, plugin_policy, request_id, ledger).await,
@@ -313,7 +317,7 @@ async fn handle_fetch_http(
     args: &Value,
     http: &BuiltinHttpClient,
     security_rules: &SecurityRuleSet,
-    plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
+    plugin_policy: &SecurityPluginPolicy,
     id: Option<Value>,
     ledger: &mut Vec<BuiltinLedgerRecord>,
 ) -> JsonRpcResponse {
@@ -456,7 +460,7 @@ async fn handle_grep_http(
     args: &Value,
     http: &BuiltinHttpClient,
     security_rules: &SecurityRuleSet,
-    plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
+    plugin_policy: &SecurityPluginPolicy,
     id: Option<Value>,
     ledger: &mut Vec<BuiltinLedgerRecord>,
 ) -> JsonRpcResponse {
@@ -577,7 +581,7 @@ async fn handle_http_headers(
     args: &Value,
     http: &BuiltinHttpClient,
     security_rules: &SecurityRuleSet,
-    plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
+    plugin_policy: &SecurityPluginPolicy,
     id: Option<Value>,
     ledger: &mut Vec<BuiltinLedgerRecord>,
 ) -> JsonRpcResponse {
@@ -734,8 +738,10 @@ fn evaluate_builtin_http_request(
     url: &str,
     method: &str,
     security_rules: &SecurityRuleSet,
-    plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
+    plugin_policy: impl Into<SecurityPluginPolicy>,
 ) -> Result<BuiltinHttpDecision, String> {
+    let plugin_policy = plugin_policy.into();
+    let plugin_policy = &plugin_policy;
     let parsed = parse_tool_url(url)?;
     let (domain, ip) = url_host(&parsed).ok_or_else(|| "URL has no host".to_string())?;
     let decision = enforce_builtin_http_event(
@@ -765,8 +771,10 @@ pub async fn authorize_upstream(
     url: &str,
     method: &str,
     security_rules: &SecurityRuleSet,
-    plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
+    plugin_policy: impl Into<SecurityPluginPolicy>,
 ) -> Result<BuiltinHttpDecision, String> {
+    let plugin_policy = plugin_policy.into();
+    let plugin_policy = &plugin_policy;
     let by_name = evaluate_builtin_http_request(url, method, security_rules, plugin_policy)?;
     let parsed = parse_tool_url(url)?;
     let port = parsed.port_or_known_default().unwrap_or(80);
@@ -838,7 +846,7 @@ fn tool_event(parsed: &reqwest::Url, method: &str, domain: &str, ip: Option<IpAd
 
 fn enforce_builtin_http_event(
     security_rules: &SecurityRuleSet,
-    plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
+    plugin_policy: &SecurityPluginPolicy,
     domain: &str,
     event: SecurityEvent,
 ) -> Result<SecurityEnforcementDecision, String> {

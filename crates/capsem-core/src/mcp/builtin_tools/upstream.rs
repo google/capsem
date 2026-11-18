@@ -11,11 +11,10 @@
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
-use super::{authorize_upstream, parse_tool_url, SecurityEnforcementDecision, SecurityPluginConfig, SecurityRuleSet};
+use super::{authorize_upstream, parse_tool_url, SecurityEnforcementDecision, SecurityPluginPolicy, SecurityRuleSet};
 use capsem_mcp_transport::http_transport::BrokerHttpClient;
 use capsem_proto::mcp_worker::{McpHttpAdmission, MCP_ADMISSION_HEADER};
 use reqwest::Client;
-use std::collections::BTreeMap;
 
 pub(super) struct AuthorizedResponse {
     pub domain: String,
@@ -75,7 +74,7 @@ impl BuiltinHttpClient {
         url: &str,
         method: &str,
         security_rules: &SecurityRuleSet,
-        plugin_policy: &BTreeMap<String, SecurityPluginConfig>,
+        plugin_policy: &SecurityPluginPolicy,
     ) -> Result<AuthorizedResponse, RequestFailure> {
         let failed = |error| RequestFailure::Failed(format!("HTTP request failed: {error}"));
         if let Some((broker, builder)) = &self.broker {

@@ -35,7 +35,7 @@ fn engine(action: &str, plugin_block: bool) -> Arc<NetworkSecurity> {
     Arc::new(NetworkSecurity {
         db: Arc::new(capsem_logger::DbWriter::open_in_memory(128).unwrap()),
         rules: Arc::new(RwLock::new(Arc::new(rules))),
-        plugins: Arc::new(RwLock::new(Arc::new(plugins))),
+        plugins: Arc::new(RwLock::new(plugins.into())),
     })
 }
 
@@ -268,7 +268,7 @@ fn file_engine(dir: &tempfile::TempDir) -> (Arc<NetworkSecurity>, std::path::Pat
     let engine = Arc::new(NetworkSecurity {
         db: Arc::new(capsem_logger::DbWriter::open(&path, 128).unwrap()),
         rules: Arc::new(RwLock::new(Arc::new(rules))),
-        plugins: Arc::new(RwLock::new(Arc::new(std::collections::BTreeMap::new()))),
+        plugins: Arc::new(RwLock::new(crate::security_engine::SecurityPluginPolicy::default())),
     });
     (engine, path)
 }
@@ -431,7 +431,7 @@ pub(super) fn lifecycle_engine(dir: &tempfile::TempDir, rules: &str) -> (Arc<Net
     let engine = Arc::new(NetworkSecurity {
         db: Arc::new(capsem_logger::DbWriter::open(&path, 128).unwrap()),
         rules: Arc::new(RwLock::new(Arc::new(rules))),
-        plugins: Arc::new(RwLock::new(Arc::new(std::collections::BTreeMap::new()))),
+        plugins: Arc::new(RwLock::new(crate::security_engine::SecurityPluginPolicy::default())),
     });
     (engine, path)
 }
