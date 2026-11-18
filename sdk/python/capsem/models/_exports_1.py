@@ -1,5 +1,30 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .exec_history_details import ExecHistoryDetails
+from .exec_output import ExecOutput
+from .exec_output_encoding import ExecOutputEncoding
+from .exec_request import ExecRequest
+from .exec_response import ExecResponse
+from .exec_source import ExecSource
+from .exec_target import ExecTarget
+from .exposure_access import ExposureAccess
+from .exposure_info import ExposureInfo
+from .exposure_list_response import ExposureListResponse
+from .exposure_request import ExposureRequest
+from .exposure_target import ExposureTarget
+from .file_action_count import FileActionCount
+from .file_entry_type import FileEntryType
+from .file_event import FileEvent
+from .file_event_action import FileEventAction
+from .file_list_entry import FileListEntry
+from .file_list_response import FileListResponse
+from .fork_request import ForkRequest
+from .fork_response import ForkResponse
+from .grant_state import GrantState
+from .history_details import HistoryDetails
+from .history_entry import HistoryEntry
+from .history_layer import HistoryLayer
+from .history_layer_filter import HistoryLayerFilter
 from .history_response import HistoryResponse
 from .host_log_source import HostLogSource
 from .host_logs_response import HostLogsResponse
@@ -55,33 +80,33 @@ from .managed_session_ownership import ManagedSessionOwnership
 from .managed_session_state import ManagedSessionState
 from .material_class import MaterialClass
 from .mcp_default_permission_response import McpDefaultPermissionResponse
-from .mcp_info_response import McpInfoResponse
-from .mcp_permission_action import McpPermissionAction
-from .mcp_refresh_response import McpRefreshResponse
-from .mcp_server_info_response import McpServerInfoResponse
-from .mcp_servers_list_response import McpServersListResponse
-from .mcp_tool_info_response import McpToolInfoResponse
-from .mcp_tools_list_response import McpToolsListResponse
-from .mcp_usage import McpUsage
-from .model_event import ModelEvent
-from .model_usage import ModelUsage
-from .network_decision import NetworkDecision
-from .network_info import NetworkInfo
-from .network_list_response import NetworkListResponse
-from .network_log_event import NetworkLogEvent
-from .network_logs_response import NetworkLogsResponse
-from .network_member_info import NetworkMemberInfo
-from .network_member_state import NetworkMemberState
-from .network_protocol import NetworkProtocol
-from .panic_event import PanicEvent
-from .panics_response import PanicsResponse
-from .persist_request import PersistRequest
-from .persist_response import PersistResponse
-from .preview_session_response import PreviewSessionResponse
-from .preview_sessions_revoked_response import PreviewSessionsRevokedResponse
-from .process_event import ProcessEvent
 
 __all__ = [
+    'ExecHistoryDetails',
+    'ExecOutput',
+    'ExecOutputEncoding',
+    'ExecRequest',
+    'ExecResponse',
+    'ExecSource',
+    'ExecTarget',
+    'ExposureAccess',
+    'ExposureInfo',
+    'ExposureListResponse',
+    'ExposureRequest',
+    'ExposureTarget',
+    'FileActionCount',
+    'FileEntryType',
+    'FileEvent',
+    'FileEventAction',
+    'FileListEntry',
+    'FileListResponse',
+    'ForkRequest',
+    'ForkResponse',
+    'GrantState',
+    'HistoryDetails',
+    'HistoryEntry',
+    'HistoryLayer',
+    'HistoryLayerFilter',
     'HistoryResponse',
     'HostLogSource',
     'HostLogsResponse',
@@ -137,29 +162,4 @@ __all__ = [
     'ManagedSessionState',
     'MaterialClass',
     'McpDefaultPermissionResponse',
-    'McpInfoResponse',
-    'McpPermissionAction',
-    'McpRefreshResponse',
-    'McpServerInfoResponse',
-    'McpServersListResponse',
-    'McpToolInfoResponse',
-    'McpToolsListResponse',
-    'McpUsage',
-    'ModelEvent',
-    'ModelUsage',
-    'NetworkDecision',
-    'NetworkInfo',
-    'NetworkListResponse',
-    'NetworkLogEvent',
-    'NetworkLogsResponse',
-    'NetworkMemberInfo',
-    'NetworkMemberState',
-    'NetworkProtocol',
-    'PanicEvent',
-    'PanicsResponse',
-    'PersistRequest',
-    'PersistResponse',
-    'PreviewSessionResponse',
-    'PreviewSessionsRevokedResponse',
-    'ProcessEvent',
 ]

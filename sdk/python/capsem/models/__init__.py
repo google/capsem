@@ -47,39 +47,86 @@ from ._exports_0 import CredentialInjectRequest as CredentialInjectRequest
 from ._exports_0 import CredentialInjectResponse as CredentialInjectResponse
 from ._exports_0 import CredentialOutcome as CredentialOutcome
 from ._exports_0 import CredentialStorage as CredentialStorage
+from ._exports_0 import DetectionLevel as DetectionLevel
 from ._exports_0 import DisconnectResponse as DisconnectResponse
 from ._exports_0 import DnsEvent as DnsEvent
 from ._exports_0 import EnrollmentKind as EnrollmentKind
+from ._exports_0 import EnvironmentCapabilityDecision as EnvironmentCapabilityDecision
+from ._exports_0 import (
+    EnvironmentCatalogSelections_EnvironmentCatalogPin as EnvironmentCatalogSelections_EnvironmentCatalogPin,
+)
+from ._exports_0 import (
+    EnvironmentCatalogSelections_EnvironmentCatalogPinSelectedItem as EnvironmentCatalogSelections_EnvironmentCatalogPinSelectedItem,
+)
+from ._exports_0 import EnvironmentCurrentResponse as EnvironmentCurrentResponse
+from ._exports_0 import EnvironmentDocument as EnvironmentDocument
+from ._exports_0 import EnvironmentIdentity as EnvironmentIdentity
+from ._exports_0 import EnvironmentImageUpdatePolicy as EnvironmentImageUpdatePolicy
+from ._exports_0 import EnvironmentMcpDefinition as EnvironmentMcpDefinition
+from ._exports_0 import EnvironmentMcpDefinitionRemote as EnvironmentMcpDefinitionRemote
+from ._exports_0 import (
+    EnvironmentMcpDefinitionSandbox as EnvironmentMcpDefinitionSandbox,
+)
+from ._exports_0 import EnvironmentMcpPermissions as EnvironmentMcpPermissions
+from ._exports_0 import (
+    EnvironmentMcps_EnvironmentCatalogPin as EnvironmentMcps_EnvironmentCatalogPin,
+)
+from ._exports_0 import EnvironmentPackages as EnvironmentPackages
+from ._exports_0 import EnvironmentPlugins as EnvironmentPlugins
+from ._exports_0 import EnvironmentRuleParameter as EnvironmentRuleParameter
+from ._exports_0 import (
+    EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRule as EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRule,
+)
+from ._exports_0 import (
+    EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRuleCustomValue as EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRuleCustomValue,
+)
+from ._exports_0 import (
+    EnvironmentRules_EnvironmentCatalogPin_EnvironmentDetectionRule as EnvironmentRules_EnvironmentCatalogPin_EnvironmentDetectionRule,
+)
+from ._exports_0 import (
+    EnvironmentRules_EnvironmentCatalogPin_EnvironmentDetectionRuleCustomValue as EnvironmentRules_EnvironmentCatalogPin_EnvironmentDetectionRuleCustomValue,
+)
+from ._exports_0 import EnvironmentSecretBinding as EnvironmentSecretBinding
+from ._exports_0 import (
+    EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin as EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin,
+)
+from ._exports_0 import (
+    EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPinImage as EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPinImage,
+)
+from ._exports_0 import (
+    EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPinRepositoriesItem as EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPinRepositoriesItem,
+)
+from ._exports_0 import EnvironmentStartup as EnvironmentStartup
 from ._exports_0 import ErrorCode as ErrorCode
 from ._exports_0 import ErrorEvent as ErrorEvent
 from ._exports_0 import ErrorResponse as ErrorResponse
 from ._exports_0 import EventBodiesResponse as EventBodiesResponse
 from ._exports_0 import EventBody as EventBody
-from ._exports_0 import ExecHistoryDetails as ExecHistoryDetails
-from ._exports_0 import ExecOutput as ExecOutput
-from ._exports_0 import ExecOutputEncoding as ExecOutputEncoding
-from ._exports_0 import ExecRequest as ExecRequest
-from ._exports_0 import ExecResponse as ExecResponse
-from ._exports_0 import ExecSource as ExecSource
-from ._exports_0 import ExecTarget as ExecTarget
-from ._exports_0 import ExposureAccess as ExposureAccess
-from ._exports_0 import ExposureInfo as ExposureInfo
-from ._exports_0 import ExposureListResponse as ExposureListResponse
-from ._exports_0 import ExposureRequest as ExposureRequest
-from ._exports_0 import ExposureTarget as ExposureTarget
-from ._exports_0 import FileActionCount as FileActionCount
-from ._exports_0 import FileEntryType as FileEntryType
-from ._exports_0 import FileEvent as FileEvent
-from ._exports_0 import FileEventAction as FileEventAction
-from ._exports_0 import FileListEntry as FileListEntry
-from ._exports_0 import FileListResponse as FileListResponse
-from ._exports_0 import ForkRequest as ForkRequest
-from ._exports_0 import ForkResponse as ForkResponse
-from ._exports_0 import GrantState as GrantState
-from ._exports_0 import HistoryDetails as HistoryDetails
-from ._exports_0 import HistoryEntry as HistoryEntry
-from ._exports_0 import HistoryLayer as HistoryLayer
-from ._exports_0 import HistoryLayerFilter as HistoryLayerFilter
+from ._exports_1 import ExecHistoryDetails as ExecHistoryDetails
+from ._exports_1 import ExecOutput as ExecOutput
+from ._exports_1 import ExecOutputEncoding as ExecOutputEncoding
+from ._exports_1 import ExecRequest as ExecRequest
+from ._exports_1 import ExecResponse as ExecResponse
+from ._exports_1 import ExecSource as ExecSource
+from ._exports_1 import ExecTarget as ExecTarget
+from ._exports_1 import ExposureAccess as ExposureAccess
+from ._exports_1 import ExposureInfo as ExposureInfo
+from ._exports_1 import ExposureListResponse as ExposureListResponse
+from ._exports_1 import ExposureRequest as ExposureRequest
+from ._exports_1 import ExposureTarget as ExposureTarget
+from ._exports_1 import FileActionCount as FileActionCount
+from ._exports_1 import FileEntryType as FileEntryType
+from ._exports_1 import FileEvent as FileEvent
+from ._exports_1 import FileEventAction as FileEventAction
+from ._exports_1 import FileListEntry as FileListEntry
+from ._exports_1 import FileListResponse as FileListResponse
+from ._exports_1 import ForkRequest as ForkRequest
+from ._exports_1 import ForkResponse as ForkResponse
+from ._exports_1 import GrantState as GrantState
+from ._exports_1 import HistoryDetails as HistoryDetails
+from ._exports_1 import HistoryEntry as HistoryEntry
+from ._exports_1 import HistoryLayer as HistoryLayer
+from ._exports_1 import HistoryLayerFilter as HistoryLayerFilter
 from ._exports_1 import HistoryResponse as HistoryResponse
 from ._exports_1 import HostLogSource as HostLogSource
 from ._exports_1 import HostLogsResponse as HostLogsResponse
@@ -135,31 +182,89 @@ from ._exports_1 import ManagedSessionOwnership as ManagedSessionOwnership
 from ._exports_1 import ManagedSessionState as ManagedSessionState
 from ._exports_1 import MaterialClass as MaterialClass
 from ._exports_1 import McpDefaultPermissionResponse as McpDefaultPermissionResponse
-from ._exports_1 import McpInfoResponse as McpInfoResponse
-from ._exports_1 import McpPermissionAction as McpPermissionAction
-from ._exports_1 import McpRefreshResponse as McpRefreshResponse
-from ._exports_1 import McpServerInfoResponse as McpServerInfoResponse
-from ._exports_1 import McpServersListResponse as McpServersListResponse
-from ._exports_1 import McpToolInfoResponse as McpToolInfoResponse
-from ._exports_1 import McpToolsListResponse as McpToolsListResponse
-from ._exports_1 import McpUsage as McpUsage
-from ._exports_1 import ModelEvent as ModelEvent
-from ._exports_1 import ModelUsage as ModelUsage
-from ._exports_1 import NetworkDecision as NetworkDecision
-from ._exports_1 import NetworkInfo as NetworkInfo
-from ._exports_1 import NetworkListResponse as NetworkListResponse
-from ._exports_1 import NetworkLogEvent as NetworkLogEvent
-from ._exports_1 import NetworkLogsResponse as NetworkLogsResponse
-from ._exports_1 import NetworkMemberInfo as NetworkMemberInfo
-from ._exports_1 import NetworkMemberState as NetworkMemberState
-from ._exports_1 import NetworkProtocol as NetworkProtocol
-from ._exports_1 import PanicEvent as PanicEvent
-from ._exports_1 import PanicsResponse as PanicsResponse
-from ._exports_1 import PersistRequest as PersistRequest
-from ._exports_1 import PersistResponse as PersistResponse
-from ._exports_1 import PreviewSessionResponse as PreviewSessionResponse
-from ._exports_1 import PreviewSessionsRevokedResponse as PreviewSessionsRevokedResponse
-from ._exports_1 import ProcessEvent as ProcessEvent
+from ._exports_2 import McpInfoResponse as McpInfoResponse
+from ._exports_2 import McpPermissionAction as McpPermissionAction
+from ._exports_2 import McpRefreshResponse as McpRefreshResponse
+from ._exports_2 import McpServerInfoResponse as McpServerInfoResponse
+from ._exports_2 import McpServersListResponse as McpServersListResponse
+from ._exports_2 import McpToolInfoResponse as McpToolInfoResponse
+from ._exports_2 import McpToolsListResponse as McpToolsListResponse
+from ._exports_2 import McpUsage as McpUsage
+from ._exports_2 import ModelEvent as ModelEvent
+from ._exports_2 import ModelUsage as ModelUsage
+from ._exports_2 import NetworkDecision as NetworkDecision
+from ._exports_2 import NetworkInfo as NetworkInfo
+from ._exports_2 import NetworkListResponse as NetworkListResponse
+from ._exports_2 import NetworkLogEvent as NetworkLogEvent
+from ._exports_2 import NetworkLogsResponse as NetworkLogsResponse
+from ._exports_2 import NetworkMemberInfo as NetworkMemberInfo
+from ._exports_2 import NetworkMemberState as NetworkMemberState
+from ._exports_2 import NetworkProtocol as NetworkProtocol
+from ._exports_2 import PanicEvent as PanicEvent
+from ._exports_2 import PanicsResponse as PanicsResponse
+from ._exports_2 import PersistRequest as PersistRequest
+from ._exports_2 import PersistResponse as PersistResponse
+from ._exports_2 import PiiFilterConfiguration as PiiFilterConfiguration
+from ._exports_2 import (
+    PluginConfiguration_CredentialBrokerOptions as PluginConfiguration_CredentialBrokerOptions,
+)
+from ._exports_2 import (
+    PluginConfiguration_CredentialBrokerOptionsOptions as PluginConfiguration_CredentialBrokerOptionsOptions,
+)
+from ._exports_2 import (
+    PluginConfiguration_DummyPostAllowOptions as PluginConfiguration_DummyPostAllowOptions,
+)
+from ._exports_2 import (
+    PluginConfiguration_DummyPostAllowOptionsMode as PluginConfiguration_DummyPostAllowOptionsMode,
+)
+from ._exports_2 import (
+    PluginConfiguration_DummyPostAllowOptionsOptions as PluginConfiguration_DummyPostAllowOptionsOptions,
+)
+from ._exports_2 import (
+    PluginConfiguration_DummyPreEicarOptions as PluginConfiguration_DummyPreEicarOptions,
+)
+from ._exports_2 import (
+    PluginConfiguration_DummyPreEicarOptionsMode as PluginConfiguration_DummyPreEicarOptionsMode,
+)
+from ._exports_2 import (
+    PluginConfiguration_DummyPreEicarOptionsOptions as PluginConfiguration_DummyPreEicarOptionsOptions,
+)
+from ._exports_2 import (
+    PluginConfiguration_LogSanitizerOptions as PluginConfiguration_LogSanitizerOptions,
+)
+from ._exports_2 import (
+    PluginConfiguration_LogSanitizerOptionsOptions as PluginConfiguration_LogSanitizerOptionsOptions,
+)
+from ._exports_2 import (
+    PluginConfiguration_PiiFilterOptions as PluginConfiguration_PiiFilterOptions,
+)
+from ._exports_2 import (
+    PluginConfiguration_PiiFilterOptionsMode as PluginConfiguration_PiiFilterOptionsMode,
+)
+from ._exports_2 import (
+    PluginConfiguration_PiiFilterOptionsOptions as PluginConfiguration_PiiFilterOptionsOptions,
+)
+from ._exports_2 import (
+    PluginConfiguration_SecretExfiltrationOptions as PluginConfiguration_SecretExfiltrationOptions,
+)
+from ._exports_2 import (
+    PluginConfiguration_SecretExfiltrationOptionsMode as PluginConfiguration_SecretExfiltrationOptionsMode,
+)
+from ._exports_2 import (
+    PluginConfiguration_SecretExfiltrationOptionsOptions as PluginConfiguration_SecretExfiltrationOptionsOptions,
+)
+from ._exports_2 import (
+    PluginConfiguration_Utf8GuardOptions as PluginConfiguration_Utf8GuardOptions,
+)
+from ._exports_2 import (
+    PluginConfiguration_Utf8GuardOptionsMode as PluginConfiguration_Utf8GuardOptionsMode,
+)
+from ._exports_2 import (
+    PluginConfiguration_Utf8GuardOptionsOptions as PluginConfiguration_Utf8GuardOptionsOptions,
+)
+from ._exports_2 import PreviewSessionResponse as PreviewSessionResponse
+from ._exports_2 import PreviewSessionsRevokedResponse as PreviewSessionsRevokedResponse
+from ._exports_2 import ProcessEvent as ProcessEvent
 from ._exports_2 import ProviderRevocationState as ProviderRevocationState
 from ._exports_2 import ProvisionRequest as ProvisionRequest
 from ._exports_2 import ProvisionResponse as ProvisionResponse
@@ -195,51 +300,51 @@ from ._exports_2 import StopProxyResponse as StopProxyResponse
 from ._exports_2 import StopResponse as StopResponse
 from ._exports_2 import StorageDiagnostics as StorageDiagnostics
 from ._exports_2 import StreamControl as StreamControl
-from ._exports_2 import StreamControlCloseStdin as StreamControlCloseStdin
-from ._exports_2 import StreamControlFocus as StreamControlFocus
-from ._exports_2 import StreamControlResize as StreamControlResize
-from ._exports_2 import StreamControlStart as StreamControlStart
-from ._exports_2 import StreamKind as StreamKind
-from ._exports_2 import StreamStatus as StreamStatus
-from ._exports_2 import StreamStatusError as StreamStatusError
-from ._exports_2 import StreamStatusExit as StreamStatusExit
-from ._exports_2 import StreamStatusStarted as StreamStatusStarted
-from ._exports_2 import StreamStatusTerminal as StreamStatusTerminal
-from ._exports_2 import SupplyChainChannelEvidence as SupplyChainChannelEvidence
-from ._exports_2 import SupplyChainEvidence as SupplyChainEvidence
-from ._exports_2 import SupplyChainManifestEvidence as SupplyChainManifestEvidence
-from ._exports_2 import SupplyChainReference as SupplyChainReference
-from ._exports_2 import TerminalCursor as TerminalCursor
-from ._exports_2 import TerminalEvent as TerminalEvent
-from ._exports_2 import TerminalEventKind as TerminalEventKind
-from ._exports_2 import TerminalModes as TerminalModes
-from ._exports_2 import TerminalNotification as TerminalNotification
-from ._exports_2 import TerminalState as TerminalState
-from ._exports_2 import TerminalSummary as TerminalSummary
-from ._exports_2 import TextContent as TextContent
-from ._exports_2 import TextContentKind as TextContentKind
-from ._exports_2 import TimelineEvent as TimelineEvent
-from ._exports_2 import TimelineLayer as TimelineLayer
-from ._exports_2 import TimelineReference as TimelineReference
-from ._exports_2 import TimelineResponse as TimelineResponse
-from ._exports_2 import TimelineStatus as TimelineStatus
-from ._exports_2 import ToolDecision as ToolDecision
-from ._exports_2 import ToolEvent as ToolEvent
-from ._exports_2 import ToolOrigin as ToolOrigin
-from ._exports_2 import TransactionState as TransactionState
-from ._exports_2 import TriageResponse as TriageResponse
-from ._exports_2 import UpdateActionResponse as UpdateActionResponse
-from ._exports_2 import UpdateActionStatus as UpdateActionStatus
-from ._exports_2 import UpdateApplyRequest as UpdateApplyRequest
-from ._exports_2 import UpdateCheckRequest as UpdateCheckRequest
-from ._exports_2 import UpdateCommandPlan as UpdateCommandPlan
-from ._exports_2 import UpdateCompatibilityState as UpdateCompatibilityState
-from ._exports_2 import UpdateStatusResponse as UpdateStatusResponse
-from ._exports_2 import UpdateTrackState as UpdateTrackState
-from ._exports_2 import UpdateTrackStatus as UpdateTrackStatus
-from ._exports_2 import UploadResponse as UploadResponse
-from ._exports_2 import ValidationStatus as ValidationStatus
-from ._exports_2 import Value as Value
+from ._exports_3 import StreamControlCloseStdin as StreamControlCloseStdin
+from ._exports_3 import StreamControlFocus as StreamControlFocus
+from ._exports_3 import StreamControlResize as StreamControlResize
+from ._exports_3 import StreamControlStart as StreamControlStart
+from ._exports_3 import StreamKind as StreamKind
+from ._exports_3 import StreamStatus as StreamStatus
+from ._exports_3 import StreamStatusError as StreamStatusError
+from ._exports_3 import StreamStatusExit as StreamStatusExit
+from ._exports_3 import StreamStatusStarted as StreamStatusStarted
+from ._exports_3 import StreamStatusTerminal as StreamStatusTerminal
+from ._exports_3 import SupplyChainChannelEvidence as SupplyChainChannelEvidence
+from ._exports_3 import SupplyChainEvidence as SupplyChainEvidence
+from ._exports_3 import SupplyChainManifestEvidence as SupplyChainManifestEvidence
+from ._exports_3 import SupplyChainReference as SupplyChainReference
+from ._exports_3 import TerminalCursor as TerminalCursor
+from ._exports_3 import TerminalEvent as TerminalEvent
+from ._exports_3 import TerminalEventKind as TerminalEventKind
+from ._exports_3 import TerminalModes as TerminalModes
+from ._exports_3 import TerminalNotification as TerminalNotification
+from ._exports_3 import TerminalState as TerminalState
+from ._exports_3 import TerminalSummary as TerminalSummary
+from ._exports_3 import TextContent as TextContent
+from ._exports_3 import TextContentKind as TextContentKind
+from ._exports_3 import TimelineEvent as TimelineEvent
+from ._exports_3 import TimelineLayer as TimelineLayer
+from ._exports_3 import TimelineReference as TimelineReference
+from ._exports_3 import TimelineResponse as TimelineResponse
+from ._exports_3 import TimelineStatus as TimelineStatus
+from ._exports_3 import ToolDecision as ToolDecision
+from ._exports_3 import ToolEvent as ToolEvent
+from ._exports_3 import ToolOrigin as ToolOrigin
+from ._exports_3 import TransactionState as TransactionState
+from ._exports_3 import TriageResponse as TriageResponse
+from ._exports_3 import UpdateActionResponse as UpdateActionResponse
+from ._exports_3 import UpdateActionStatus as UpdateActionStatus
+from ._exports_3 import UpdateApplyRequest as UpdateApplyRequest
+from ._exports_3 import UpdateCheckRequest as UpdateCheckRequest
+from ._exports_3 import UpdateCommandPlan as UpdateCommandPlan
+from ._exports_3 import UpdateCompatibilityState as UpdateCompatibilityState
+from ._exports_3 import UpdateStatusResponse as UpdateStatusResponse
+from ._exports_3 import UpdateTrackState as UpdateTrackState
+from ._exports_3 import UpdateTrackStatus as UpdateTrackStatus
+from ._exports_3 import UploadResponse as UploadResponse
+from ._exports_3 import ValidationStatus as ValidationStatus
+from ._exports_3 import Value as Value
 from ._exports_3 import VmAction as VmAction
 from ._exports_3 import VmActionResponse as VmActionResponse
 from ._exports_3 import VmAiInfo as VmAiInfo

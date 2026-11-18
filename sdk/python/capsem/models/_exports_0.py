@@ -47,39 +47,59 @@ from .credential_inject_request import CredentialInjectRequest
 from .credential_inject_response import CredentialInjectResponse
 from .credential_outcome import CredentialOutcome
 from .credential_storage import CredentialStorage
+from .detection_level import DetectionLevel
 from .disconnect_response import DisconnectResponse
 from .dns_event import DnsEvent
 from .enrollment_kind import EnrollmentKind
+from .environment_capability_decision import EnvironmentCapabilityDecision
+from .environment_catalog_selections__environment_catalog_pin import (
+    EnvironmentCatalogSelections_EnvironmentCatalogPin,
+)
+from .environment_catalog_selections__environment_catalog_pin_selected_item import (
+    EnvironmentCatalogSelections_EnvironmentCatalogPinSelectedItem,
+)
+from .environment_current_response import EnvironmentCurrentResponse
+from .environment_document import EnvironmentDocument
+from .environment_identity import EnvironmentIdentity
+from .environment_image_update_policy import EnvironmentImageUpdatePolicy
+from .environment_mcp_definition import EnvironmentMcpDefinition
+from .environment_mcp_definition_remote import EnvironmentMcpDefinitionRemote
+from .environment_mcp_definition_sandbox import EnvironmentMcpDefinitionSandbox
+from .environment_mcp_permissions import EnvironmentMcpPermissions
+from .environment_mcps__environment_catalog_pin import (
+    EnvironmentMcps_EnvironmentCatalogPin,
+)
+from .environment_packages import EnvironmentPackages
+from .environment_plugins import EnvironmentPlugins
+from .environment_rule_parameter import EnvironmentRuleParameter
+from .environment_rules__environment_catalog_pin__environment_access_rule import (
+    EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRule,
+)
+from .environment_rules__environment_catalog_pin__environment_access_rule_custom_value import (
+    EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRuleCustomValue,
+)
+from .environment_rules__environment_catalog_pin__environment_detection_rule import (
+    EnvironmentRules_EnvironmentCatalogPin_EnvironmentDetectionRule,
+)
+from .environment_rules__environment_catalog_pin__environment_detection_rule_custom_value import (
+    EnvironmentRules_EnvironmentCatalogPin_EnvironmentDetectionRuleCustomValue,
+)
+from .environment_secret_binding import EnvironmentSecretBinding
+from .environment_specification__environment_image__environment_repository__environment_catalog_pin import (
+    EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin,
+)
+from .environment_specification__environment_image__environment_repository__environment_catalog_pin_image import (
+    EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPinImage,
+)
+from .environment_specification__environment_image__environment_repository__environment_catalog_pin_repositories_item import (
+    EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPinRepositoriesItem,
+)
+from .environment_startup import EnvironmentStartup
 from .error_code import ErrorCode
 from .error_event import ErrorEvent
 from .error_response import ErrorResponse
 from .event_bodies_response import EventBodiesResponse
 from .event_body import EventBody
-from .exec_history_details import ExecHistoryDetails
-from .exec_output import ExecOutput
-from .exec_output_encoding import ExecOutputEncoding
-from .exec_request import ExecRequest
-from .exec_response import ExecResponse
-from .exec_source import ExecSource
-from .exec_target import ExecTarget
-from .exposure_access import ExposureAccess
-from .exposure_info import ExposureInfo
-from .exposure_list_response import ExposureListResponse
-from .exposure_request import ExposureRequest
-from .exposure_target import ExposureTarget
-from .file_action_count import FileActionCount
-from .file_entry_type import FileEntryType
-from .file_event import FileEvent
-from .file_event_action import FileEventAction
-from .file_list_entry import FileListEntry
-from .file_list_response import FileListResponse
-from .fork_request import ForkRequest
-from .fork_response import ForkResponse
-from .grant_state import GrantState
-from .history_details import HistoryDetails
-from .history_entry import HistoryEntry
-from .history_layer import HistoryLayer
-from .history_layer_filter import HistoryLayerFilter
 
 __all__ = [
     'AgentAccessScope',
@@ -129,37 +149,37 @@ __all__ = [
     'CredentialInjectResponse',
     'CredentialOutcome',
     'CredentialStorage',
+    'DetectionLevel',
     'DisconnectResponse',
     'DnsEvent',
     'EnrollmentKind',
+    'EnvironmentCapabilityDecision',
+    'EnvironmentCatalogSelections_EnvironmentCatalogPin',
+    'EnvironmentCatalogSelections_EnvironmentCatalogPinSelectedItem',
+    'EnvironmentCurrentResponse',
+    'EnvironmentDocument',
+    'EnvironmentIdentity',
+    'EnvironmentImageUpdatePolicy',
+    'EnvironmentMcpDefinition',
+    'EnvironmentMcpDefinitionRemote',
+    'EnvironmentMcpDefinitionSandbox',
+    'EnvironmentMcpPermissions',
+    'EnvironmentMcps_EnvironmentCatalogPin',
+    'EnvironmentPackages',
+    'EnvironmentPlugins',
+    'EnvironmentRuleParameter',
+    'EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRule',
+    'EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRuleCustomValue',
+    'EnvironmentRules_EnvironmentCatalogPin_EnvironmentDetectionRule',
+    'EnvironmentRules_EnvironmentCatalogPin_EnvironmentDetectionRuleCustomValue',
+    'EnvironmentSecretBinding',
+    'EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin',
+    'EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPinImage',
+    'EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPinRepositoriesItem',
+    'EnvironmentStartup',
     'ErrorCode',
     'ErrorEvent',
     'ErrorResponse',
     'EventBodiesResponse',
     'EventBody',
-    'ExecHistoryDetails',
-    'ExecOutput',
-    'ExecOutputEncoding',
-    'ExecRequest',
-    'ExecResponse',
-    'ExecSource',
-    'ExecTarget',
-    'ExposureAccess',
-    'ExposureInfo',
-    'ExposureListResponse',
-    'ExposureRequest',
-    'ExposureTarget',
-    'FileActionCount',
-    'FileEntryType',
-    'FileEvent',
-    'FileEventAction',
-    'FileListEntry',
-    'FileListResponse',
-    'ForkRequest',
-    'ForkResponse',
-    'GrantState',
-    'HistoryDetails',
-    'HistoryEntry',
-    'HistoryLayer',
-    'HistoryLayerFilter',
 ]
