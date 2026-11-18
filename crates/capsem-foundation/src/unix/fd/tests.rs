@@ -5,6 +5,22 @@ use std::os::unix::net::UnixStream;
 use nix::fcntl::{fcntl, FcntlArg, FdFlag, OFlag};
 
 use super::{duplicate, retry_eintr, set_close_on_exec, set_nonblocking, shutdown, wait_readable, SocketShutdown};
+
+#[test]
+fn inherited_descriptor_adoption_validates_and_transfers_cloexec_ownership() {
+    use std::os::fd::IntoRawFd;
+    let (stream, _peer) = UnixStream::pair().unwrap();
+    fcntl(stream.as_raw_fd(), FcntlArg::F_SETFD(FdFlag::empty())).unwrap();
+    set_nonblocking(stream.as_fd(), true).unwrap();
+    let raw = stream.into_raw_fd();
+    let owned = unsafe { super::take_inherited_close_on_exec(raw) }.unwrap();
+    assert!(
+        FdFlag::from_bits_retain(fcntl(owned.as_raw_fd(), FcntlArg::F_GETFD).unwrap()).contains(FdFlag::FD_CLOEXEC)
+    );
+    assert!(OFlag::from_bits_retain(fcntl(owned.as_raw_fd(), FcntlArg::F_GETFL).unwrap()).contains(OFlag::O_NONBLOCK));
+    drop(owned);
+    assert!(unsafe { super::take_inherited_close_on_exec(-1) }.is_err());
+}
 use nix::errno::Errno;
 
 #[test]

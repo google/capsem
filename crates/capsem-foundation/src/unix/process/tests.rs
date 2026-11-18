@@ -4,6 +4,29 @@ use nix::errno::Errno;
 
 use super::*;
 
+#[cfg(target_os = "linux")]
+#[test]
+fn inspection_protection_disables_dumpability_in_an_isolated_process() {
+    const CHILD: &str = "CAPSEM_DUMPABILITY_TEST_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        nix::sys::prctl::set_dumpable(true).unwrap();
+        disable_dumpability().unwrap();
+        assert!(!nix::sys::prctl::get_dumpable().unwrap());
+        disable_dumpability().unwrap();
+        assert!(!nix::sys::prctl::get_dumpable().unwrap());
+        return;
+    }
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "unix::process::tests::inspection_protection_disables_dumpability_in_an_isolated_process",
+        ])
+        .env(CHILD, "1")
+        .status()
+        .unwrap();
+    assert!(status.success());
+}
+
 #[test]
 fn pinned_process_names_its_real_executable() {
     let handle = ProcessHandle::open(ProcessId::try_from(std::process::id()).unwrap()).unwrap();

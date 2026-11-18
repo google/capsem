@@ -11,6 +11,15 @@ use nix::unistd::Pid;
 use super::errno;
 mod scope;
 pub use scope::ProcessScope;
+pub mod cancellation;
+
+/// Prevent same-user procfs inspection and core dumps in a standalone Linux
+/// supervisor. An ordinary exec resets this attribute under the kernel's exec
+/// rules; a failed preparation keeps it disabled until the supervisor exits.
+#[cfg(target_os = "linux")]
+pub fn disable_dumpability() -> io::Result<()> {
+    nix::sys::prctl::set_dumpable(false).map_err(errno::io)
+}
 
 /// Erase the inherited environment and detach it from the C process image.
 ///
@@ -119,6 +128,9 @@ pub enum SignalProbe {
 pub enum Signal {
     Terminate,
     Kill,
+    Interrupt,
+    Hangup,
+    Quit,
 }
 
 impl Signal {
@@ -126,7 +138,15 @@ impl Signal {
         match self {
             Self::Terminate => NixSignal::SIGTERM,
             Self::Kill => NixSignal::SIGKILL,
+            Self::Interrupt => NixSignal::SIGINT,
+            Self::Hangup => NixSignal::SIGHUP,
+            Self::Quit => NixSignal::SIGQUIT,
         }
+    }
+
+    /// Kernel signal number for an exit-status or protocol report.
+    pub fn number(self) -> i32 {
+        self.as_nix() as i32
     }
 }
 

@@ -10,6 +10,23 @@ use nix::sys::socket::{self, Shutdown};
 
 use super::errno;
 
+/// Validate and take an inherited descriptor, preserving its descriptor flags
+/// while ensuring it cannot reach a subsequently executed program.
+///
+/// # Safety
+/// If open, `fd` must be an exclusively owned inherited grant, not owned or
+/// borrowed by any Rust object. Call before another thread can reuse it.
+pub unsafe fn take_inherited_close_on_exec(fd: RawFd) -> io::Result<OwnedFd> {
+    let flags = fcntl(fd, FcntlArg::F_GETFD).map_err(errno::io)?;
+    fcntl(
+        fd,
+        FcntlArg::F_SETFD(FdFlag::from_bits_retain(flags) | FdFlag::FD_CLOEXEC),
+    )
+    .map_err(errno::io)?;
+    // SAFETY: fcntl established validity; the caller grants exclusive ownership.
+    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
 /// Close every inherited descriptor except standard streams.
 ///
 /// # Safety
