@@ -426,7 +426,7 @@
     },
     "/environments/create": {
       "post": {
-        "description": "Create an operator blueprint. Reconcile the same request ID explicitly after interruption; never infer completed application from an accepted decision. Skills and rules resolve from configured catalogs. Repository resolution and MCP catalog verification are unavailable.",
+        "description": "Create an operator blueprint. Reconcile the same request ID explicitly after interruption; never infer completed application from an accepted decision. Skills and rules resolve from configured catalogs. Anonymous public HTTPS Git references resolve under current corporate policy; this does not prepare a sandbox checkout. MCP catalog verification is unavailable.",
         "operationId": "createEnvironment",
         "requestBody": {
           "content": {
