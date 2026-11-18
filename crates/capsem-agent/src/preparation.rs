@@ -1,18 +1,16 @@
 //! Startup-only mode of the existing native guest helper. No host transport.
 
+use capsem_foundation::unix::{
+    fd,
+    process::{self, cancellation, Signal},
+};
 use capsem_proto::preparation::{self, PreparationFailure as Failure, PreparationStatus as Status};
-use nix::libc;
 use std::fs::File;
 use std::io::{self, Write};
-use std::os::fd::{FromRawFd, RawFd};
+use std::os::fd::RawFd;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
-
-#[path = "preparation/privacy.rs"]
-mod privacy;
-#[path = "preparation/signals.rs"]
-mod signals;
 
 struct Input<'a> {
     timeout: Duration,
@@ -44,13 +42,10 @@ impl<'a> Input<'a> {
 /// Own a valid private descriptor and close it on both child and entrypoint
 /// exec. Script stdio receives only duplicates of the output descriptor.
 fn private_fd(fd: RawFd) -> io::Result<File> {
-    let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
-    if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // F_GETFD established that this descriptor is open. This startup-only
-    // invocation takes ownership once, before spawning any child.
-    Ok(unsafe { File::from_raw_fd(fd) })
+    // This startup-only invocation owns the inherited grant once, before any
+    // child or other thread can reuse it. Foundation validates it before taking
+    // ownership and setting CLOEXEC.
+    unsafe { fd::take_inherited_close_on_exec(fd) }.map(File::from)
 }
 fn report(status: &mut File, event: Status) -> io::Result<()> {
     status.write_all(&preparation::encode(&event)?)
@@ -82,18 +77,18 @@ pub(crate) fn run(args: &[String]) -> i32 {
         Ok(output) => output,
         Err(_) => return failed(&mut status, Failure::InvalidInput),
     };
-    let _privacy = match privacy::Guard::install() {
-        Ok(privacy) => privacy,
-        Err(_) => return failed(&mut status, Failure::Spawn),
-    };
-    let signals = match signals::Guard::install() {
+    #[cfg(target_os = "linux")]
+    if process::disable_dumpability().is_err() {
+        return failed(&mut status, Failure::Spawn);
+    }
+    let signals = match cancellation::Guard::install() {
         Ok(signals) => signals,
         Err(_) => return failed(&mut status, Failure::Spawn),
     };
     if report(&mut status, Status::Preparing).is_err() {
         return 126;
     }
-    if let Err(failure) = supervise(&input, &output) {
+    if let Err(failure) = supervise(&input, &output, &signals) {
         return failed(&mut status, failure);
     }
     if report(&mut status, Status::Entrypoint).is_err() {
@@ -107,7 +102,7 @@ pub(crate) fn run(args: &[String]) -> i32 {
     failed(&mut status, Failure::EntrypointExec)
 }
 
-fn supervise(input: &Input<'_>, output: &File) -> Result<(), Failure> {
+fn supervise(input: &Input<'_>, output: &File, signals: &cancellation::Guard) -> Result<(), Failure> {
     let mut command = Command::new("/bin/sh");
     command
         .arg("-c")
@@ -126,49 +121,52 @@ fn supervise(input: &Input<'_>, output: &File) -> Result<(), Failure> {
     })?;
     let deadline = Instant::now() + input.timeout;
     loop {
-        if let Some(signal) = signals::received() {
+        if let Some(signal) = signals.received() {
             terminate(&mut child, signal);
-            return Err(Failure::Signal { signal });
+            return Err(Failure::Signal {
+                signal: signal.number(),
+            });
         }
         match child.try_wait() {
             Ok(Some(status)) if status.success() => return Ok(()),
             Ok(Some(status)) => {
-                terminate(&mut child, libc::SIGKILL);
+                terminate(&mut child, Signal::Kill);
                 return Err(match status.code() {
                     Some(code) => Failure::Exit { code },
                     None => Failure::Signal {
-                        signal: status.signal().unwrap_or(libc::SIGKILL),
+                        signal: status.signal().unwrap_or(Signal::Kill.number()),
                     },
                 });
             }
             Ok(None) => {}
             Err(_) => {
-                terminate(&mut child, libc::SIGKILL);
+                terminate(&mut child, Signal::Kill);
                 return Err(Failure::Wait);
             }
         }
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
-            terminate(&mut child, libc::SIGKILL);
+            terminate(&mut child, Signal::Kill);
             return Err(Failure::TimedOut);
         }
         std::thread::sleep(remaining.min(Duration::from_millis(10)));
     }
 }
 
-fn terminate(child: &mut Child, signal: i32) {
+fn terminate(child: &mut Child, signal: Signal) {
     // The shell has its own process group. The wrapper is PID1 in the OCI
     // namespace; exiting after failure also retires descendants that changed
     // groups. Never signal the wrapper's inherited group.
-    let group = -(child.id() as i32);
-    unsafe {
-        libc::kill(group, signal);
-    }
-    if signal != libc::SIGKILL {
-        std::thread::sleep(Duration::from_millis(100));
-        unsafe {
-            libc::kill(group, libc::SIGKILL);
+    if let Ok(group) = process::ProcessId::try_from(child.id()) {
+        let _ = process::send_process_group_signal(group, signal);
+        if signal != Signal::Kill {
+            std::thread::sleep(Duration::from_millis(100));
+            let _ = process::send_process_group_signal(group, Signal::Kill);
         }
+    } else {
+        // Child::id is a positive kernel PID on supported platforms. Retain a
+        // final direct-child teardown if a future platform cannot represent it.
+        let _ = child.kill();
     }
     let _ = child.wait();
 }
