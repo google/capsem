@@ -676,7 +676,11 @@ pub(super) async fn handle_delete(
     Ok(Json(api::VmActionResponse { success: true }))
 }
 
-pub(super) fn provision_response_for_running(state: &ServiceState, id: String) -> Result<ProvisionResponse, AppError> {
+pub(super) fn provision_response_for_running(
+    state: &ServiceState,
+    id: String,
+    expected_generation: Option<uuid::Uuid>,
+) -> Result<ProvisionResponse, AppError> {
     let instances = state.instances.lock().unwrap();
     let instance = instances.get(&id).ok_or_else(|| {
         AppError::new(
@@ -684,6 +688,12 @@ pub(super) fn provision_response_for_running(state: &ServiceState, id: String) -
             format!("provisioned VM missing from runtime registry: {id}"),
         )
     })?;
+    if expected_generation.is_some_and(|generation| instance.generation != generation) {
+        return Err(AppError::new(
+            StatusCode::CONFLICT,
+            "provision response owner generation changed".into(),
+        ));
+    }
     let status = VmLifecycleState::Running;
     let response = ProvisionResponse::new(
         id,

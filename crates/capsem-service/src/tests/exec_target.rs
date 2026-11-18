@@ -214,9 +214,14 @@ async fn exec_timeout_and_missing_vm_routes_return_structured_error_codes() {
         .data
         .vms
         .insert("unresumable".into(), existing);
-    let resume_existing_err = handle_resume(crate::tests::operator_actor(), st(), Path(existing_id))
-        .await
-        .unwrap_err();
+    let resume_existing_err = handle_resume(
+        crate::tests::operator_actor(),
+        st(),
+        Path(existing_id),
+        axum::body::Bytes::new(),
+    )
+    .await
+    .unwrap_err();
     assert_eq!(resume_existing_err.status, StatusCode::INTERNAL_SERVER_ERROR);
     assert_eq!(resume_existing_err.body.code, None);
     assert_eq!(resume_existing_err.body.vm_id, None);
@@ -252,9 +257,14 @@ async fn exec_timeout_and_missing_vm_routes_return_structured_error_codes() {
         handle_persist(crate::tests::operator_actor(), st(), missing(), persist_req)
             .await
             .unwrap_err(),
-        handle_resume(crate::tests::operator_actor(), st(), missing())
-            .await
-            .unwrap_err(),
+        handle_resume(
+            crate::tests::operator_actor(),
+            st(),
+            missing(),
+            axum::body::Bytes::new(),
+        )
+        .await
+        .unwrap_err(),
         handle_fork(crate::tests::operator_actor(), st(), missing(), fork_req("forked"))
             .await
             .unwrap_err(),

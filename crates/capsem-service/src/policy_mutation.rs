@@ -27,6 +27,20 @@ pub(crate) struct PolicyMutation<'a> {
 }
 
 impl PolicyMutationLock {
+    /// Launch producers run on the blocking pool and retain selection
+    /// exclusion through registration even if their HTTP waiter is cancelled.
+    pub(crate) fn begin_blocking(&self) -> PolicyMutation<'_> {
+        let guard = match self.mutex.try_lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                #[cfg(test)]
+                self.contended.notify_one();
+                self.mutex.blocking_lock()
+            }
+        };
+        PolicyMutation { _guard: guard }
+    }
+
     pub(crate) async fn begin(&self) -> PolicyMutation<'_> {
         let guard = match self.mutex.try_lock() {
             Ok(guard) => guard,

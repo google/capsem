@@ -72,7 +72,7 @@ fn resume_refuses_a_profile_era_vm() {
     let vm_id = entry.id.clone();
     register_entry(&state, entry);
 
-    let err = state.resume_sandbox(&vm_id, None, None).unwrap_err().to_string();
+    let err = state.resume_sandbox(&vm_id, None, None, None).unwrap_err().to_string();
     assert!(
         err.contains("created from the 'code' profile, and profiles no longer exist"),
         "resume must refuse a profile-era VM, got: {err}"
@@ -880,7 +880,7 @@ fn resume_sandbox_requires_uuid_route_id_not_display_name() {
         .vms
         .insert("co-work1".to_string(), entry);
 
-    let err = state.resume_sandbox("co-work1", None, None).unwrap_err();
+    let err = state.resume_sandbox("co-work1", None, None, None).unwrap_err();
     assert!(
         err.to_string().contains("no persistent VM with id"),
         "display names must be translated before service routes call resume: {err}"

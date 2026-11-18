@@ -131,7 +131,8 @@ fn restore_with_transport(state: &Arc<ServiceState>, id: &str, attach: bool) -> 
 
 /// A restored guest may be ready while its workload is still starting. Keep
 /// launch-record I/O off the async worker and await this boot's workload marker.
-pub(crate) async fn restore_ready(state: &Arc<ServiceState>, id: &str) -> Result<(), AppError> {
+#[cfg(test)]
+async fn restore_ready(state: &Arc<ServiceState>, id: &str) -> Result<(), AppError> {
     restore_ready_with_transport(state, id, false).await
 }
 
@@ -140,6 +141,15 @@ pub(crate) async fn restore_ready_with_transport(
     id: &str,
     attach: bool,
 ) -> Result<(), AppError> {
+    if prepare_restore(state, id, attach).await? {
+        require_ready(state, id).await?;
+    }
+    Ok(())
+}
+
+/// Dispatch preparation under the native lifecycle boundary. Waiting for its
+/// workload is a separate, original-owner operation after native locks release.
+pub(crate) async fn prepare_restore(state: &Arc<ServiceState>, id: &str, attach: bool) -> Result<bool, AppError> {
     let started = crate::environment_launch::prepare_image(state, id, attach).await?;
     let restore_id = id.to_owned();
     let has_workload = started
@@ -150,10 +160,7 @@ pub(crate) async fn restore_ready_with_transport(
             })
             .await?
             .map_err(|error| AppError::new(StatusCode::CONFLICT, error))?;
-    if has_workload {
-        require_ready(state, id).await?;
-    }
-    Ok(())
+    Ok(has_workload)
 }
 
 /// Cold boots clear runtime markers and await service policy admission. A

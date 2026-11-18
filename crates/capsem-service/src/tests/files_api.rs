@@ -889,7 +889,7 @@ async fn handle_provision_attaches_labels_and_list_fingerprint_tracks_label_chan
     }
     let resumed_id = created.id.clone();
     let resumed = state
-        .off_worker(move |state| state.resume_sandbox(&resumed_id, None, None))
+        .off_worker(move |state| state.resume_sandbox(&resumed_id, None, None, None))
         .await
         .unwrap()
         .unwrap();

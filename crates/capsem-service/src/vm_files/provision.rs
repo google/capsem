@@ -223,7 +223,7 @@ pub(crate) async fn complete_create(
     crate::environment_launch::initialize(state, id)
         .await
         .map_err(|error| AppError::new(StatusCode::SERVICE_UNAVAILABLE, error))?;
-    let response = provision_response_for_running(state, id.to_owned())?;
+    let response = provision_response_for_running(state, id.to_owned(), None)?;
     let socket = state
         .instances
         .lock()

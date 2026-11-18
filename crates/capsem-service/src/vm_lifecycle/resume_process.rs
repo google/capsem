@@ -44,10 +44,27 @@ impl ServiceState {
         id: &str,
         ram_mb_override: Option<u64>,
         cpus_override: Option<u32>,
+        expected: Option<&capsem_api::VmLifecycleSelection>,
     ) -> Result<String> {
         let _launch = self.lifecycle.admit()?;
+        // Preserve the explicit warm refusal before taking a blocking lock;
+        // warm restore must never fall through to a fresh cold generation.
+        anyhow::ensure!(
+            capsem_proto::warm_suspend_available()
+                || !find_persistent_entry_by_route_id(self, id).is_some_and(|entry| entry.suspended),
+            capsem_proto::WARM_SUSPEND_UNAVAILABLE
+        );
+        let _selection = self.policy_mutation.begin_blocking();
+        if let Some(expected) = expected {
+            self.verify_lifecycle_selection(id, capsem_api::VmLifecycleIntent::Start, expected)
+                .map_err(crate::lifecycle_readiness::SelectionRefusal)?;
+        }
         self.cleanup_stale_instances();
         self.reconcile_persistent_defunct_from_logs();
+        if let Some(expected) = expected {
+            self.verify_lifecycle_selection(id, capsem_api::VmLifecycleIntent::Start, expected)
+                .map_err(crate::lifecycle_readiness::SelectionRefusal)?;
+        }
 
         let entry = find_persistent_entry_by_route_id(self.as_ref(), id)
             .ok_or_else(|| anyhow!("no persistent VM with id \"{}\"", id))?;

@@ -30,6 +30,9 @@ const DIRECT_BLOCKING: &[&str] = &[
 /// Synchronous helpers whose bodies do the reading.
 const BLOCKING_HELPERS: &[&str] = &[
     "resume_sandbox(",
+    "lifecycle_selection(",
+    "verify_lifecycle_selection(",
+    "begin_blocking(",
     "provision_sandbox(",
     "existing_session_names(",
     "find_failed_session_dir(",

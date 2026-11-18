@@ -40,6 +40,16 @@ fn changed() -> AppError {
     )
 }
 
+/// Retain a typed HTTP refusal through a blocking producer's anyhow boundary.
+#[derive(Debug)]
+pub(crate) struct SelectionRefusal(pub(crate) AppError);
+impl std::fmt::Display for SelectionRefusal {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.body.error.fmt(formatter)
+    }
+}
+impl std::error::Error for SelectionRefusal {}
+
 impl ServiceState {
     /// Blocking, read-only observation. A stopped sidecar identifies the last
     /// spawn; it is never proof of a live process or permission to signal one.

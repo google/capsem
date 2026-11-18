@@ -252,7 +252,7 @@ fn accepted_restart_refuses_both_launch_paths_before_any_session_mutation() {
         from: None,
         description: None,
     });
-    let resume = state.resume_sandbox("never-started", None, None);
+    let resume = state.resume_sandbox("never-started", None, None, None);
     for error in [provision.unwrap_err(), resume.unwrap_err()] {
         assert_eq!(
             error.downcast_ref::<capsem_service::lifecycle::RestartDenied>(),
@@ -635,7 +635,9 @@ async fn failed_resume_teardown_clears_running_instance() {
         session_dir,
         retirement,
     );
-    stop_failed_resume_process_under_lock(&state, &vm_id).await.unwrap();
+    stop_failed_resume_process_under_lock(&state, &vm_id, generation)
+        .await
+        .unwrap();
     assert!(state.retirements.wait_exit(&vm_id, generation).await.unwrap());
     drop(guard);
     reaper.await.unwrap();

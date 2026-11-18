@@ -32,7 +32,7 @@ mod relaunch;
 #[cfg(test)]
 pub(crate) use relaunch::restore;
 pub(crate) use relaunch::{
-    carry_launch_record, drop_carried_image, forget_previous_run, restore_ready, restore_ready_with_transport,
+    carry_launch_record, drop_carried_image, forget_previous_run, prepare_restore, restore_ready_with_transport,
 };
 
 const CREATE_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(110);
@@ -495,6 +495,14 @@ pub(crate) async fn wait_for_create(state: &Arc<ServiceState>, id: &str) -> Resu
     let preparation = crate::environment_launch::preparation_timeout(state, id)
         .await
         .map_err(|error| AppError::new(StatusCode::SERVICE_UNAVAILABLE, error))?;
+    wait_for_create_budget(state, id, preparation).await
+}
+
+async fn wait_for_create_budget(
+    state: &Arc<ServiceState>,
+    id: &str,
+    preparation: std::time::Duration,
+) -> Result<ContainerStatusResponse, AppError> {
     wait_observed(
         state,
         id,
@@ -511,6 +519,27 @@ pub(crate) async fn wait_for_create(state: &Arc<ServiceState>, id: &str) -> Resu
 /// A timeout leaves setup with its service owner; terminal failures are errors.
 pub(crate) async fn require_ready(state: &Arc<ServiceState>, id: &str) -> Result<(), AppError> {
     let status = wait_for_create(state, id).await?;
+    ready_outcome(id, status)
+}
+
+/// The producer captured this owner and its verified budget before releasing
+/// native exclusion. Never reselect a replacement owner or its startup timing.
+pub(crate) async fn require_owner_ready(
+    state: &Arc<ServiceState>,
+    owner: &owner_connection::OwnerConnection,
+    preparation: std::time::Duration,
+) -> Result<(), AppError> {
+    let ended = || AppError::new(StatusCode::CONFLICT, "original workload readiness owner ended".into());
+    owner.validate(state, false).map_err(|_| ended())?;
+    let status = tokio::select! {
+        result = wait_for_create_budget(state, owner.id(), preparation) => result?,
+        () = owner.revoked() => return Err(ended()),
+    };
+    owner.validate(state, false).map_err(|_| ended())?;
+    ready_outcome(owner.id(), status)
+}
+
+fn ready_outcome(id: &str, status: ContainerStatusResponse) -> Result<(), AppError> {
     match status.state {
         ContainerState::Running | ContainerState::Staged => Ok(()),
         ContainerState::Exited | ContainerState::Failed => Err(AppError::new(

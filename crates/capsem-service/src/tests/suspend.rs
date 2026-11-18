@@ -26,6 +26,7 @@ async fn warm_restore_disabled_without_consuming_saved_state() {
         crate::tests::operator_actor(),
         State(Arc::clone(&state)),
         Path(id.clone()),
+        axum::body::Bytes::new(),
     )
     .await
     .unwrap_err();
@@ -33,7 +34,7 @@ async fn warm_restore_disabled_without_consuming_saved_state() {
     assert_eq!(error.body.error, capsem_proto::WARM_SUSPEND_UNAVAILABLE);
     assert_eq!(std::fs::read(&checkpoint).unwrap(), b"existing checkpoint");
     assert!(state
-        .resume_sandbox(&id, None, None)
+        .resume_sandbox(&id, None, None, None)
         .unwrap_err()
         .to_string()
         .contains("disabled"));
