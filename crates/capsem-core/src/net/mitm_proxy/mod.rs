@@ -1053,7 +1053,7 @@ async fn handle_request(
                     event_id,
                     observed.event_type(),
                     Arc::clone(&rules),
-                    std::collections::BTreeMap::new().into(),
+                    std::collections::BTreeMap::new(),
                     security_event,
                     current_unix_ms(),
                     "mcp_over_http_denied",

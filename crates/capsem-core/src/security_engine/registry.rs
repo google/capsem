@@ -4,7 +4,7 @@ use super::*;
 #[derive(Default, Clone)]
 pub struct SecurityActionRegistry {
     pub(super) plugins: Arc<BTreeMap<String, Arc<dyn SecurityPlugin>>>,
-    pub(super) policy: runtime_policy::RuntimePluginPolicy,
+    pub(super) policy: SecurityPluginPolicy,
 }
 
 impl SecurityActionRegistry {
@@ -16,13 +16,13 @@ impl SecurityActionRegistry {
         builtin_actions::registry().clone()
     }
 
-    pub fn with_plugin_policy(mut self, plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>) -> Self {
-        self.policy = runtime_policy::RuntimePluginPolicy::Settings(plugin_policy.into());
+    pub fn with_plugin_policy(mut self, plugin_policy: impl Into<SecurityPluginPolicy>) -> Self {
+        self.policy = plugin_policy.into();
         self
     }
 
     pub fn with_environment_plugins(mut self, plugins: Arc<crate::environment::CompiledEnvironmentPlugins>) -> Self {
-        self.policy = runtime_policy::RuntimePluginPolicy::Environment(plugins);
+        self.policy = SecurityPluginPolicy::Environment(plugins);
         self
     }
 

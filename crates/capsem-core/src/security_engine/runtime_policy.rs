@@ -6,17 +6,20 @@ use crate::environment::{CompiledEnvironmentPlugins, EnvironmentPluginSource, Pl
 use capsem_config::plugins::PluginId;
 use std::borrow::Cow;
 
+/// Immutable runtime capability. Environment configurations retain their
+/// typed directional options; settings snapshots remain an explicit migration
+/// input to the same executor, never an option-flattening adapter.
 #[derive(Clone)]
-pub(super) enum RuntimePluginPolicy {
+pub enum SecurityPluginPolicy {
     Settings(Arc<BTreeMap<String, SecurityPluginConfig>>),
     Environment(Arc<CompiledEnvironmentPlugins>),
 }
-impl Default for RuntimePluginPolicy {
+impl Default for SecurityPluginPolicy {
     fn default() -> Self {
         Self::Settings(Arc::default())
     }
 }
-impl RuntimePluginPolicy {
+impl SecurityPluginPolicy {
     pub(super) fn configuration(
         &self,
         id: &str,
@@ -105,5 +108,29 @@ pub(super) fn legacy_configuration(
         detection_level: config.detection_level,
         source: EnvironmentPluginSource::Environment,
         options,
+    }
+}
+
+impl From<Arc<BTreeMap<String, SecurityPluginConfig>>> for SecurityPluginPolicy {
+    fn from(policy: Arc<BTreeMap<String, SecurityPluginConfig>>) -> Self {
+        Self::Settings(policy)
+    }
+}
+impl From<BTreeMap<String, SecurityPluginConfig>> for SecurityPluginPolicy {
+    fn from(policy: BTreeMap<String, SecurityPluginConfig>) -> Self {
+        Self::Settings(Arc::new(policy))
+    }
+}
+impl From<Arc<CompiledEnvironmentPlugins>> for SecurityPluginPolicy {
+    fn from(policy: Arc<CompiledEnvironmentPlugins>) -> Self {
+        Self::Environment(policy)
+    }
+}
+impl std::fmt::Debug for SecurityPluginPolicy {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Settings(policy) => formatter.debug_tuple("Settings").field(policy).finish(),
+            Self::Environment(_) => formatter.write_str("Environment(..)"),
+        }
     }
 }

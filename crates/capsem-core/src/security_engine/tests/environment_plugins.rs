@@ -212,3 +212,28 @@ fn environment_plugins_capture_off_keeps_substitution_and_sanitization() {
     assert_eq!(credentials.captures.load(Ordering::SeqCst), 0);
     assert_eq!(credentials.substitutions.load(Ordering::SeqCst), 1);
 }
+
+#[test]
+fn typed_plugin_policy_reaches_the_public_security_boundary_without_flattening_options() {
+    let environment: EnvironmentPlugins = toml::from_str("[pii_filter.inbound]\nmode='block'\n[pii_filter.inbound.options]\nemail=false\n[pii_filter.outbound]\nmode='block'").unwrap();
+    let compiled = Arc::new(CompiledEnvironmentPlugins::resolve(&environment, &EnvironmentPlugins::default()).unwrap());
+    let inbound =
+        evaluate_security_boundary(&SecurityRuleSet::new(Vec::new()), compiled.clone(), http_event(true)).unwrap();
+    assert!(
+        inbound.enforcement.is_allowed(),
+        "disabled inbound email category must remain disabled"
+    );
+    let outbound = evaluate_security_boundary(&SecurityRuleSet::new(Vec::new()), compiled, http_event(false)).unwrap();
+    assert!(
+        !outbound.enforcement.is_allowed(),
+        "independent outbound block must remain enforced"
+    );
+    let corporate: EnvironmentPlugins = toml::from_str("[pii_filter.inbound]\nmode='block'").unwrap();
+    let locked = Arc::new(CompiledEnvironmentPlugins::resolve(&environment, &corporate).unwrap());
+    assert!(
+        !evaluate_security_boundary(&SecurityRuleSet::new(Vec::new()), locked, http_event(true))
+            .unwrap()
+            .enforcement
+            .is_allowed()
+    );
+}

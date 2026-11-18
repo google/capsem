@@ -30,7 +30,7 @@ pub async fn emit_explicit_file_security_write_and_rules(
 pub async fn emit_observed_explicit_file_security_write_and_rules_with_plugins(
     db: &DbWriter,
     rules: &SecurityRuleSet,
-    plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>,
+    plugin_policy: impl Into<SecurityPluginPolicy>,
     event: ExplicitFileSecurityEvent,
 ) -> Result<Option<SecurityEventId>, String> {
     let primary = explicit_primary_file_event(&event);

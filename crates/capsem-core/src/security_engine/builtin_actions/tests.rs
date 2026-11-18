@@ -87,10 +87,10 @@ fn the_plugin_policy_is_per_registry_not_shared() {
     policy.insert("credential_broker".to_string(), disabled_plugin());
     let configured = SecurityActionRegistry::with_builtin_actions().with_plugin_policy(policy);
     let plain = SecurityActionRegistry::with_builtin_actions();
-    let super::super::runtime_policy::RuntimePluginPolicy::Settings(configured_policy) = configured.policy else {
+    let super::super::SecurityPluginPolicy::Settings(configured_policy) = configured.policy else {
         panic!("settings policy")
     };
-    let super::super::runtime_policy::RuntimePluginPolicy::Settings(plain_policy) = plain.policy else {
+    let super::super::SecurityPluginPolicy::Settings(plain_policy) = plain.policy else {
         panic!("settings policy")
     };
     assert_eq!(configured_policy.len(), 1);

@@ -20,7 +20,7 @@ use crate::net::policy_config::{
 
 pub mod approval;
 mod boundary_evaluation;
-pub use boundary_evaluation::SecurityBoundaryEvaluation;
+pub use boundary_evaluation::{SecurityBoundaryEvaluation, SecurityEnforcementAction, SecurityEnforcementDecision};
 mod builtin_actions;
 mod container;
 mod credential_grants;
@@ -52,6 +52,7 @@ mod registry;
 mod runtime_policy;
 use crate::environment::{CompiledPluginConfiguration, CompiledPluginOptions};
 pub use registry::SecurityActionRegistry;
+pub use runtime_policy::SecurityPluginPolicy;
 mod rule_decision;
 mod rule_emission;
 pub(crate) use plugins::redact_query_for_ledger;
@@ -120,7 +121,7 @@ pub struct ExplicitFileSecurityEvent {
 async fn emit_security_boundary_with_plugins(
     db: &DbWriter,
     rules: &SecurityRuleSet,
-    plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>,
+    plugin_policy: impl Into<SecurityPluginPolicy>,
     primary: WriteOp,
     event_type: RuntimeSecurityEventType,
     security_event: SecurityEvent,
@@ -171,7 +172,7 @@ fn apply_plugin_decision_to_emission(plugin_decision: SecurityDecisionKind, emis
 pub async fn emit_explicit_file_security_write_and_rules_with_plugins(
     db: &DbWriter,
     rules: &SecurityRuleSet,
-    plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>,
+    plugin_policy: impl Into<SecurityPluginPolicy>,
     event: ExplicitFileSecurityEvent,
 ) -> Result<Option<SecurityRuleEmission>, String> {
     let primary = explicit_primary_file_event(&event);
@@ -201,7 +202,7 @@ pub async fn emit_explicit_file_security_write_and_rules_with_plugins(
 pub async fn emit_process_exec_security_boundary(
     db: &DbWriter,
     rules: &SecurityRuleSet,
-    plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>,
+    plugin_policy: impl Into<SecurityPluginPolicy>,
     event: ExecEvent,
 ) -> Result<Option<SecurityRuleEmission>, String> {
     let security_event = security_event_from_exec_event(&event);
@@ -467,7 +468,7 @@ pub async fn emit_matching_security_rules_for_evaluated_event(
     event_id: SecurityEventId,
     event_type: RuntimeSecurityEventType,
     rules: &SecurityRuleSet,
-    plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>,
+    plugin_policy: impl Into<SecurityPluginPolicy>,
     event: SecurityEvent,
     timestamp_unix_ms: i64,
 ) -> Result<usize, String> {
@@ -481,7 +482,7 @@ pub async fn emit_evaluated_security_rules(
     event_id: SecurityEventId,
     event_type: RuntimeSecurityEventType,
     rules: Arc<SecurityRuleSet>,
-    plugin_policy: Arc<BTreeMap<String, SecurityPluginConfig>>,
+    plugin_policy: impl Into<SecurityPluginPolicy>,
     event: SecurityEvent,
     timestamp_unix_ms: i64,
     context: &'static str,
@@ -502,7 +503,7 @@ pub async fn emit_evaluated_security_rules(
 }
 
 fn prepare_event_for_security_rule_ledger(
-    plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>,
+    plugin_policy: impl Into<SecurityPluginPolicy>,
     mut event: SecurityEvent,
 ) -> Result<SecurityEvent, String> {
     let action_registry = SecurityActionRegistry::with_builtin_actions().with_plugin_policy(plugin_policy);
@@ -519,7 +520,7 @@ fn prepare_event_for_security_rule_ledger(
 }
 
 fn prepare_evaluated_event_for_security_rule_ledger(
-    plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>,
+    plugin_policy: impl Into<SecurityPluginPolicy>,
     mut event: SecurityEvent,
 ) -> Result<SecurityEvent, String> {
     let action_registry = SecurityActionRegistry::with_builtin_actions().with_plugin_policy(plugin_policy);
@@ -538,72 +539,6 @@ pub struct SecurityRuleEmission {
     pub enforcement: SecurityEnforcementDecision,
     pub event: SecurityEvent,
     pub rule_events: Vec<SecurityRuleEvent>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SecurityEnforcementDecision {
-    pub action: SecurityEnforcementAction,
-    pub rule_id: Option<String>,
-    pub rule_name: Option<String>,
-    pub reason: Option<String>,
-    pub ask_id: Option<SecurityEventId>,
-}
-
-impl SecurityEnforcementDecision {
-    pub fn allow() -> Self {
-        Self {
-            action: SecurityEnforcementAction::Allow,
-            rule_id: None,
-            rule_name: None,
-            reason: None,
-            ask_id: None,
-        }
-    }
-
-    pub fn is_allowed(&self) -> bool {
-        matches!(self.action, SecurityEnforcementAction::Allow)
-    }
-
-    /// Apply an ask's resolution. It takes the three things it reads rather
-    /// than a whole `SecurityAskEvent`: a recorded resolution keeps no payload.
-    pub fn with_ask_resolution(
-        &self,
-        ask_id: &str,
-        status: SecurityAskStatus,
-        reason: Option<&str>,
-    ) -> Result<Self, SecurityActionError> {
-        if !matches!(self.action, SecurityEnforcementAction::Ask) {
-            return Err(SecurityActionError::new(
-                "only ask enforcement decisions can consume ask resolutions",
-            ));
-        }
-        if self.ask_id.as_ref().map(SecurityEventId::as_str) != Some(ask_id) {
-            return Err(SecurityActionError::new(format!(
-                "ask resolution '{ask_id}' does not match enforcement ask id"
-            )));
-        }
-        let action = match status {
-            SecurityAskStatus::Pending => {
-                return Err(SecurityActionError::new(format!("ask '{ask_id}' is still pending")))
-            }
-            SecurityAskStatus::Approved => SecurityEnforcementAction::Allow,
-            SecurityAskStatus::Denied => SecurityEnforcementAction::Block,
-        };
-        Ok(Self {
-            action,
-            rule_id: self.rule_id.clone(),
-            rule_name: self.rule_name.clone(),
-            reason: reason.map(str::to_string).or_else(|| self.reason.clone()),
-            ask_id: self.ask_id.clone(),
-        })
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SecurityEnforcementAction {
-    Allow,
-    Ask,
-    Block,
 }
 
 fn security_decision_event(
@@ -669,7 +604,7 @@ pub fn emit_security_decision_transition_blocking(
 
 pub fn evaluate_security_boundary(
     rules: &SecurityRuleSet,
-    plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>,
+    plugin_policy: impl Into<SecurityPluginPolicy>,
     event: SecurityEvent,
 ) -> Result<SecurityBoundaryEvaluation, SecurityActionError> {
     evaluate_security_boundary_with_registry(
@@ -681,7 +616,7 @@ pub fn evaluate_security_boundary(
 
 pub(crate) fn evaluate_security_boundary_with_credentials(
     rules: &SecurityRuleSet,
-    plugin_policy: impl Into<Arc<BTreeMap<String, SecurityPluginConfig>>>,
+    plugin_policy: impl Into<SecurityPluginPolicy>,
     credentials: Arc<dyn crate::net::proxy_engine::ProxyCredentials>,
     event: SecurityEvent,
 ) -> Result<SecurityBoundaryEvaluation, SecurityActionError> {
