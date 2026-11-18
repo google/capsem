@@ -129,12 +129,11 @@ pub const LAUNCHER_FILES: &[(&str, &[u8])] = &[
 /// controllers and image bytes live on the read-only image share
 /// ([`crate::session::IMAGE_SHARE_TAG`]).
 pub const STAGE: &str = ".capsem-image";
-/// The launcher's marker in [`STAGE`] that an image is staged: every boot
-/// (capsem-init) launches what it marks.
+/// Controls and image inputs are staged. This is not readiness; the service
+/// starts or restores the workload only after policy admission.
 pub const STAGE_READY: &str = "ready";
-/// The launcher's marker in [`STAGE`] that runc started the workload, written
-/// by runc's poststart hook. `ready` says only that the image is staged: it is
-/// written before runc creates anything, and a boot relaunches what it marks.
+/// Workload readiness: ordinary images use runc's poststart hook; prepared
+/// images require the private startup-success record followed by exec EOF.
 pub const STAGE_RUNNING: &str = "running";
 /// Required startup is running; this is not workload readiness.
 pub const STAGE_PREPARING: &str = "preparing";
