@@ -41,6 +41,7 @@ macro_rules! operation {
 operation!(get_hypervisor_info, "getHypervisorInfo");
 operation!(get_environment_info, "getEnvironmentInfo", GetEnvironmentInfoParams);
 operation!(create_environment, "createEnvironment", CreateEnvironmentParams);
+operation!(change_environment, "changeEnvironment", ChangeEnvironmentParams);
 operation!(create_agent_access, "createAgentAccess", CreateAgentAccessParams);
 operation!(revoke_agent_access, "revokeAgentAccess", RevokeAgentAccessParams);
 operation!(get_hypervisor_logs, "getHypervisorLogs", GetHypervisorLogsParams);

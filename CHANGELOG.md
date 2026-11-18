@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added: Python SDK `Hypervisor.environments` creates and inspects blueprints with request-ID reconciliation, response identity checks and per-call deadlines.
 
-- Added: Rust SDK `Hypervisor::environments()` creates and inspects blueprints with explicit request-ID reconciliation and distinct approval/application outcomes.
+- Added: Rust SDK `Hypervisor::environments()` creates, changes and inspects blueprints with explicit request-ID reconciliation and distinct approval/application outcomes.
 
 - Added: Native skill and rule catalog resolution for environment creation, with current corporate source enforcement, verified OCI content, exact offline pin admission and durable revocation refusal.
 

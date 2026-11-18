@@ -120,3 +120,34 @@ async fn facade_refuses_substituted_environment_identity() {
     server.received.recv().await.unwrap();
     assert!(server.received.try_recv().is_err());
 }
+
+#[tokio::test]
+async fn changes_preserve_base_and_refuse_substituted_request_or_environment() {
+    let base = "00000000-0000-4000-8000-000000000003";
+    for (response, valid) in [
+        (pending(), true),
+        (pending().replace(REQUEST, base), false),
+        (pending().replace(ENVIRONMENT, base), false),
+    ] {
+        let mut server = Server::reply(200, response.as_bytes(), None).await;
+        let hv = Hypervisor::new(&server.url, "private-token").unwrap();
+        let input = serde_json::from_value(json!({"request_id":REQUEST,"base_revision_id":base,"specification":{"name":"development"},"reason":"update blueprint"})).unwrap();
+        let result = hv.environments().change(ENVIRONMENT, input).await;
+        if valid {
+            assert_eq!(
+                result.unwrap().application,
+                models::requests::RequestApplicationState::Pending
+            );
+        } else {
+            assert!(matches!(result, Err(Error::InvalidResponse(_))));
+        }
+        let (parts, body) = server.received.recv().await.unwrap();
+        assert_eq!(parts.method, "POST");
+        assert_eq!(parts.uri.path(), format!("/environments/{ENVIRONMENT}/changes"));
+        assert_eq!(parts.headers["authorization"], "Bearer private-token");
+        let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["request_id"], REQUEST);
+        assert_eq!(body["base_revision_id"], base);
+        assert!(server.received.try_recv().is_err());
+    }
+}

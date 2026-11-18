@@ -952,3 +952,6 @@ json = { count = 2, reason = "http" }
 [sources."crates/capsem-assets/src/asset_manager/release_graph.rs"]
 # Existing public release graph conversion moved intact from asset_manager.
 json = { count = 44, reason = "release" }
+
+[sources."sdk/rust/src/operations/generated/change_environment.rs"]
+json = { count = 2, reason = "http" }
