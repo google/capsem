@@ -549,3 +549,22 @@ fn validate_name_enforces_shared_vm_identifier_rule() {
         Err("VM name must contain only letters, digits, hyphens, and underscores".to_string())
     );
 }
+
+#[test]
+fn environment_changes_contract_carries_observed_base_and_resolution_budget() {
+    let document = serde_json::to_value(openapi()).unwrap();
+    let change = &document["paths"]["/environments/{id}/changes"]["post"];
+    assert_eq!(change["operationId"], "changeEnvironment");
+    assert_eq!(change["x-capsem-request-timeout-ms"], IMAGE_PULL_REQUEST_TIMEOUT_MS);
+    assert_eq!(
+        change["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/EnvironmentChangeRequest"
+    );
+    assert!(
+        document["components"]["schemas"]["EnvironmentChangeRequest"]["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field == "base_revision_id")
+    );
+}

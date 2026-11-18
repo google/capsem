@@ -468,6 +468,60 @@
         "x-capsem-request-timeout-ms": 1020000
       }
     },
+    "/environments/{id}/changes": {
+      "post": {
+        "description": "Publish an operator change to a blueprint at its exact observed base revision. Reconcile the same request ID after interruption without replaying the change. Running sandboxes require separate application.",
+        "operationId": "changeEnvironment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnvironmentChangeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentMutationResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "x-capsem-request-timeout-ms": 1020000
+      }
+    },
     "/environments/{id}/info": {
       "get": {
         "operationId": "getEnvironmentInfo",
@@ -5341,6 +5395,43 @@
               },
               "additionalProperties": false
             }
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentChangeRequest": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "base_revision_id",
+          "specification",
+          "reason"
+        ],
+        "properties": {
+          "base_revision_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Exact observed base. Changed meaning requires another review."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "requesting_sandbox": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EnvironmentSandboxTarget"
+              }
+            ]
+          },
+          "specification": {
+            "$ref": "#/components/schemas/EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection"
           }
         },
         "additionalProperties": false
