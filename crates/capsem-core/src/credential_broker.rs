@@ -457,6 +457,22 @@ pub struct BrokeredUpstreamCredentials {
     pub query: Option<String>,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub struct CredentialResponseRewrite {
+    pub credential_ref: String,
+    pub raw_value: String,
+}
+
+impl std::fmt::Debug for CredentialResponseRewrite {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CredentialResponseRewrite")
+            .field("credential_ref", &self.credential_ref)
+            .field("raw_value", &"<redacted>")
+            .finish()
+    }
+}
+
 pub fn substitute_brokered_upstream_credentials(
     domain: &str,
     ai_provider: Option<ProviderKind>,
@@ -464,6 +480,7 @@ pub fn substitute_brokered_upstream_credentials(
     query: Option<&str>,
 ) -> Result<BrokeredUpstreamCredentials, String> {
     let provider_hint = credential_provider_for_request(domain, ai_provider);
+    validate_credential_slots(provider_hint, headers, query)?;
     let mut credential_ref = None;
 
     for value in headers.values_mut() {
@@ -542,6 +559,55 @@ fn substitute_brokered_query(
         Ok(parts.join("&"))
     } else {
         Ok(query.to_string())
+    }
+}
+
+fn validate_credential_slots(
+    provider_hint: Option<CredentialProvider>,
+    headers: &http::HeaderMap,
+    query: Option<&str>,
+) -> Result<(), String> {
+    for (name, value) in headers {
+        let text = value
+            .to_str()
+            .map_err(|e| format!("broker reference header is not UTF-8: {e}"))?;
+        if header_broker_reference(text).is_some() && !credential_header_slot(provider_hint, name.as_str()) {
+            return Err(format!(
+                "credential broker reference is not in an approved credential slot for {}",
+                name.as_str()
+            ));
+        }
+    }
+    for part in query.unwrap_or_default().split('&') {
+        let Some((name, value)) = part.split_once('=') else {
+            continue;
+        };
+        let decoded = percent_decode(value)?;
+        if is_broker_reference(&decoded) && !credential_query_slot(provider_hint, name) {
+            return Err(format!(
+                "credential broker reference is not in an approved credential slot for query parameter {name}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn credential_header_slot(provider: Option<CredentialProvider>, name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    match provider {
+        Some(CredentialProvider::Anthropic) => matches!(name.as_str(), "authorization" | "x-api-key"),
+        Some(CredentialProvider::Google) => matches!(name.as_str(), "authorization" | "x-goog-api-key"),
+        Some(CredentialProvider::OpenAi) => matches!(name.as_str(), "authorization" | "api-key"),
+        Some(CredentialProvider::Github) => name == "authorization",
+        Some(CredentialProvider::Mcp) | None => false,
+    }
+}
+
+fn credential_query_slot(provider: Option<CredentialProvider>, name: &str) -> bool {
+    match provider {
+        Some(CredentialProvider::Google) => matches!(name, "key" | "access_token"),
+        Some(CredentialProvider::Github) => name == "access_token",
+        _ => false,
     }
 }
 
@@ -638,7 +704,7 @@ fn host_is_or_under(domain: &str, suffix: &str) -> bool {
             .is_some_and(|prefix| !prefix.is_empty() && !prefix.ends_with('.'))
 }
 
-fn percent_decode(value: &str) -> Result<String, String> {
+pub(crate) fn percent_decode(value: &str) -> Result<String, String> {
     let bytes = value.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -664,7 +730,7 @@ fn percent_decode(value: &str) -> Result<String, String> {
     String::from_utf8(out).map_err(|e| format!("query value is not UTF-8: {e}"))
 }
 
-fn percent_encode_query_value(value: &str) -> String {
+pub(crate) fn percent_encode_query_value(value: &str) -> String {
     let mut out = String::new();
     for byte in value.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {

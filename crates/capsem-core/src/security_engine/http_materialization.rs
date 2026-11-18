@@ -30,6 +30,7 @@ pub struct MaterializedHttpRequest {
     pub headers: http::HeaderMap,
     pub query: Option<String>,
     pub credential_ref: Option<String>,
+    pub credential_response_rewrites: Vec<crate::credential_broker::CredentialResponseRewrite>,
 }
 
 pub fn materialize_http_request_for_upstream(
@@ -58,6 +59,7 @@ pub(crate) fn materialize_http_request_for_upstream_with_credentials(
             headers: request.headers.clone(),
             query: request.query.clone(),
             credential_ref: event.credential_ref.clone(),
+            credential_response_rewrites: Vec::new(),
         });
     }
 
@@ -71,11 +73,101 @@ pub(crate) fn materialize_http_request_for_upstream_with_credentials(
         )
         .map_err(SecurityActionError::new)?;
 
+    let credential_response_rewrites =
+        response_rewrites(request, &headers, query.as_deref(), &event.credential_injections);
     Ok(MaterializedHttpRequest {
         headers,
         query,
         credential_ref: event.credential_ref.clone().or(credential_ref),
+        credential_response_rewrites,
     })
+}
+
+fn response_rewrites(
+    request: &HttpRequestSecurityEvent,
+    headers: &http::HeaderMap,
+    query: Option<&str>,
+    injections: &[crate::credential_broker::CredentialInjection],
+) -> Vec<crate::credential_broker::CredentialResponseRewrite> {
+    let mut rewrites = Vec::new();
+    for injection in injections {
+        let raw = injection
+            .source
+            .strip_prefix("http.header.")
+            .and_then(|name| raw_header_substitution(&request.headers, headers, name, &injection.credential_ref))
+            .or_else(|| {
+                let name = injection.source.strip_prefix("http.query.")?;
+                raw_query_substitution(request.query.as_deref()?, query?, name, &injection.credential_ref)
+            });
+        if let Some(raw_value) = raw {
+            let rewrite = crate::credential_broker::CredentialResponseRewrite {
+                credential_ref: injection.credential_ref.clone(),
+                raw_value,
+            };
+            if !rewrites.contains(&rewrite) {
+                rewrites.push(rewrite);
+            }
+        }
+    }
+    rewrites
+}
+
+fn raw_header_substitution(
+    original_headers: &http::HeaderMap,
+    materialized_headers: &http::HeaderMap,
+    name: &str,
+    credential_ref: &str,
+) -> Option<String> {
+    original_headers
+        .get_all(name)
+        .iter()
+        .zip(materialized_headers.get_all(name).iter())
+        .find_map(|(original, materialized)| {
+            raw_header_value_substitution(original.to_str().ok()?, materialized.to_str().ok()?, credential_ref)
+        })
+}
+
+fn raw_header_value_substitution(original: &str, materialized: &str, credential_ref: &str) -> Option<String> {
+    let original = original.trim();
+    let materialized = materialized.trim();
+    if original == credential_ref {
+        return Some(materialized.to_string());
+    }
+    let original_bearer = original
+        .strip_prefix("Bearer ")
+        .or_else(|| original.strip_prefix("bearer "))?;
+    (original_bearer == credential_ref)
+        .then(|| {
+            materialized
+                .strip_prefix("Bearer ")
+                .or_else(|| materialized.strip_prefix("bearer "))
+        })
+        .flatten()
+        .map(str::to_string)
+}
+
+pub(super) fn raw_query_substitution(
+    original: &str,
+    materialized: &str,
+    name: &str,
+    credential_ref: &str,
+) -> Option<String> {
+    query_values(original, name)
+        .into_iter()
+        .zip(query_values(materialized, name))
+        .find_map(|(original, materialized)| (original == credential_ref).then_some(materialized))
+}
+
+fn query_values(query: &str, expected_name: &str) -> Vec<String> {
+    query
+        .split('&')
+        .filter_map(|part| {
+            let (name, value) = part.split_once('=')?;
+            (name == expected_name)
+                .then(|| crate::credential_broker::percent_decode(value).ok())
+                .flatten()
+        })
+        .collect()
 }
 
 pub fn materialize_http_request_for_upstream_after_enforcement(

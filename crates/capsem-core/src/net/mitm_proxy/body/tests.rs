@@ -1,5 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::{collections::VecDeque, convert::Infallible, pin::Pin, task::Context, task::Poll};
 
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Body, Bytes};
@@ -9,6 +10,22 @@ use crate::net::mitm_proxy::{
     hooks::{ChunkCtx, ChunkEndFuture, ChunkHook, ConnMeta},
     pipeline::Pipeline,
 };
+
+struct FrameBody {
+    frames: VecDeque<hyper::body::Frame<Bytes>>,
+}
+
+impl Body for FrameBody {
+    type Data = Bytes;
+    type Error = Infallible;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+        Poll::Ready(self.frames.pop_front().map(Ok))
+    }
+}
 
 #[tokio::test]
 async fn buffered_body_owns_admission_until_consumption_or_drop() {
@@ -101,4 +118,33 @@ async fn chunk_dispatch_body_awaits_async_end_work_before_final_frame() {
 
     assert_eq!(bytes, Bytes::from_static(b"abc"));
     assert!(completed.load(Ordering::Acquire));
+}
+
+#[tokio::test]
+async fn chunk_dispatch_body_restores_broker_references_in_trailers() {
+    let raw = "github_pat_reflected_trailer_secret";
+    let reference = "credential:blake3:safe-reference";
+    let mut trailers = http::HeaderMap::new();
+    trailers.insert("x-upstream-token", http::HeaderValue::from_str(raw).unwrap());
+    let inner = FrameBody {
+        frames: VecDeque::from([hyper::body::Frame::trailers(trailers)]),
+    };
+    let pipeline = Pipeline::builder()
+        .register_chunk(Arc::new(
+            crate::net::mitm_proxy::credential_rewriter_hook::CredentialRewriterHook,
+        ))
+        .build();
+    let mut body = ChunkDispatchBody::new(inner, Arc::new(pipeline), ConnMeta::default(), None).seed(
+        crate::net::mitm_proxy::credential_rewriter_hook::CredentialResponseRewrites(vec![
+            crate::credential_broker::CredentialResponseRewrite {
+                credential_ref: reference.into(),
+                raw_value: raw.into(),
+            },
+        ]),
+    );
+
+    let frame = body.frame().await.unwrap().unwrap();
+    let trailers = frame.into_trailers().unwrap();
+
+    assert_eq!(trailers["x-upstream-token"], reference);
 }

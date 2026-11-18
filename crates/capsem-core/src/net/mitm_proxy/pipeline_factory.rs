@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use crate::net::ai_traffic::TraceHintSink;
 
-use super::{decompression_hook, interpreter_hook, pipeline, sse_parser_hook, telemetry_hook};
+use super::{
+    credential_rewriter_hook, decompression_hook, interpreter_hook, pipeline, sse_parser_hook, telemetry_hook,
+};
 
 /// Build the production hook pipeline. All chunk stages are synchronous;
 /// header mutations needed for decompression happen before chunk dispatch.
@@ -25,6 +27,7 @@ fn make(telemetry: telemetry_hook::TelemetryHook) -> Arc<pipeline::Pipeline> {
     Arc::new(
         pipeline::Pipeline::builder()
             .register_chunk(Arc::new(decompression_hook::DecompressionHook::new()))
+            .register_chunk(Arc::new(credential_rewriter_hook::CredentialRewriterHook))
             .register_chunk(Arc::new(sse_parser_hook::SseParserHook::new()))
             .register_chunk(Arc::new(interpreter_hook::AnthropicInterpreterHook::new()))
             .register_chunk(Arc::new(interpreter_hook::OpenAiInterpreterHook::new()))

@@ -229,8 +229,16 @@ where
                             this.trace_id.as_deref(),
                         );
                         hyper::body::Frame::data(chunk)
+                    } else if let Ok(mut trailers) = frame.into_trailers() {
+                        if let Some(rewrites) = this
+                            .state
+                            .peek::<super::credential_rewriter_hook::CredentialResponseRewrites>()
+                        {
+                            super::credential_rewriter_hook::sanitize_response_headers(&mut trailers, &rewrites.0);
+                        }
+                        hyper::body::Frame::trailers(trailers)
                     } else {
-                        frame
+                        unreachable!("HTTP body frames contain data or trailers")
                     }
                 } else {
                     frame

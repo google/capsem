@@ -429,6 +429,59 @@ fn brokered_reference_substitutes_for_matching_provider_domain() {
 }
 
 #[test]
+fn brokered_reference_is_refused_outside_the_providers_credential_slots() {
+    let dir = tempfile::tempdir().unwrap();
+    let capsem_home = dir.path().join("capsem-home");
+    let test_store = dir.path().join("credential-store.json");
+    let _guard = EnvGuard::install(TEST_ENV_LOCK.blocking_lock(), &capsem_home, dir.path(), &test_store);
+
+    let brokered = broker_observed_credential(&CredentialObservation {
+        provider: CredentialProvider::Github,
+        raw_value: "github_pat_reflection_secret".to_string(),
+        source: "http.header.authorization".to_string(),
+        event_type: Some("http.request".to_string()),
+        trace_id: None,
+        context_json: None,
+    })
+    .unwrap();
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        http::header::AUTHORIZATION,
+        http::HeaderValue::from_str(&format!("Bearer {}", brokered.credential_ref)).unwrap(),
+    );
+    headers.insert(
+        "x-probe",
+        http::HeaderValue::from_str(&brokered.credential_ref).unwrap(),
+    );
+    let header_error = substitute_brokered_upstream_credentials("uploads.github.com", None, &mut headers, None)
+        .expect_err("a provider binding must not authorize arbitrary header fields");
+    assert!(header_error.contains("credential slot"), "{header_error}");
+    assert_eq!(headers["x-probe"], brokered.credential_ref);
+    assert_eq!(
+        headers[http::header::AUTHORIZATION],
+        format!("Bearer {}", brokered.credential_ref)
+    );
+    assert!(!headers["x-probe"].to_str().unwrap().contains("reflection_secret"));
+
+    let mut headers = http::HeaderMap::new();
+    let query = format!("name={}", brokered.credential_ref);
+    let query_error = substitute_brokered_upstream_credentials("uploads.github.com", None, &mut headers, Some(&query))
+        .expect_err("a provider binding must not authorize arbitrary query fields");
+    assert!(query_error.contains("credential slot"), "{query_error}");
+    assert!(headers.is_empty());
+
+    let mut headers = http::HeaderMap::new();
+    let query = format!("access_token={}", brokered.credential_ref);
+    let materialized =
+        substitute_brokered_upstream_credentials("api.github.com", None, &mut headers, Some(&query)).unwrap();
+    assert_eq!(
+        materialized.query.as_deref(),
+        Some("access_token=github_pat_reflection_secret"),
+        "the approved GitHub credential query slot remains supported"
+    );
+}
+
+#[test]
 fn broker_stores_secret_without_writing_user_settings() {
     let dir = tempfile::tempdir().unwrap();
     let capsem_home = dir.path().join("capsem-home");

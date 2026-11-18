@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Security: Materialize brokered credentials only in provider-approved authentication fields, and restore opaque references if an upstream reflects a credential through response headers, trailers, compressed streams or inspected response bodies.
+
 - Security: Remote corporate configuration authorities require HTTPS across every redirect; local provisioning continues to use absolute `file://` URLs.
 
 - Security: Desktop browser handoffs from a guest require an explicit user action and reveal the complete destination on hover before opening it on the host.

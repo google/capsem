@@ -91,6 +91,83 @@ fn credential_broker_plugin_marks_broker_ref_for_injection_not_recapture() {
         "only the upstream materialized copy receives the raw credential"
     );
     assert_eq!(materialized.credential_ref.as_deref(), Some(reference.as_str()));
+    assert_eq!(
+        materialized.credential_response_rewrites,
+        vec![crate::credential_broker::CredentialResponseRewrite {
+            credential_ref: reference,
+            raw_value: raw,
+        }]
+    );
+}
+
+#[test]
+fn materializer_records_every_repeated_credential_slot_for_response_restoration() {
+    let (mut event, first_ref, first_raw, _tmp, _store_guard, _user_config_guard, _lock) =
+        brokered_anthropic_header_event();
+    let second_raw = "sk-ant-second-materialized-secret";
+    let second = broker_observed_credential(&CredentialObservation {
+        provider: CredentialProvider::Anthropic,
+        raw_value: second_raw.to_string(),
+        source: "http.request.headers.authorization".to_string(),
+        event_type: Some("http.request".to_string()),
+        trace_id: None,
+        context_json: None,
+    })
+    .unwrap();
+    event.http_request.as_mut().unwrap().headers.append(
+        http::header::AUTHORIZATION,
+        http::HeaderValue::from_str(&second.credential_ref).unwrap(),
+    );
+    event.action_trace.push(PolicyActionId::CredentialBrokerSubstitute);
+    event.credential_injections = vec![
+        crate::credential_broker::CredentialInjection {
+            provider: Some(CredentialProvider::Anthropic),
+            credential_ref: first_ref.clone(),
+            source: "http.header.authorization".into(),
+            event_type: Some("http.request".into()),
+            trace_id: None,
+            context_json: None,
+        },
+        crate::credential_broker::CredentialInjection {
+            provider: Some(CredentialProvider::Anthropic),
+            credential_ref: second.credential_ref.clone(),
+            source: "http.header.authorization".into(),
+            event_type: Some("http.request".into()),
+            trace_id: None,
+            context_json: None,
+        },
+    ];
+
+    let materialized = materialize_http_request_for_upstream(&event).unwrap();
+
+    assert_eq!(
+        materialized.credential_response_rewrites,
+        vec![
+            crate::credential_broker::CredentialResponseRewrite {
+                credential_ref: first_ref,
+                raw_value: first_raw.clone(),
+            },
+            crate::credential_broker::CredentialResponseRewrite {
+                credential_ref: second.credential_ref,
+                raw_value: second_raw.into(),
+            },
+        ]
+    );
+    let debug = format!("{:?}", materialized.credential_response_rewrites);
+    assert!(!debug.contains(&first_raw));
+    assert!(!debug.contains(second_raw));
+}
+
+#[test]
+fn repeated_query_slots_match_each_reference_to_its_materialized_secret() {
+    let original = "access_token=first-ref&access_token=second-ref";
+    let materialized = "access_token=first-raw&access_token=second-raw";
+
+    assert_eq!(
+        super::http_materialization::raw_query_substitution(original, materialized, "access_token", "second-ref")
+            .as_deref(),
+        Some("second-raw")
+    );
 }
 
 #[test]

@@ -14,6 +14,7 @@
 pub mod body;
 mod config;
 mod connection;
+pub mod credential_rewriter_hook;
 #[cfg(test)]
 use connection::classify_read;
 use connection::handle_inner;
@@ -950,6 +951,7 @@ async fn handle_request(
             ));
         }
     };
+    let credential_response_rewrites = upstream_materialized.credential_response_rewrites;
     original_headers = upstream_materialized.headers;
     let credential_ref = credential_ref
         .clone()
@@ -1737,6 +1739,10 @@ async fn handle_request(
     cached_upstream.lock().await.replace(cached);
     let (mut resp_parts, resp_body) = resp.into_parts();
 
+    if !credential_response_rewrites.is_empty() {
+        credential_rewriter_hook::sanitize_response_headers(&mut resp_parts.headers, &credential_response_rewrites);
+    }
+
     let mut effective_security_decision = request_security_decision.clone();
     let mut effective_matched_rule = effective_security_decision.matched_rule(matched_rule.clone());
 
@@ -1854,6 +1860,12 @@ async fn handle_request(
                 ));
             }
         };
+        if !credential_response_rewrites.is_empty() {
+            response_body = Bytes::from(credential_rewriter_hook::rewrite_complete_body(
+                &response_body,
+                &credential_response_rewrites,
+            ));
+        }
 
         if should_evaluate_model_response || inspect_inbound {
             let body_is_utf8 = !inspect_inbound || std::str::from_utf8(&response_body).is_ok();
@@ -2096,6 +2108,9 @@ async fn handle_request(
         capsem_foundation::telemetry::ambient_capsem_trace_id(),
     )
     .seed::<decompression_hook::DecompressionConfig>(decompression_hook::DecompressionConfig { gzip: is_gzip })
+    .seed::<credential_rewriter_hook::CredentialResponseRewrites>(
+        credential_rewriter_hook::CredentialResponseRewrites(credential_response_rewrites.clone()),
+    )
     .seed::<Option<TelemetryRequestContext>>(Some(req_ctx))
     .with_completion_tasks(Arc::clone(mcp_responses));
     // Retain admission until the buffered response is consumed or dropped.
@@ -2110,7 +2125,7 @@ async fn handle_request(
     drop(_content_body_permit);
     drop(_semantic_body_permit);
     drop(_response_content_permit);
-    let chunk_dispatched = if is_gzip {
+    let chunk_dispatched = if is_gzip || !credential_response_rewrites.is_empty() {
         chunk_dispatched.without_size_hint()
     } else {
         chunk_dispatched
