@@ -123,7 +123,7 @@ def test_default_command_user_and_workdir_survive_hardening(launcher):
     assert set(config["hooks"]) == {"prestart", "poststart"}
     hooks = config["hooks"]["prestart"]
     assert len(hooks) == 1 and hooks[0]["path"] == "/usr/bin/python3"
-    assert hooks[0]["args"] == ["/usr/bin/python3", str(SOURCE), "--network-ready"]
+    assert hooks[0]["args"] == ["/usr/bin/python3", "-I", str(SOURCE), "--network-ready"]
     assert hooks[0]["timeout"] == 5
     assert {ns["type"] for ns in config["linux"]["namespaces"]} == {
         "user",
@@ -154,7 +154,7 @@ def test_the_workload_is_marked_running_by_runc_once_it_started(launcher, tmp_pa
     assert config["hooks"]["poststart"] == [
         {
             "path": "/usr/bin/python3",
-            "args": ["/usr/bin/python3", str(SOURCE), "--started"],
+            "args": ["/usr/bin/python3", "-I", str(SOURCE), "--started"],
             "env": ["PATH=/usr/sbin:/usr/bin:/sbin:/bin"],
             "timeout": 5,
         }
@@ -753,10 +753,13 @@ def test_run_selects_its_root_and_releases_overlay_before_published_lower(
     monkeypatch.setattr(launcher, "VOLUMES", tmp_path / "volumes")
     stage = tmp_path / "stage"
     stage.mkdir()
+    share = tmp_path / "share"
+    share.mkdir()
+    monkeypatch.setattr(launcher, "IMAGE_SHARE", share)
     options = {**SECURITY, "manifest": "sha256:" + "a" * 64, "args": [], "env": {}}
     if published:
         options["rootfs"] = {"digest": "sha256:" + "b" * 64, "size": 123}
-    (stage / "options.json").write_text(json.dumps(options))
+    (share / "options.json").write_text(json.dumps(options))
     events = []
 
     def result():

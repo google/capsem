@@ -2,10 +2,22 @@ use super::*;
 use std::os::unix::fs::{symlink, PermissionsExt};
 
 fn stage(session: &std::path::Path) -> std::path::PathBuf {
-    session
+    session.join(crate::session::IMAGE_SHARE_DIR)
+}
+
+#[test]
+fn writable_legacy_options_cannot_become_trusted_launch_authority() {
+    let root = tempfile::tempdir().unwrap();
+    let session = root.path().join("session");
+    let writable = session
         .join(crate::GUEST_SHARE_DIR)
         .join(crate::session::WORKSPACE_DIR)
-        .join(super::super::STAGE)
+        .join(super::super::STAGE);
+    std::fs::create_dir_all(&writable).unwrap();
+    std::fs::write(writable.join("options.json"), br#"{"env":{"INJECTED":"yes"}}"#).unwrap();
+    let error = refresh(&session).unwrap_err().to_string();
+    assert!(error.contains("guest-writable"), "{error}");
+    assert!(!stage(&session).join("options.json").exists());
 }
 
 fn legacy_stage(session: &std::path::Path) -> std::path::PathBuf {

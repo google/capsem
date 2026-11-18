@@ -1,5 +1,4 @@
-//! What the guest launcher needs in the VM's stage directory, independent of
-//! who writes it.
+//! Host-owned launcher inputs for the VM's read-only share.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -8,9 +7,9 @@ use anyhow::{bail, Context, Result};
 
 use super::LAUNCHER_FILES;
 
-/// One small control file written into [`super::STAGE`]. The image itself is
-/// never staged there: it reaches the guest through the read-only image share
-/// (`crate::session::publish_image_share`), and the stage names it by digest.
+/// One small host-owned control file on the read-only image share, separate
+/// from the writable runtime markers in [`super::STAGE`]. It names verified
+/// image content by digest rather than copying layers into the workspace.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StagedFile {
     pub name: String,

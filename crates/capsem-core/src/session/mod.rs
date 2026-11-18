@@ -15,9 +15,10 @@ mod tests;
 
 pub use capsem_logger::{epoch_to_iso, generate_session_id, is_valid_session_id, now_iso};
 pub use clone::{clone_file, clone_sandbox_files, clone_sandbox_state};
+pub(crate) use image_share::LAUNCH_CONTROL_LIMIT;
 pub use image_share::{
     carry_image_share, clear_image_share, image_share_blobs, image_share_path, prepare_image_share,
-    publish_image_share, IMAGE_SHARE_DIR, IMAGE_SHARE_TAG,
+    publish_image_share, publish_launch_control, IMAGE_SHARE_DIR, IMAGE_SHARE_TAG,
 };
 pub use logs::{
     prepare_session_logs, read_session_serial_log, read_session_serial_tail, read_session_transcript, SessionLogs,

@@ -99,7 +99,8 @@ not arbitrary host stdio commands or inferred filesystem grants.
    contains the workspace. The writable overlay image stays in host-only
    `session_dir/system/`, alongside the host-only ledger, logs and checkpoint.
    The separate `session_dir/image/` share contains immutable image blobs and
-   is read-only at the device. The workspace compatibility symlink points into
+   host-owned launch controls and is read-only at the device. Guest-writable
+   markers carry no executable launch authority. The workspace compatibility symlink points into
    `guest/`; the system image must never be reachable through that share.
 
 Socket permissions remain 0600 and session directories 0700 as defense in

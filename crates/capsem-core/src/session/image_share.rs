@@ -10,7 +10,8 @@
 //! `readOnly`, the KVM FUSE server's `read_only` -- so a guest root that
 //! remounts it read-write still cannot change a byte.
 //!
-//! It holds nothing but one image's blobs, each a regular file named by its
+//! It holds one image's blobs and explicitly named host-owned launch controls.
+//! Each blob is a regular file named by its
 //! SHA-256 hex digest, linked from the service's verified pull or from the
 //! clone source's share. Both are host-only and never guest-writable, which is
 //! what makes a hard link (one inode, two names) safe here. Ordinary writable
@@ -34,6 +35,30 @@ pub const IMAGE_SHARE_TAG: &str = "capsem-image";
 /// Every blob is read-only on the host too: hard links share the mode, and
 /// nothing may write a staged image after it is verified.
 const BLOB_MODE: u32 = 0o444;
+pub(crate) const LAUNCH_CONTROL_LIMIT: u64 = 16 * 1024 * 1024;
+
+fn launch_control_name(name: &OsStr) -> bool {
+    name == OsStr::new("options.json")
+        || crate::container::LAUNCHER_FILES
+            .iter()
+            .any(|(allowed, _)| name == OsStr::new(allowed))
+}
+
+/// Publish service-owned launch material outside the guest-writable share.
+/// Atomic replacement keeps previous readers and forked sessions independent.
+pub fn publish_launch_control(session_dir: &Path, name: &str, bytes: &[u8]) -> anyhow::Result<()> {
+    anyhow::ensure!(launch_control_name(OsStr::new(name)), "unknown launch control name");
+    anyhow::ensure!(
+        bytes.len() as u64 <= LAUNCH_CONTROL_LIMIT,
+        "launch control exceeds byte limit"
+    );
+    let share = open_or_create(session_dir)?;
+    anyhow::ensure!(
+        matches!(share.entry_kind(OsStr::new(name))?, None | Some(EntryKind::File)),
+        "launch control is not a regular file"
+    );
+    super::publish_contained_private(&share, name, bytes)
+}
 
 /// The share's host path in `session_dir`.
 pub fn image_share_path(session_dir: &Path) -> PathBuf {
@@ -77,7 +102,25 @@ pub fn carry_image_share(source: &Path, destination: &Path) -> io::Result<()> {
         Err(error) => return Err(error),
     };
     let blobs = blob_names(&from)?;
-    publish_image_share(destination, &from, &blobs)
+    publish_image_share(destination, &from, &blobs)?;
+    for entry in from.entries()? {
+        if launch_control_name(&entry.name) {
+            use std::io::Read;
+            let file = from.open_file(&entry.name, ContainedOpenOptions::read_only())?;
+            if file.metadata()?.len() > LAUNCH_CONTROL_LIMIT {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "oversized launch control"));
+            }
+            let mut bytes = Vec::new();
+            file.take(LAUNCH_CONTROL_LIMIT + 1).read_to_end(&mut bytes)?;
+            publish_launch_control(
+                destination,
+                entry.name.to_str().ok_or_else(|| foreign(&entry.name))?,
+                &bytes,
+            )
+            .map_err(io::Error::other)?;
+        }
+    }
+    Ok(())
 }
 
 /// Empty the share: the session stages no image.
@@ -88,7 +131,7 @@ pub fn clear_image_share(session_dir: &Path) -> io::Result<()> {
 }
 
 /// The blobs the share holds, by SHA-256 hex digest, sorted. Anything else in
-/// it is an error: the share holds nothing but blobs.
+/// it is an error, except for explicitly named regular launch controls.
 pub fn image_share_blobs(session_dir: &Path) -> io::Result<Vec<String>> {
     match ContainedDir::open_root(session_dir)?.descend(OsStr::new(IMAGE_SHARE_DIR)) {
         Ok(share) => blob_names(&share),
@@ -106,6 +149,9 @@ fn blob_names(share: &ContainedDir) -> io::Result<Vec<String>> {
     for entry in share.entries()? {
         if entry.kind != EntryKind::File {
             return Err(foreign(&entry.name));
+        }
+        if launch_control_name(&entry.name) {
+            continue;
         }
         check_blob_name(&entry.name)?;
         names.push(entry.name.to_string_lossy().into_owned());

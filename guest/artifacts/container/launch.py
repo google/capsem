@@ -1,4 +1,4 @@
-"""Run one verified OCI image; the session workspace keeps only its options.
+"""Run one verified OCI image from host-owned controls on a read-only share.
 
 The image's blobs come from the host's read-only image share, never from the
 workspace: the guest can write the workspace, and cannot write the share.
@@ -25,7 +25,7 @@ import time
 import tty
 from pathlib import Path
 
-# The guest-writable stage must not grow an import cache or load stale pyc.
+# Load sibling controller modules directly without a writable import cache.
 _console = runpy.run_path(str(Path(__file__).with_name("runtime_console.py")))
 FrameReader, encode_input, encode_output, encode_resize = (
     _console[name] for name in ("FrameReader", "encode_input", "encode_output", "encode_resize")
@@ -65,6 +65,7 @@ DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 # while an image is unpacked.
 IMAGE_SHARE_TAG = "capsem-image"
 IMAGE_SHARE = Path("/run/capsem-image")
+LAUNCH_CONTROL_LIMIT = 16 * 1024 * 1024
 # A manifest is JSON of a few KiB; never read an unbounded one.
 MANIFEST_LIMIT = 4 * 1024 * 1024
 OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json"
@@ -385,7 +386,7 @@ def _launcher_hook(argument):
     """A runc hook running this launcher with `argument`, in the VM."""
     return {
         "path": "/usr/bin/python3",
-        "args": ["/usr/bin/python3", str(Path(__file__).resolve()), argument],
+        "args": ["/usr/bin/python3", "-I", str(Path(__file__).resolve()), argument],
         "env": ["PATH=/usr/sbin:/usr/bin:/sbin:/bin"],
         "timeout": 5,
     }
@@ -834,6 +835,9 @@ def image_share(run=None):
     read. The launcher runs in its own mount namespace, so the mount is gone
     with it even when it is killed mid-unpack."""
     run = run or command
+    if os.path.ismount(IMAGE_SHARE):
+        yield IMAGE_SHARE
+        return
     IMAGE_SHARE.mkdir(mode=0o700, parents=True, exist_ok=True)
     run("mount", "-t", "virtiofs", "-o", "ro,nosuid,nodev,noexec", IMAGE_SHARE_TAG, str(IMAGE_SHARE))
     try:
@@ -986,6 +990,17 @@ def mount_layer(lower, run=None):
     run("mount", "-t", "overlay", "overlay", "-o", options, str(MERGED))
 
 
+def launch_options():
+    fd = os.open(IMAGE_SHARE / "options.json", os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    with os.fdopen(fd, "rb") as source:
+        if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+            raise ValueError("launch options are not a regular file")
+        value = source.read(LAUNCH_CONTROL_LIMIT + 1)
+    if len(value) > LAUNCH_CONTROL_LIMIT:
+        raise ValueError("launch options exceed byte limit")
+    return json.loads(value)
+
+
 def run(stage, detached=False):
     # A second workload cannot overwrite live state. Traversable, not listable:
     # runc sets the container up as the mapped root, which must reach the
@@ -997,9 +1012,12 @@ def run(stage, detached=False):
     process = None
     code = None
     roots = contextlib.ExitStack()
+    stage.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if stage.is_symlink():
+        raise ValueError("workload runtime markers cannot be a symbolic link")
     clear_launch_markers(stage)
     try:
-        options = json.loads((stage / "options.json").read_text())
+        options = launch_options()
         id_map = checked_id_map(options.get("id_map"))
         if options.get("rootfs") is None:
             bundle, image, unpacked = unpacked_root(manifest_digest(options), id_map)
@@ -1226,21 +1244,24 @@ def attach(bundle_of=workload_bundle, run=subprocess.run, sleep=time.sleep, cons
         sleep(ATTACH_INTERVAL)
 
 
-if __name__ == "__main__":
+def main():
     if sys.argv[1:] == ["--network-ready"]:
         pid = int(json.load(sys.stdin)["pid"])
         if pid <= 1:
             raise ValueError("invalid container network namespace pid")
         network_ready(pid)
     elif sys.argv[1:] == ["--started"]:
-        # The launcher runs from its stage (capsem-core LAUNCH_COMMAND).
-        workload_started(Path(__file__).resolve().parent)
+        workload_started(Path(VM_WORKSPACE) / STAGE)
     elif len(sys.argv) == 3 and sys.argv[1] == "--exec":
         exec_workload(sys.argv[2])
     elif sys.argv[1:] == ["--attach"]:
         attach()
     elif len(sys.argv) == 3 and sys.argv[1] == "--detached":
         # Nothing is attached: the workload runs on a terminal held here.
-        sys.exit(run(Path(sys.argv[2]), detached=True))
+        return run(Path(sys.argv[2]), detached=True)
     else:
-        sys.exit(run(Path(sys.argv[1])))
+        return run(Path(sys.argv[1]))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

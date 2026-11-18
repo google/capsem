@@ -88,6 +88,47 @@ fn a_clone_carries_its_source_share_by_link() {
 }
 
 #[test]
+fn trusted_launch_controls_are_carried_without_sharing_mutable_inodes() {
+    let (dir, session, pull) = fixture();
+    publish_image_share(&session, &open(&pull), &[A.into()]).unwrap();
+    publish_launch_control(&session, "options.json", b"original").unwrap();
+    publish_launch_control(&session, "launch.py", b"trusted launcher").unwrap();
+    let clone = dir.path().join("clone");
+    std::fs::create_dir(&clone).unwrap();
+    carry_image_share(&session, &clone).unwrap();
+    assert_eq!(image_share_blobs(&clone).unwrap(), [A]);
+    let copied = clone.join(IMAGE_SHARE_DIR).join("options.json");
+    assert_eq!(std::fs::read(&copied).unwrap(), b"original");
+    assert_ne!(
+        std::fs::metadata(&copied).unwrap().ino(),
+        std::fs::metadata(session.join(IMAGE_SHARE_DIR).join("options.json"))
+            .unwrap()
+            .ino()
+    );
+    publish_launch_control(&session, "options.json", b"changed").unwrap();
+    assert_eq!(std::fs::read(&copied).unwrap(), b"original");
+}
+
+#[test]
+fn launch_control_publication_refuses_foreign_names_links_and_oversize() {
+    let (dir, session, _) = fixture();
+    let outside = dir.path().join("outside");
+    std::fs::write(&outside, b"keep").unwrap();
+    let share = prepare_image_share(&session).unwrap();
+    for name in ["options.json", "launch.py"] {
+        std::os::unix::fs::symlink(&outside, share.join(name)).unwrap();
+        assert!(publish_launch_control(&session, name, b"replace").is_err());
+        assert_eq!(std::fs::read(&outside).unwrap(), b"keep");
+        std::fs::remove_file(share.join(name)).unwrap();
+    }
+    for name in ["../outside", "foreign.py", A] {
+        assert!(publish_launch_control(&session, name, b"bad").is_err());
+    }
+    assert!(publish_launch_control(&session, "options.json", &vec![0; LAUNCH_CONTROL_LIMIT as usize + 1]).is_err());
+    assert!(image_share_blobs(&session).unwrap().is_empty());
+}
+
+#[test]
 fn a_share_holding_anything_but_blobs_is_refused() {
     let (dir, session, _pull) = fixture();
     let share = prepare_image_share(&session).unwrap();

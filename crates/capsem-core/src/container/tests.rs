@@ -39,18 +39,17 @@ fn the_detached_launch_is_the_launch_command_backgrounded_to_the_console() {
 #[test]
 fn a_detached_launch_holds_a_terminal_and_an_attached_one_does_not() {
     assert!(
-        DETACHED_LAUNCH_COMMAND.ends_with("/root/.capsem-image/launch.py --detached /root/.capsem-image'"),
+        DETACHED_LAUNCH_COMMAND.ends_with("/run/capsem-image/launch.py --detached /root/.capsem-image'"),
         "{DETACHED_LAUNCH_COMMAND}"
     );
     assert!(!LAUNCH_COMMAND.contains("--detached"), "{LAUNCH_COMMAND}");
     let init = include_str!("../../../../guest/artifacts/capsem-init");
-    let relaunch = init
-        .lines()
-        .find(|line| line.contains("/root/.capsem-image/launch.py"))
-        .expect("capsem-init relaunches a staged image");
     assert!(
-        relaunch.contains("launch.py --detached /root/.capsem-image'"),
-        "{relaunch}"
+        !init
+            .lines()
+            .filter(|line| !line.trim_start().starts_with('#'))
+            .any(|line| line.contains("launch.py")),
+        "boot must await service policy acknowledgement"
     );
 }
 
@@ -79,8 +78,9 @@ fn the_launch_commands_do_not_mutate_the_guest_owned_stage() {
     assert_eq!(
         LAUNCH_COMMAND,
         "chroot /proc/1/root /bin/busybox unshare -m /bin/sh -ec \
-         'mount --make-rprivate /; cd /newroot; mount --move . /; exec chroot . /usr/bin/python3 \
-         /root/.capsem-image/launch.py /root/.capsem-image'"
+         'mount --make-rprivate /; cd /newroot; mount --move . /; mkdir -p run/capsem-image; \
+         mount -t virtiofs -o ro,nosuid,nodev,noexec capsem-image run/capsem-image; \
+         exec chroot . /usr/bin/python3 -I /run/capsem-image/launch.py /root/.capsem-image'"
     );
     assert!(!DETACHED_LAUNCH_COMMAND.contains("chmod"), "{DETACHED_LAUNCH_COMMAND}");
 }
@@ -117,8 +117,9 @@ fn a_workload_exec_carries_any_command_exactly_to_the_launcher() {
     let inner = String::from_utf8(inner.stdout).unwrap();
     let payload = inner
         .strip_prefix(
-            "mount --make-rprivate /; cd /newroot; mount --move . /; exec chroot . /usr/bin/python3 \
-             /root/.capsem-image/launch.py --exec ",
+            "mount --make-rprivate /; cd /newroot; mount --move . /; mkdir -p run/capsem-image; \
+             mount -t virtiofs -o ro,nosuid,nodev,noexec capsem-image run/capsem-image; \
+             exec chroot . /usr/bin/python3 -I /run/capsem-image/launch.py --exec ",
         )
         .unwrap_or_else(|| panic!("unexpected inner script: {inner}"));
     assert!(payload.bytes().all(|byte| byte.is_ascii_hexdigit()), "{payload}");
@@ -144,7 +145,7 @@ fn the_vm_bashrc_hands_an_image_session_terminal_to_the_workload() {
         bashrc.find("capsem-banner").unwrap() > handoff,
         "no VM banner before the hand-off"
     );
-    assert!(ATTACH_COMMAND.ends_with("/root/.capsem-image/launch.py --attach'"));
+    assert!(ATTACH_COMMAND.ends_with("/run/capsem-image/launch.py --attach'"));
 }
 
 #[test]

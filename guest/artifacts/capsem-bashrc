@@ -20,7 +20,7 @@ if [ -n "$CAPSEM_WORKLOAD" ] || [ -f /root/.capsem-image/ready ]; then
         _capsem_waiting=1
         sleep 1
     done
-    exec chroot /proc/1/root /bin/busybox unshare -m /bin/sh -ec 'mount --make-rprivate /; cd /newroot; mount --move . /; exec chroot . /usr/bin/python3 /root/.capsem-image/launch.py --attach'
+    exec chroot /proc/1/root /bin/busybox unshare -m /bin/sh -ec 'mount --make-rprivate /; cd /newroot; mount --move . /; mkdir -p run/capsem-image; mount -t virtiofs -o ro,nosuid,nodev,noexec capsem-image run/capsem-image; exec chroot . /usr/bin/python3 -I /run/capsem-image/launch.py --attach'
 fi
 
 # Python venv is activated by capsem-pty-agent at boot (VIRTUAL_ENV + PATH).

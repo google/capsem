@@ -117,9 +117,8 @@ pub const LAUNCHER_FILES: &[(&str, &[u8])] = &[
     ),
     ("launch.py", LAUNCHER),
 ];
-/// The launcher's stage in the VM workspace: its options, the launcher itself
-/// and its markers, nothing else. The image's bytes are never here; the
-/// launcher reads them from the read-only image share
+/// The launcher's runtime markers in the VM workspace. Trusted options,
+/// controllers and image bytes live on the read-only image share
 /// ([`crate::session::IMAGE_SHARE_TAG`]).
 pub const STAGE: &str = ".capsem-image";
 /// The launcher's marker in [`STAGE`] that an image is staged: every boot
@@ -147,7 +146,9 @@ macro_rules! launcher_in_moved_root {
     ($args:literal) => {
         concat!(
             "chroot /proc/1/root /bin/busybox unshare -m /bin/sh -ec 'mount --make-rprivate /; cd /newroot; ",
-            "mount --move . /; exec chroot . /usr/bin/python3 /root/.capsem-image/launch.py ",
+            "mount --move . /; mkdir -p run/capsem-image; ",
+            "mount -t virtiofs -o ro,nosuid,nodev,noexec capsem-image run/capsem-image; ",
+            "exec chroot . /usr/bin/python3 -I /run/capsem-image/launch.py ",
             $args,
             "'"
         )

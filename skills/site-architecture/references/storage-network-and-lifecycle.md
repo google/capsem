@@ -14,7 +14,7 @@ Selected by kernel cmdline `capsem.storage=virtiofs` (default) or absence (block
   guest/                     # the read-write VirtioFS share, tag `capsem` (guest can rewrite anything here)
     workspace/               # VirtioFS files for /root (host-visible)
   workspace -> guest/workspace   # compat symlink
-  image/                     # the read-only VirtioFS share, tag `capsem-image`: one image's blobs
+  image/                     # read-only VirtioFS: verified image blobs and trusted launch controls
   system/rootfs.img          # host-only: ext4 (2GB sparse) attached as /dev/vdb, overlayfs upper
   session.db                 # host-only, outside the share
 ```
@@ -22,14 +22,18 @@ Selected by kernel cmdline `capsem.storage=virtiofs` (default) or absence (block
 `image/` is attached to every VM, read-only at the device (Apple VZ
 `VZSharedDirectory` `readOnly`, the KVM FUSE server's `read_only`), because a
 device cannot be added after boot and an image is pulled only once the VM's
-owner admits it. It holds nothing but the image's blobs, each a 0444 file named
+owner admits it. It holds the image's blobs, each a 0444 file named
 by its SHA-256 and hard-linked from the service's private pull
-(`capsem_core::session::publish_image_share`). The container launcher mounts it
-read-only in its own mount namespace while it unpacks, and verifies every blob
-against the manifest digest the host pinned in `options.json`; the workspace
-stage (`/root/.capsem-image`) holds only that file, `launch.py` and the
-launcher's markers. Forks link the source's `image/`; a restart reuses it, and
-never needs it at all once the unpacked root is on the overlay.
+(`capsem_core::session::publish_image_share`), plus service-owned `options.json`
+and the explicit launcher module inventory. Controls are atomically published
+as private regular files; guest-writable controls are never imported. The
+bootstrap mounts this device read-only in a private namespace and runs Python
+in isolated mode from `/run/capsem-image/launch.py`. The launcher verifies
+image blobs against its host-pinned options. The workspace stage
+(`/root/.capsem-image`) holds runtime markers only. Forks link immutable blobs
+and copy controls into independent files. Cold boots await service policy
+admission before the service restarts the recorded workload; guest markers
+never authorize automatic execution during boot.
 
 Boot sequence: read-only runtime rootfs asset -> VirtioFS mount -> ext4 on /dev/vdb -> overlayfs -> bind-mount workspace.
 
