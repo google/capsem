@@ -7,6 +7,7 @@ import re
 import selectors
 import struct
 import subprocess
+import sys
 import time
 import uuid
 
@@ -84,6 +85,7 @@ class Bridge:
             cleanup.pop_all()
         self.buffer, self.tail = bytearray(), bytearray()
         self.phase, self.failure, self.truncated = None, None, False
+        self.diagnostic = None
         self.selector = None
         self.remember = lambda _data: None
         self.can_output = lambda: True
@@ -238,7 +240,8 @@ class Bridge:
         if self.truncated:
             message += "\n[startup output truncated]"
         self.forget("preparing")
-        self.marker("failed", message.encode())
+        self.diagnostic = message.encode()
+        self.marker("failed", self.diagnostic)
 
     def wait(self, process):
         with selectors.DefaultSelector() as selector:
@@ -249,6 +252,10 @@ class Bridge:
                     self.step()
             for _ in range(4):
                 self.step()
+        if self.diagnostic:
+            sys.stderr.buffer.write(self.diagnostic)
+            sys.stderr.buffer.write(b"\n")
+            sys.stderr.buffer.flush()
         return process.wait()
 
     def close(self):

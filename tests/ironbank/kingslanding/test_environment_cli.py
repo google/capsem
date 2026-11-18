@@ -61,3 +61,21 @@ def test_cli_create_selects_saved_workload_without_inline_content(service, tmp_p
         uuid.UUID(vm)
         assert request(service, "GET", f"/vms/{vm}/info")["environment"]["boot"] == reference
         assert request(service, "GET", f"/vms/{vm}/container")["state"] == "running"
+
+
+def test_cli_run_reports_preparation_failure_before_destroying_its_vm(service, tmp_path):
+    artifacts = {}
+    with registry(tmp_path, image_config=IMAGE, artifacts=artifacts) as (image, certificate, _):
+        authority = image.split("/", 1)[0]
+        publish_catalog(artifacts, "library/catalog", "stable", entry(image))
+        use_catalog(service, f"{authority}/library/catalog:stable", certificate)
+        reference = save(service, {"name": "cli-startup-failure", "image": {"reference": "redis"},
+                                  "startup": {"script": "printf preparation-detail; exit 17", "timeout_seconds": 10}})
+        selected = f'{reference["environment_id"]}@{reference["revision_id"]}'
+        ran = subprocess.run([*cli(service, "run"), "--ram", str(DEFAULT_RAM_MB // 1024),
+                              "--cpu", str(DEFAULT_CPUS), "--environment", selected],
+                             env=environment(service), capture_output=True, timeout=90, check=False)
+        assert ran.returncode == 17 and ran.stdout == b"", (ran.returncode, ran.stdout, ran.stderr)
+        assert b"startup exit (17)" in ran.stderr and b"preparation-detail" in ran.stderr, ran.stderr
+        assert len(ran.stderr) < 64 * 1024 and b"\x1b" not in ran.stderr
+        assert request(service, "GET", "/vms/list")["sandboxes"] == []

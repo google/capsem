@@ -69,7 +69,7 @@ def test_external_deadline_stops_a_wrapper_that_cannot_run_its_own_timer(prepara
         assert not (tmp_path / "running").exists()
 
 
-def test_failure_tail_is_bounded_sanitized_and_cannot_follow_a_marker_symlink(preparation, tmp_path):
+def test_failure_tail_is_bounded_sanitized_and_cannot_follow_a_marker_symlink(preparation, tmp_path, capfdbinary):
     target = tmp_path / "preserve-user-file"
     target.write_text("preserved")
     (tmp_path / "failed").symlink_to(target)
@@ -79,6 +79,9 @@ def test_failure_tail_is_bounded_sanitized_and_cannot_follow_a_marker_symlink(pr
             f"import os; os.write(3, b'\\x1b[31m' + b'x'*70000); os.write(4, {events!r})"])
         bridge.wait(process)
         failed = (tmp_path / "failed").read_bytes()
+        captured = capfdbinary.readouterr()
+        assert captured.out == b""
+        assert captured.err == failed + b"\n", "attached callers need the diagnostic before teardown"
         assert failed.startswith(b"startup exit (17)\n")
         assert failed.endswith(b"[startup output truncated]")
         assert len(failed) < 33000
