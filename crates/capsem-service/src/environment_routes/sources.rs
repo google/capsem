@@ -9,6 +9,8 @@ use capsem_config::{
 use capsem_core::environment::{EnvironmentPinResolver, EnvironmentResolutionError};
 use std::sync::Arc;
 
+mod catalogs;
+
 pub(super) struct Sources(pub(super) Arc<ServiceState>);
 impl EnvironmentPinResolver for Sources {
     async fn image(&self, reference: &str) -> Result<String, EnvironmentResolutionError> {
@@ -30,14 +32,18 @@ impl EnvironmentPinResolver for Sources {
 
     async fn catalog(
         &self,
-        _: CatalogKind,
-        _: &EnvironmentCatalogSelection,
+        kind: CatalogKind,
+        selection: &EnvironmentCatalogSelection,
     ) -> Result<EnvironmentCatalogPin, EnvironmentResolutionError> {
-        Err(EnvironmentResolutionError::Unavailable)
+        catalogs::resolve(&self.0, kind, selection).await
     }
 
-    async fn admit_catalog(&self, _: CatalogKind, _: &EnvironmentCatalogPin) -> Result<(), EnvironmentResolutionError> {
-        Err(EnvironmentResolutionError::Unavailable)
+    async fn admit_catalog(
+        &self,
+        kind: CatalogKind,
+        pin: &EnvironmentCatalogPin,
+    ) -> Result<(), EnvironmentResolutionError> {
+        catalogs::admit(&self.0, kind, pin).await
     }
 }
 fn image_error(error: AppError) -> EnvironmentResolutionError {

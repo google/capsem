@@ -72,7 +72,7 @@ impl From<ImageFetch> for ImageFetchOptions {
 }
 
 mod image_source;
-pub(crate) use image_source::ImageSource;
+pub(crate) use image_source::{CatalogPolicyFuture, ImageSource};
 
 pub(crate) type PolicyFuture =
     Pin<Box<dyn Future<Output = anyhow::Result<capsem_core::container::admission::ImagePolicy>> + Send>>;
@@ -107,6 +107,13 @@ impl Default for ContainerSetups {
 }
 
 impl ContainerSetups {
+    pub(crate) fn environment_catalog_puller(&self) -> anyhow::Result<capsem_assets::oci::Puller> {
+        self.source.environment_catalog_puller()
+    }
+    pub(crate) fn environment_catalog_policy(&self) -> CatalogPolicyFuture {
+        self.source.environment_catalog_policy()
+    }
+
     pub(crate) fn with_source(source: Box<dyn ImageSource>) -> Self {
         Self {
             records: Mutex::new(HashMap::new()),

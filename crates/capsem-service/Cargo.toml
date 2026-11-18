@@ -54,6 +54,9 @@ uuid = { version = "1", features = ["v4"] }
 workspace = true
 
 [dev-dependencies]
+hyper-util = { workspace = true, features = ["service"] }
+rustls.workspace = true
+tokio-rustls.workspace = true
 metrics-util = "0.19"
 opentelemetry-proto = { version = "0.33", default-features = false, features = ["gen-tonic-messages", "metrics"] }
 prost = "0.14"

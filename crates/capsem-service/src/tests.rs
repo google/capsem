@@ -556,7 +556,7 @@ fn test_asset_hex(body: &[u8]) -> String {
 
 /// A format-2 manifest whose one release, for this host's architecture, is
 /// the test runtime asset set.
-fn test_runtime_manifest() -> ManifestV2 {
+pub(crate) fn test_runtime_manifest() -> ManifestV2 {
     let entries = TEST_RUNTIME_ASSETS
         .iter()
         .map(|(name, body)| {
@@ -572,6 +572,7 @@ fn test_runtime_manifest() -> ManifestV2 {
         .collect();
     ManifestV2 {
         format: 2,
+        catalogs: None,
         refresh_policy: "24h".into(),
         asset_base: None,
         assets: AssetsSection {

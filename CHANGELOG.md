@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Native skill and rule catalog resolution for environment creation, with current corporate source enforcement, verified OCI content, exact offline pin admission and durable revocation refusal.
+
 - Fixed: Preserve catalog source descriptors when converting installed release manifests into the runtime view.
 
 - Added: Authenticated gateway forwarding for operator environment creation, with image-resolution deadlines and no mutation replay.
@@ -17,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added: Typed Rust SDK environment creation with explicit request-ID reconciliation and the image-resolution deadline.
 
-- Added: Operator environment creation persists immutable requests, publishes a new blueprint and reconciles repeated request IDs. Image pins use the native admission owner; repository and catalog sources remain unavailable pending integration.
+- Added: Operator environment creation persists immutable requests, publishes a new blueprint and reconciles repeated request IDs. Image pins use the native admission owner; skill and rule pins use configured catalogs; repository resolution and MCP catalog verification remain unavailable.
 
 - Added: Typed current environment inspection operations and canonical environment models across the Rust, Python, and TypeScript SDKs.
 

@@ -1,4 +1,5 @@
 use super::*;
+pub(crate) type CatalogPolicyFuture = Pin<Box<dyn Future<Output = anyhow::Result<capsem_config::SettingsFile>> + Send>>;
 
 /// Where images come from, and which may be fetched and run. Production
 /// pulls from registries under the installation's policy; tests substitute.
@@ -43,6 +44,21 @@ pub(crate) trait ImageSource: Send + Sync {
         _cache_key: Option<capsem_assets::oci::CacheKey>,
     ) -> RootfsFuture {
         Box::pin(async { anyhow::bail!("image source does not provide published filesystems") })
+    }
+
+    /// Borrow the same credential-free installed cache for environment catalogs.
+    fn environment_catalog_puller(&self) -> anyhow::Result<capsem_assets::oci::Puller> {
+        anyhow::bail!("registry source does not provide environment catalogs")
+    }
+
+    /// Enforcement reads refuse broken corporate files instead of UI fallback.
+    fn environment_catalog_policy(&self) -> CatalogPolicyFuture {
+        Box::pin(async {
+            tokio::task::spawn_blocking(|| {
+                capsem_core::net::policy_config::load_corp_policy_files().map_err(anyhow::Error::msg)
+            })
+            .await?
+        })
     }
 
     /// The image policy for one decision, read fresh each time.

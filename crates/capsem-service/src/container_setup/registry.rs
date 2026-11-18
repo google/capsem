@@ -36,6 +36,10 @@ impl RegistryImages {
 }
 
 impl ImageSource for RegistryImages {
+    fn environment_catalog_puller(&self) -> anyhow::Result<capsem_assets::oci::Puller> {
+        self.registry_puller(RegistryAccess::default())
+    }
+
     fn cache_state(
         &self,
         key: &capsem_assets::oci::CacheKey,

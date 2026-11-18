@@ -226,6 +226,7 @@ fn write_update_runtime_manifest(assets_dir: &StdPath, binary: &str, assets: &st
     std::fs::create_dir_all(assets_dir).unwrap();
     let manifest = capsem_assets::asset_manager::ManifestV2 {
         format: 2,
+        catalogs: None,
         refresh_policy: "24h".to_string(),
         asset_base: None,
         assets: capsem_assets::asset_manager::AssetsSection {
