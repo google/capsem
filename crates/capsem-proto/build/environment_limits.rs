@@ -10,6 +10,8 @@ pub fn render(config: &toml::Value) -> String {
         ("max_variable_value_bytes", 16384),
         ("max_variable_total_bytes", 262144),
         ("max_repositories", 64),
+        ("max_repository_resolve_seconds", 120),
+        ("max_repository_advertisement_bytes", 1048576),
         ("max_spec_bytes", 1048576),
         ("max_catalog_selections", 128),
         ("max_catalog_reference_bytes", 1024),
