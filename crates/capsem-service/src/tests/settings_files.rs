@@ -687,6 +687,27 @@ refresh_policy = "24h"
 enforcement = "corp/enforcement.toml"
 sigma = "corp/detection.yaml"
 "#;
+    let corp_path = dir.path().join("corp.toml");
+    let original_corp = std::fs::read(&corp_path).ok();
+
+    for (method, path) in [
+        (axum::http::Method::POST, "/corp/validate"),
+        (axum::http::Method::PUT, "/corp/edit"),
+    ] {
+        let (status, rejected) = route_request(
+            app.clone(),
+            method,
+            path,
+            Some(json!({ "source": "http://127.0.0.1:9/corp.toml" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{rejected}");
+        assert!(rejected["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("requires HTTPS"));
+        assert_eq!(std::fs::read(&corp_path).ok(), original_corp);
+    }
 
     let (status, invalid) = route_request(
         app.clone(),
@@ -720,7 +741,7 @@ sigma = "corp/detection.yaml"
     .await;
     assert_eq!(status, StatusCode::OK, "{installed}");
     assert_eq!(installed["success"], true);
-    let written = std::fs::read_to_string(dir.path().join("corp.toml")).unwrap();
+    let written = std::fs::read_to_string(&corp_path).unwrap();
     assert!(written.contains("[corp_rule_files]"));
     assert!(written.contains("enforcement = \"corp/enforcement.toml\""));
 

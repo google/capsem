@@ -103,8 +103,7 @@ pub(super) async fn handle_corp_validate(
     use capsem_core::net::policy_config::corp_provision;
 
     if let Some(source) = &payload.source {
-        let client = reqwest::Client::new();
-        corp_provision::fetch_corp_config(&client, source)
+        corp_provision::fetch_corp_config(source)
             .await
             .map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
     } else if let Some(toml_content) = &payload.toml {
