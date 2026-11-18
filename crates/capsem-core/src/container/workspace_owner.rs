@@ -9,6 +9,9 @@ use capsem_foundation::unix::contained::{ContainedDir, ContainedOpenOptions};
 use serde::Deserialize;
 use std::io::Read;
 
+mod relaunch;
+pub use relaunch::plan_environment;
+
 const OWNER_POLICY: &str = "image_user";
 const CONTROL_FILE_LIMIT: u64 = crate::session::LAUNCH_CONTROL_LIMIT;
 
