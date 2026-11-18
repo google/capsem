@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Rust SDK `Hypervisor::environments()` creates and inspects blueprints with explicit request-ID reconciliation and distinct approval/application outcomes.
+
 - Added: Native skill and rule catalog resolution for environment creation, with current corporate source enforcement, verified OCI content, exact offline pin admission and durable revocation refusal.
 
 - Fixed: Preserve catalog source descriptors when converting installed release manifests into the runtime view.
