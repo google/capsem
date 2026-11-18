@@ -275,9 +275,9 @@ impl ManifestRecord {
         if self.url.trim().is_empty() {
             bail!("channel {channel} manifest {} url must not be empty", self.version);
         }
-        if !(self.url.starts_with('/') || self.url.starts_with("https://") || self.url.starts_with("http://")) {
+        if !(self.url.starts_with('/') || self.url.starts_with("https://")) {
             bail!(
-                "channel {channel} manifest {} url must be release-site relative or http(s): {}",
+                "channel {channel} manifest {} url must be release-site relative or HTTPS: {}",
                 self.version,
                 self.url
             );

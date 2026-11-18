@@ -77,6 +77,32 @@ fn release_graph_manifest_records_use_version_not_schema_version() {
 }
 
 #[test]
+fn release_graph_manifest_records_never_authorize_remote_http() {
+    let record = ManifestRecord {
+        version: "1.4.0".to_string(),
+        status: Status::Current,
+        url: "http://updates.example/assets/stable/manifest.json".to_string(),
+        digest: digest_set(),
+        min_capsem_version: None,
+        max_capsem_version: None,
+    };
+
+    let error = record
+        .validate("stable")
+        .expect_err("catalogs must not delegate manifest authority to HTTP");
+    assert!(error.to_string().contains("HTTPS"), "{error:#}");
+
+    for url in [
+        "/assets/stable/manifest.json",
+        "https://updates.example/assets/stable/manifest.json",
+    ] {
+        let mut secure = record.clone();
+        secure.url = url.to_string();
+        secure.validate("stable").expect(url);
+    }
+}
+
+#[test]
 fn release_graph_channels_catalog_lists_manifest_records() {
     let catalog = serde_json::json!({
         "version": 1,
