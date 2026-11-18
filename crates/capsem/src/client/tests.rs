@@ -582,6 +582,7 @@ fn exec_response_signal_exit_code() {
 fn fork_request_serde() {
     let req = ForkRequest {
         name: "my-img".into(),
+        expected: None,
         description: Some("test image".into()),
         labels: Some(HashMap::from([("suite".into(), "eval".into())])),
     };
@@ -596,12 +597,17 @@ fn fork_request_serde() {
 fn fork_request_description_omitted_when_none() {
     let req = ForkRequest {
         name: "img".into(),
+        expected: None,
         description: None,
         labels: None,
     };
     let json = serde_json::to_string(&req).unwrap();
     assert!(!json.contains("description"));
     assert!(!json.contains("labels"));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&json).unwrap(),
+        serde_json::json!({"name":"img"})
+    );
 }
 
 #[test]

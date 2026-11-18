@@ -95,6 +95,7 @@ pub(super) async fn fork(
     let session_id = crate::route_ids::resolve_session_route_id(client, session).await?;
     let req = ForkRequest {
         name: name.to_owned(),
+        expected: None,
         description: description.map(ToOwned::to_owned),
         labels: client::parse_env_vars(label)?,
     };
