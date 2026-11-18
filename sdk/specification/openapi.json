@@ -9302,6 +9302,10 @@
         "type": "object",
         "description": "Unknown fields are refused rather than ignored.",
         "properties": {
+          "attach": {
+            "type": "boolean",
+            "description": "Start the selected environment's image when a `container` stream attaches.\nThis invocation-only transport choice does not modify the approved revision.\nRequires a saved environment with an image; detached execution is the default."
+          },
           "container": {
             "oneOf": [
               {

@@ -7,6 +7,7 @@ import {EnvironmentRevisionReferenceSchema} from "./EnvironmentRevisionReference
 import {ManagedSessionCreateSchema} from "./ManagedSessionCreate.js";
 
 export const ProvisionRequestSchema: z.ZodType<ProvisionRequest> = z.strictObject({
+  "attach": z.boolean().exactOptional(),
   "container": z.union([z.null(), z.lazy(() => ContainerSpecSchema)]).exactOptional(),
   "cpus": z.int().min(0).nullable().exactOptional(),
   "env": z.record(z.string(), z.string()).nullable().exactOptional(),

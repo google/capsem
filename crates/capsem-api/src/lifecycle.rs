@@ -44,6 +44,11 @@ pub struct ProvisionRequest {
     /// Exact approved environment revision. Inline workload overrides are refused.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub environment: Option<crate::environments::EnvironmentRevisionReference>,
+    /// Start the selected environment's image when a `container` stream attaches.
+    /// This invocation-only transport choice does not modify the approved revision.
+    /// Requires a saved environment with an image; detached execution is the default.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub attach: bool,
     /// RAM in megabytes. If absent, the service's default (12 GiB).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ram_mb: Option<u64>,
@@ -76,6 +81,9 @@ pub struct ProvisionRequest {
 
 impl ProvisionRequest {
     pub fn validate_environment(&self) -> Result<(), &'static str> {
+        if self.attach && self.environment.is_none() {
+            return Err("attached environment execution requires a saved environment");
+        }
         if let Some(environment) = &self.environment {
             environment.validate()?;
             if self.env.is_some() || self.container.is_some() {

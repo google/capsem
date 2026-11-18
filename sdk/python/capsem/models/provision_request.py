@@ -14,8 +14,9 @@ from .model_base import Model
 
 class ProvisionRequest(Model):
     private_input = True
-    nonnullable_optional = frozenset(['networks', 'persistent'])
+    nonnullable_optional = frozenset(['attach', 'networks', 'persistent'])
     model_config = ConfigDict(strict=True, populate_by_name=True, extra="forbid", hide_input_in_errors=True)
+    attach: StrictBool | None = None
     container: ContainerSpec | None = None
     cpus: Annotated[StrictInt, Field(ge=0)] | None = None
     env: dict[str, StrictStr] | None = None

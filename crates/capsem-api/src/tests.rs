@@ -591,3 +591,28 @@ fn provision_environment_selection_is_an_exact_revision_without_inline_overrides
         assert!(invalid.validate_environment().is_err());
     }
 }
+
+#[test]
+fn attached_environment_invocation_keeps_transport_separate_from_workload_content() {
+    let reference = json!({
+        "environment_id": "00000000-0000-4000-8000-000000000001",
+        "revision_id": "00000000-0000-4000-8000-000000000002"
+    });
+    let detached: ProvisionRequest = serde_json::from_value(json!({"environment": reference})).unwrap();
+    let attached: ProvisionRequest = serde_json::from_value(json!({"environment": reference, "attach": true})).unwrap();
+    attached.validate_environment().unwrap();
+    assert!(!detached.attach && attached.attach);
+    assert!(serde_json::to_value(&detached).unwrap().get("attach").is_none());
+    assert_eq!(detached.environment, attached.environment);
+    for extra in [
+        json!({"env": {"UNAPPROVED": "value"}}),
+        json!({"container": {"image": "other"}}),
+    ] {
+        let mut wire = serde_json::to_value(&attached).unwrap();
+        wire.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        let invalid: ProvisionRequest = serde_json::from_value(wire).unwrap();
+        assert!(invalid.validate_environment().is_err());
+    }
+    let missing: ProvisionRequest = serde_json::from_value(json!({"attach": true})).unwrap();
+    assert!(missing.validate_environment().is_err());
+}

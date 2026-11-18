@@ -5,6 +5,7 @@ import type { EnvironmentRevisionReference } from "./EnvironmentRevisionReferenc
 import type { ManagedSessionCreate } from "./ManagedSessionCreate.js";
 
 export interface ProvisionRequest {
+  "attach"?: boolean;
   "container"?: null | ContainerSpec;
   "cpus"?: number | null;
   "env"?: Record<string, string> | null;
