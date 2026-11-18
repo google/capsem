@@ -8,7 +8,7 @@ import {uuidV4} from './crypto.mjs';
 const packageName = '@capsem/sdk';
 /** @type {unknown} */
 const built = await import(packageName);
-const {Hypervisor, ContainerState} = /** @type {typeof import('../src/index.js')} */ (built);
+const {Hypervisor, ContainerState, HttpError} = /** @type {typeof import('../src/index.js')} */ (built);
 const url = process.env.SDK_GATEWAY_URL, token = process.env.SDK_GATEWAY_TOKEN;
 const environmentId = process.env.SDK_ENVIRONMENT_ID, revisionId = process.env.SDK_REVISION_ID;
 assert(url && token && environmentId && revisionId);
@@ -47,7 +47,12 @@ try {
       if (failure !== undefined) throw failure instanceof Error ? failure : new Error('Startup failed', {cause: failure});
       for (const row of (await hv.list()).sandboxes) {
         if (row.labels?.probe !== tag) continue;
-        if ((await hv.vm({id: row.id}).container.status()).state === ContainerState.PREPARING) {
+        // The VM row can precede its container setup record.
+        const status = await hv.vm({id: row.id}).container.status().catch(/** @param {unknown} error */ error => {
+          if (error instanceof HttpError && error.status === 404) return undefined;
+          throw error instanceof Error ? error : new Error('Container status failed', {cause: error});
+        });
+        if (status?.state === ContainerState.PREPARING) {
           preparingId = row.id;
           break;
         }

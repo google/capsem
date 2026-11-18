@@ -6,7 +6,7 @@ import os
 import time
 import uuid
 
-from capsem import Hypervisor, models
+from capsem import HttpError, Hypervisor, models
 
 
 async def main() -> None:
@@ -42,7 +42,13 @@ async def main() -> None:
                 for row in (await hv.list()).sandboxes:
                     if (row.labels or {}).get("probe") != tag:
                         continue
-                    status = await hv.vm(id=row.id).container.status()
+                    try:
+                        status = await hv.vm(id=row.id).container.status()
+                    except HttpError as error:
+                        # The VM row can precede its container setup record.
+                        if error.status != 404:
+                            raise
+                        continue
                     if status.state == models.ContainerState.PREPARING:
                         preparing_id = row.id
                         break
