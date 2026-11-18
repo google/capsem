@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed: CLI creation uses the shared exact-revision startup wait planner, refusing unavailable or changed timing before creation and preserving the ordinary and attached fast paths.
+
 - Fixed: The gateway includes approved startup time in detached saved-environment creation waits. It verifies exact-revision timing through the original authenticated service channel before forwarding creation; refused or mismatched timing and oversized or stalled replies cannot allocate a VM.
 
 - Fixed: Rust, Python, and TypeScript SDK creation waits include the exact approved startup timeout. Detached saved environments read qualified timing before creation; refused, changed, or out-of-range metadata cannot allocate a managed session.

@@ -169,7 +169,11 @@ impl GatewayClient {
             Some("application/gzip") => MediaType::Gzip,
             Some(_) => anyhow::bail!("unsupported CLI request content type"),
         };
-        let options = if method == reqwest::Method::GET {
+        let options = if method == reqwest::Method::POST && path == "/vms/create" {
+            let request: capsem_api::ProvisionRequest =
+                serde_json::from_slice(body.as_deref().context("creation request requires a body")?)?;
+            capsem_sdk::create_call_options(self.transport().await?, &request, CallOptions::default()).await?
+        } else if method == reqwest::Method::GET {
             CallOptions {
                 timeout: Some(Duration::from_secs(30)),
             }

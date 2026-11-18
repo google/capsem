@@ -153,3 +153,56 @@ async fn remote_gateway_connection_cannot_preserve_a_local_doctor_session() {
     assert!(error.to_string().contains("requires the selected local gateway"));
     assert!(service.recorded().is_empty());
 }
+
+#[tokio::test]
+async fn saved_creation_checks_exact_startup_timing_before_gateway_mutation() {
+    let environment = capsem_api::environments::EnvironmentRevisionReference {
+        environment_id: "00000000-0000-4000-8000-000000000001".into(),
+        revision_id: "00000000-0000-4000-8000-000000000002".into(),
+    };
+    let path = format!(
+        "/environments/{}/revisions/{}/readiness",
+        environment.environment_id, environment.revision_id
+    );
+    for outcome in ["verified", "changed", "unavailable", "attached", "ordinary"] {
+        let service = FakeService::start();
+        let mut returned = environment.clone();
+        if outcome == "changed" {
+            returned.revision_id = "00000000-0000-4000-8000-000000000009".into();
+        }
+        service.route(
+            "GET",
+            &path,
+            if outcome == "unavailable" { 403 } else { 200 },
+            json!({"environment": returned, "startup_timeout_seconds": u32::MAX}),
+        );
+        service.route("POST", "/vms/create", 200, json!({"id":"once"}));
+        let request = capsem_api::ProvisionRequest {
+            environment: (outcome != "ordinary").then(|| environment.clone()),
+            attach: outcome == "attached",
+            ..Default::default()
+        };
+        let result = service
+            .client
+            .post::<_, serde_json::Value>("/vms/create", &request)
+            .await;
+        let allowed = matches!(outcome, "verified" | "attached" | "ordinary");
+        assert_eq!(result.is_ok(), allowed, "{outcome}");
+        let recorded = service.recorded();
+        assert!(recorded.iter().all(|request| request.via_gateway));
+        if matches!(outcome, "attached" | "ordinary") {
+            assert_eq!(recorded.len(), 1);
+            assert_eq!(recorded[0].path, "/vms/create");
+        } else {
+            assert_eq!(recorded[0].path, path);
+            assert_eq!(recorded.len(), if allowed { 2 } else { 1 });
+            if allowed {
+                assert_eq!(recorded[1].path, "/vms/create");
+                assert_eq!(
+                    serde_json::from_slice::<serde_json::Value>(&recorded[1].body).unwrap()["environment"],
+                    json!(environment)
+                );
+            }
+        }
+    }
+}
