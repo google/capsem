@@ -1261,6 +1261,7 @@ def main():
         return run(Path(sys.argv[2]), detached=True)
     else:
         return run(Path(sys.argv[1]))
+    return None
 
 
 if __name__ == "__main__":
