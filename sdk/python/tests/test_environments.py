@@ -85,14 +85,49 @@ def test_environment_inspection_refuses_substituted_environment_identity():
     asyncio.run(run())
 
 
-def test_environment_creation_preserves_explicit_deadline_and_cancellation():
+@pytest.mark.parametrize("is_change", [False, True])
+def test_environment_mutations_preserve_explicit_deadline_and_cancellation(is_change):
     async def run():
         async with gateway(response=PENDING, response_delay=0.15) as (url, received), Hypervisor(url, "gateway-token", timeout=0.03) as hv:
-            assert (await hv.environments.create(request())).request_id == REQUEST
+            async def invoke(timeout: float | None = None):
+                if is_change:
+                    changed = models.EnvironmentChangeRequest.model_validate({
+                        "request_id": REQUEST, "base_revision_id": ENVIRONMENT,
+                        "specification": {"name": "development"}, "reason": "update blueprint",
+                    })
+                    return await hv.environments.change(ENVIRONMENT, changed, request_timeout=timeout)
+                return await hv.environments.create(request(), request_timeout=timeout)
+            assert (await invoke()).request_id == REQUEST
             with pytest.raises(TimeoutError):
-                await hv.environments.create(request(), request_timeout=0.03)
+                await invoke(0.03)
             with pytest.raises(TimeoutError):
                 async with asyncio.timeout(0.03):
-                    await hv.environments.create(request())
-            assert [path for _, path, _ in received] == ["/environments/create"] * 3
+                    await invoke()
+            path = f"/environments/{ENVIRONMENT}/changes" if is_change else "/environments/create"
+            assert [received_path for _, received_path, _ in received] == [path] * 3
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("response,valid", [
+    (PENDING, True), ({**PENDING, "request_id": ENVIRONMENT}, False),
+    ({**PENDING, "environment_id": REQUEST}, False),
+])
+def test_changes_preserve_base_and_refuse_substituted_identities(response, valid):
+    async def run():
+        base = "00000000-0000-4000-8000-000000000003"
+        change = models.EnvironmentChangeRequest.model_validate({
+            "request_id": REQUEST, "base_revision_id": base,
+            "specification": {"name": "development"}, "reason": "update blueprint",
+        })
+        async with gateway(response=response) as (url, received), Hypervisor(url, "gateway-token") as hv:
+            if valid:
+                assert (await hv.environments.change(ENVIRONMENT, change)).application == models.RequestApplicationState.PENDING
+            else:
+                with pytest.raises(ValueError, match="identity changed"):
+                    await hv.environments.change(ENVIRONMENT, change)
+            assert len(received) == 1
+            method, path, body = received[0]
+            assert (method, path) == ("POST", f"/environments/{ENVIRONMENT}/changes")
+            assert body["request_id"] == REQUEST
+            assert body["base_revision_id"] == base
     asyncio.run(run())

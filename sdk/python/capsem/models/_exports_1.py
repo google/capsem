@@ -1,5 +1,8 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .environment_rules__environment_catalog_selection__environment_detection_rule_custom_value import (
+    EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRuleCustomValue,
+)
 from .environment_sandbox_target import EnvironmentSandboxTarget
 from .environment_secret_binding import EnvironmentSecretBinding
 from .environment_specification__environment_image__environment_repository__environment_catalog_pin import (
@@ -91,9 +94,9 @@ from .interaction_tool_result_kind import InteractionToolResultKind
 from .json_content import JsonContent
 from .json_content_kind import JsonContentKind
 from .list_response import ListResponse
-from .local_credential_authority import LocalCredentialAuthority
 
 __all__ = [
+    'EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRuleCustomValue',
     'EnvironmentSandboxTarget',
     'EnvironmentSecretBinding',
     'EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection',
@@ -173,5 +176,4 @@ __all__ = [
     'JsonContent',
     'JsonContentKind',
     'ListResponse',
-    'LocalCredentialAuthority',
 ]

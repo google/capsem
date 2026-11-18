@@ -22,6 +22,18 @@ class Environments:
             raise ValueError("environment request identity changed")
         return result
 
+    async def change(
+        self, id: str, request: models.EnvironmentChangeRequest, *, request_timeout: float | None = None,
+    ) -> models.EnvironmentMutationResponse:
+        """Submit an observed-base change with a caller-chosen request ID."""
+        request_id = request.request_id
+        result = await api.change_environment(
+            self._transport, id=id, body=request, request_timeout=request_timeout,
+        )
+        if result.request_id != request_id or result.environment_id != id:
+            raise ValueError("environment change identity changed")
+        return result
+
     async def info(
         self, id: str, *, request_timeout: float | None = None,
     ) -> models.EnvironmentCurrentResponse:

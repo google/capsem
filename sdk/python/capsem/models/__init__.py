@@ -64,6 +64,7 @@ from ._exports_0 import (
 from ._exports_0 import (
     EnvironmentCatalogSelections_EnvironmentCatalogSelectionSelectedItem as EnvironmentCatalogSelections_EnvironmentCatalogSelectionSelectedItem,
 )
+from ._exports_0 import EnvironmentChangeRequest as EnvironmentChangeRequest
 from ._exports_0 import EnvironmentCreateRequest as EnvironmentCreateRequest
 from ._exports_0 import EnvironmentCurrentResponse as EnvironmentCurrentResponse
 from ._exports_0 import EnvironmentDocument as EnvironmentDocument
@@ -107,7 +108,7 @@ from ._exports_0 import (
 from ._exports_0 import (
     EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRule as EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRule,
 )
-from ._exports_0 import (
+from ._exports_1 import (
     EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRuleCustomValue as EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRuleCustomValue,
 )
 from ._exports_1 import EnvironmentSandboxTarget as EnvironmentSandboxTarget
@@ -201,7 +202,7 @@ from ._exports_1 import InteractionToolResultKind as InteractionToolResultKind
 from ._exports_1 import JsonContent as JsonContent
 from ._exports_1 import JsonContentKind as JsonContentKind
 from ._exports_1 import ListResponse as ListResponse
-from ._exports_1 import LocalCredentialAuthority as LocalCredentialAuthority
+from ._exports_2 import LocalCredentialAuthority as LocalCredentialAuthority
 from ._exports_2 import LogsResponse as LogsResponse
 from ._exports_2 import ManagedSessionClaimRequest as ManagedSessionClaimRequest
 from ._exports_2 import ManagedSessionClaimResponse as ManagedSessionClaimResponse
@@ -319,7 +320,7 @@ from ._exports_2 import RestartStatus as RestartStatus
 from ._exports_2 import RevokedCredentialAuthority as RevokedCredentialAuthority
 from ._exports_2 import RevokeSessionGrantResponse as RevokeSessionGrantResponse
 from ._exports_2 import RunRequest as RunRequest
-from ._exports_2 import SandboxInfo as SandboxInfo
+from ._exports_3 import SandboxInfo as SandboxInfo
 from ._exports_3 import ScopeProfileSummary as ScopeProfileSummary
 from ._exports_3 import SecurityAskDecision as SecurityAskDecision
 from ._exports_3 import SecurityAskListResponse as SecurityAskListResponse

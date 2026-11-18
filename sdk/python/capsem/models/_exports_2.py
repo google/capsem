@@ -1,5 +1,6 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .local_credential_authority import LocalCredentialAuthority
 from .logs_response import LogsResponse
 from .managed_session_claim_request import ManagedSessionClaimRequest
 from .managed_session_claim_response import ManagedSessionClaimResponse
@@ -117,9 +118,9 @@ from .restart_status import RestartStatus
 from .revoke_session_grant_response import RevokeSessionGrantResponse
 from .revoked_credential_authority import RevokedCredentialAuthority
 from .run_request import RunRequest
-from .sandbox_info import SandboxInfo
 
 __all__ = [
+    'LocalCredentialAuthority',
     'LogsResponse',
     'ManagedSessionClaimRequest',
     'ManagedSessionClaimResponse',
@@ -199,5 +200,4 @@ __all__ = [
     'RevokeSessionGrantResponse',
     'RevokedCredentialAuthority',
     'RunRequest',
-    'SandboxInfo',
 ]

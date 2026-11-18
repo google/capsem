@@ -64,6 +64,7 @@ from .environment_catalog_selections__environment_catalog_selection import (
 from .environment_catalog_selections__environment_catalog_selection_selected_item import (
     EnvironmentCatalogSelections_EnvironmentCatalogSelectionSelectedItem,
 )
+from .environment_change_request import EnvironmentChangeRequest
 from .environment_create_request import EnvironmentCreateRequest
 from .environment_current_response import EnvironmentCurrentResponse
 from .environment_document import EnvironmentDocument
@@ -104,9 +105,6 @@ from .environment_rules__environment_catalog_selection__environment_access_rule_
 )
 from .environment_rules__environment_catalog_selection__environment_detection_rule import (
     EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRule,
-)
-from .environment_rules__environment_catalog_selection__environment_detection_rule_custom_value import (
-    EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRuleCustomValue,
 )
 
 __all__ = [
@@ -166,6 +164,7 @@ __all__ = [
     'EnvironmentCatalogSelections_EnvironmentCatalogPinSelectedItem',
     'EnvironmentCatalogSelections_EnvironmentCatalogSelection',
     'EnvironmentCatalogSelections_EnvironmentCatalogSelectionSelectedItem',
+    'EnvironmentChangeRequest',
     'EnvironmentCreateRequest',
     'EnvironmentCurrentResponse',
     'EnvironmentDocument',
@@ -189,5 +188,4 @@ __all__ = [
     'EnvironmentRules_EnvironmentCatalogSelection_EnvironmentAccessRule',
     'EnvironmentRules_EnvironmentCatalogSelection_EnvironmentAccessRuleCustomValue',
     'EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRule',
-    'EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRuleCustomValue',
 ]
