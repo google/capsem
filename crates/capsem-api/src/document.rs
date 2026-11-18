@@ -23,6 +23,13 @@ pub fn openapi() -> OpenApi {
     let revoke = doc.operation::<VmActionResponse>("/agent-access/{id}", "revokeAgentAccess");
     doc.add("/agent-access/{id}", HttpMethod::Delete, revoke);
     doc.get::<environments::EnvironmentCurrentResponse>("/environments/{id}/info", "getEnvironmentInfo");
+    let request = doc.schema::<EnvironmentCreateRequest>();
+    let create = doc.operation::<EnvironmentMutationResponse>("/environments/create", "createEnvironment")
+        .description(Some("Create an operator blueprint. Reconcile the same request ID explicitly after interruption; never infer completed application from an accepted decision. Repository and catalog resolution are unavailable pending integration."))
+        .request_body(Some(RequestBodyBuilder::new().required(Some(Required::True))
+            .content("application/json", Content::new(Some(request))).build()))
+        .extensions(Some([("x-capsem-request-timeout-ms", IMAGE_PULL_REQUEST_TIMEOUT_MS)].into_iter().collect()));
+    doc.add("/environments/create", HttpMethod::Post, create);
     doc.get::<ListResponse>("/vms/list", "listVms");
     doc.post::<ProvisionRequest, ProvisionResponse>("/vms/create", "createVm");
     doc.post::<ManagedSessionClaimRequest, ManagedSessionClaimResponse>(

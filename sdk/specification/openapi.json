@@ -424,6 +424,50 @@
         }
       }
     },
+    "/environments/create": {
+      "post": {
+        "description": "Create an operator blueprint. Reconcile the same request ID explicitly after interruption; never infer completed application from an accepted decision. Repository and catalog resolution are unavailable pending integration.",
+        "operationId": "createEnvironment",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnvironmentCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentMutationResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "x-capsem-request-timeout-ms": 1020000
+      }
+    },
     "/environments/{id}/info": {
       "get": {
         "operationId": "getEnvironmentInfo",
@@ -5276,6 +5320,64 @@
         },
         "additionalProperties": false
       },
+      "EnvironmentCatalogSelections_EnvironmentCatalogSelection": {
+        "type": "object",
+        "properties": {
+          "selected": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "version"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "version": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentCreateRequest": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "specification",
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Client-chosen UUIDv4 for explicit reconciliation, never an authority token."
+          },
+          "requesting_sandbox": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EnvironmentSandboxTarget",
+                "description": "Requested target only. The service verifies live authenticated ownership\nand derives the requester's base environment rather than trusting a label."
+              }
+            ]
+          },
+          "specification": {
+            "$ref": "#/components/schemas/EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection"
+          }
+        },
+        "additionalProperties": false
+      },
       "EnvironmentCurrentResponse": {
         "type": "object",
         "description": "Canonical current content verified against the committed host-ledger revision.\nEffective corporate policy is a separate view of this same revision.",
@@ -5500,6 +5602,76 @@
         },
         "additionalProperties": false
       },
+      "EnvironmentMcps_EnvironmentCatalogSelection": {
+        "type": "object",
+        "properties": {
+          "catalog": {
+            "$ref": "#/components/schemas/EnvironmentCatalogSelections_EnvironmentCatalogSelection"
+          },
+          "permissions": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/EnvironmentMcpPermissions"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "servers": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/EnvironmentMcpDefinition"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentMutationResponse": {
+        "type": "object",
+        "description": "Reconciliation result for a submitted mutation, including an accepted\ndecision whose effect remains pending or failed. Request IDs are stable;\nclients must not infer a completed revision from HTTP success alone.",
+        "required": [
+          "request_id",
+          "environment_id",
+          "decision",
+          "application"
+        ],
+        "properties": {
+          "application": {
+            "$ref": "#/components/schemas/RequestApplicationState"
+          },
+          "application_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "decision": {
+            "$ref": "#/components/schemas/RequestState"
+          },
+          "environment_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "result": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EnvironmentRevisionReference"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "EnvironmentPackages": {
         "type": "object",
         "properties": {
@@ -5595,6 +5767,24 @@
               }
             ],
             "default": null
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentRevisionReference": {
+        "type": "object",
+        "required": [
+          "environment_id",
+          "revision_id"
+        ],
+        "properties": {
+          "environment_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revision_id": {
+            "type": "string",
+            "format": "uuid"
           }
         },
         "additionalProperties": false
@@ -5733,6 +5923,137 @@
         },
         "additionalProperties": false
       },
+      "EnvironmentRules_EnvironmentCatalogSelection_EnvironmentAccessRule": {
+        "type": "object",
+        "properties": {
+          "catalog": {
+            "$ref": "#/components/schemas/EnvironmentCatalogSelections_EnvironmentCatalogSelection"
+          },
+          "custom": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "required": [
+                "name",
+                "action",
+                "match"
+              ],
+              "properties": {
+                "action": {
+                  "$ref": "#/components/schemas/EnvironmentCapabilityDecision"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "match": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "priority": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "int32"
+                }
+              },
+              "additionalProperties": false
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "parameters": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/components/schemas/EnvironmentRuleParameter"
+              },
+              "propertyNames": {
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRule": {
+        "type": "object",
+        "properties": {
+          "catalog": {
+            "$ref": "#/components/schemas/EnvironmentCatalogSelections_EnvironmentCatalogSelection"
+          },
+          "custom": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "required": [
+                "name",
+                "match",
+                "level"
+              ],
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "level": {
+                  "$ref": "#/components/schemas/DetectionLevel"
+                },
+                "match": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "parameters": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/components/schemas/EnvironmentRuleParameter"
+              },
+              "propertyNames": {
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentSandboxTarget": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "generation"
+        ],
+        "properties": {
+          "generation": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "session_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
       "EnvironmentSecretBinding": {
         "type": "object",
         "required": [
@@ -5747,6 +6068,106 @@
               "string",
               "null"
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection": {
+        "type": "object",
+        "description": "Editable content contains no service-assigned revision/history metadata.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "access": {
+            "$ref": "#/components/schemas/EnvironmentRules_EnvironmentCatalogSelection_EnvironmentAccessRule"
+          },
+          "description": {
+            "type": "string"
+          },
+          "detection": {
+            "$ref": "#/components/schemas/EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRule"
+          },
+          "image": {
+            "type": "object",
+            "required": [
+              "reference"
+            ],
+            "properties": {
+              "reference": {
+                "type": "string"
+              },
+              "update_policy": {
+                "$ref": "#/components/schemas/EnvironmentImageUpdatePolicy"
+              }
+            },
+            "additionalProperties": false
+          },
+          "mcps": {
+            "$ref": "#/components/schemas/EnvironmentMcps_EnvironmentCatalogSelection"
+          },
+          "name": {
+            "type": "string"
+          },
+          "packages": {
+            "$ref": "#/components/schemas/EnvironmentPackages"
+          },
+          "plugins": {
+            "$ref": "#/components/schemas/EnvironmentPlugins"
+          },
+          "repositories": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "url",
+                "ref",
+                "destination"
+              ],
+              "properties": {
+                "destination": {
+                  "type": "string"
+                },
+                "ref": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "secrets": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/EnvironmentSecretBinding"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "skills": {
+            "$ref": "#/components/schemas/EnvironmentCatalogSelections_EnvironmentCatalogSelection"
+          },
+          "startup": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EnvironmentStartup"
+              }
+            ]
+          },
+          "variables": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
           }
         },
         "additionalProperties": false
@@ -9044,6 +9465,27 @@
             ]
           }
         }
+      },
+      "RequestApplicationState": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "applying",
+          "applied",
+          "failed"
+        ]
+      },
+      "RequestState": {
+        "type": "string",
+        "description": "A durable decision never implies that its approved effect has been applied.",
+        "enum": [
+          "pending",
+          "approved",
+          "denied",
+          "cancelled",
+          "expired",
+          "stale"
+        ]
       },
       "ResourceSummary": {
         "type": "object",

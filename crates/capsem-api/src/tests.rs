@@ -199,6 +199,10 @@ fn image_pull_contract_allows_download_and_verification_before_client_timeout() 
         document["paths"]["/images/pull"]["post"]["x-capsem-request-timeout-ms"],
         1_020_000
     );
+    assert_eq!(
+        document["paths"]["/environments/create"]["post"]["x-capsem-request-timeout-ms"],
+        1_020_000
+    );
     assert!(document["paths"]["/images"]["get"]
         .get("x-capsem-request-timeout-ms")
         .is_none());
