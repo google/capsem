@@ -9334,6 +9334,17 @@
               "type": "string"
             }
           },
+          "environment": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EnvironmentRevisionReference",
+                "description": "Exact approved environment revision. Inline workload overrides are refused."
+              }
+            ]
+          },
           "from": {
             "type": [
               "string",
@@ -9717,6 +9728,57 @@
         },
         "additionalProperties": false
       },
+      "SandboxEnvironment": {
+        "type": "object",
+        "description": "Environment-qualified application facts for the actual live owner. Missing\nboot/live values are unacknowledged, never inferred from a desired selection.",
+        "required": [
+          "desired"
+        ],
+        "properties": {
+          "boot": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EnvironmentRevisionReference"
+              }
+            ]
+          },
+          "desired": {
+            "$ref": "#/components/schemas/EnvironmentRevisionReference"
+          },
+          "live_policy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EnvironmentRevisionReference"
+              }
+            ]
+          },
+          "owner_generation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "pending_restart": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "policy_digest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "SandboxInfo": {
         "type": "object",
         "required": [
@@ -9813,6 +9875,16 @@
             "type": [
               "string",
               "null"
+            ]
+          },
+          "environment": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SandboxEnvironment"
+              }
             ]
           },
           "files": {

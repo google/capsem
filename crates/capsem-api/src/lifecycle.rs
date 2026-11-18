@@ -41,6 +41,9 @@ pub fn validate_name(kind: &str, value: &str) -> Result<(), String> {
 #[serde(deny_unknown_fields)]
 pub struct ProvisionRequest {
     pub name: Option<String>,
+    /// Exact approved environment revision. Inline workload overrides are refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<crate::environments::EnvironmentRevisionReference>,
     /// RAM in megabytes. If absent, the service's default (12 GiB).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ram_mb: Option<u64>,
@@ -69,6 +72,18 @@ pub struct ProvisionRequest {
     /// Key-value metadata labels attached to the sandbox at creation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub labels: Option<HashMap<String, String>>,
+}
+
+impl ProvisionRequest {
+    pub fn validate_environment(&self) -> Result<(), &'static str> {
+        if let Some(environment) = &self.environment {
+            environment.validate()?;
+            if self.env.is_some() || self.container.is_some() {
+                return Err("a saved environment cannot be combined with inline variables or container overrides");
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
@@ -203,8 +218,23 @@ pub struct SessionDbStatus {
     pub error: Option<String>,
 }
 
+/// Environment-qualified application facts for the actual live owner. Missing
+/// boot/live values are unacknowledged, never inferred from a desired selection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SandboxEnvironment {
+    pub boot: Option<crate::environments::EnvironmentRevisionReference>,
+    pub live_policy: Option<crate::environments::EnvironmentRevisionReference>,
+    pub desired: crate::environments::EnvironmentRevisionReference,
+    pub owner_generation: Option<String>,
+    pub policy_digest: Option<String>,
+    pub pending_restart: Option<bool>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
 pub struct SandboxInfo {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<SandboxEnvironment>,
     /// Source app metadata captured for this session's immutable image.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub app: Option<crate::ImageApp>,
@@ -306,6 +336,7 @@ impl SandboxInfo {
     pub fn new(id: String, pid: u32, status: VmLifecycleState, persistent: bool) -> Self {
         let available_actions = status.available_actions(false);
         Self {
+            environment: None,
             app: None,
             terminal: None,
             pending_approval_count: 0,

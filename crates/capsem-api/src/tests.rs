@@ -568,3 +568,26 @@ fn environment_changes_contract_carries_observed_base_and_resolution_budget() {
             .any(|field| field == "base_revision_id")
     );
 }
+
+#[test]
+fn provision_environment_selection_is_an_exact_revision_without_inline_overrides() {
+    let request: ProvisionRequest = serde_json::from_value(json!({"environment": {
+        "environment_id": "00000000-0000-4000-8000-000000000001",
+        "revision_id": "00000000-0000-4000-8000-000000000002"
+    }}))
+    .unwrap();
+    assert_eq!(
+        request.environment.as_ref().unwrap().revision_id,
+        "00000000-0000-4000-8000-000000000002"
+    );
+    request.validate_environment().unwrap();
+    for extra in [
+        json!({"env": {"UNAPPROVED": "value"}}),
+        json!({"container": {"image": "other"}}),
+    ] {
+        let mut wire = serde_json::to_value(&request).unwrap();
+        wire.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        let invalid: ProvisionRequest = serde_json::from_value(wire).unwrap();
+        assert!(invalid.validate_environment().is_err());
+    }
+}
