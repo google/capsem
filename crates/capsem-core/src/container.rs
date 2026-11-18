@@ -136,6 +136,8 @@ pub const STAGE_READY: &str = "ready";
 /// by runc's poststart hook. `ready` says only that the image is staged: it is
 /// written before runc creates anything, and a boot relaunches what it marks.
 pub const STAGE_RUNNING: &str = "running";
+/// Required startup is running; this is not workload readiness.
+pub const STAGE_PREPARING: &str = "preparing";
 /// The launcher's marker in [`STAGE`] that a launch ended without starting
 /// the workload.
 pub const STAGE_FAILED: &str = "failed";
