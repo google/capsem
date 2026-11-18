@@ -36,6 +36,7 @@ fn proxy_app(uds_path: &str) -> Router {
         .route("/headers", any(handle_proxy))
         .route("/health", any(handle_proxy))
         .route("/images/pull", any(handle_proxy))
+        .route("/environments/create", any(handle_proxy))
         .route("/item", any(handle_proxy))
         .route("/vms/list", any(handle_proxy))
         .route("/ok", any(handle_proxy))
@@ -761,47 +762,51 @@ fn exec_deadline_covers_the_exec_timeout_ceiling() {
 }
 
 #[tokio::test]
-async fn image_pull_waits_for_download_and_verification_without_replaying() {
-    let received = Arc::new(tokio::sync::Notify::new());
-    let calls = Arc::new(AtomicUsize::new(0));
-    let handler_received = received.clone();
-    let handler_calls = calls.clone();
-    let upstream = Router::new().route(
-        "/images/pull",
-        any(move || {
-            let received = handler_received.clone();
-            let calls = handler_calls.clone();
-            async move {
-                calls.fetch_add(1, Ordering::SeqCst);
-                received.notify_one();
-                tokio::time::sleep(Duration::from_secs(910)).await;
-                axum::Json(serde_json::json!({"image":"dev", "resolved":"verified-pin"}))
-            }
-        }),
-    );
-    let (path, server, _dir) = mock_uds(upstream).await;
-    let request = tokio::spawn(
-        proxy_app(&path).oneshot(
-            axum::http::Request::builder()
-                .method("POST")
-                .uri("/images/pull")
-                .body(Body::from(r#"{"image":"dev"}"#))
-                .unwrap(),
-        ),
-    );
-    received.notified().await;
-    tokio::time::pause();
-    tokio::time::advance(Duration::from_secs(910)).await;
-    tokio::time::resume();
-    let response = request.await.unwrap().unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
-    assert_eq!(
-        serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
-        serde_json::json!({"image":"dev", "resolved":"verified-pin"})
-    );
-    assert_eq!(calls.load(Ordering::SeqCst), 1);
-    assert_eq!(upstream_deadline("/images"), REQUEST_TIMEOUT);
-    assert_eq!(upstream_deadline("/images/pull/extra"), REQUEST_TIMEOUT);
-    server.abort();
+async fn image_backed_mutations_wait_for_download_and_verification_without_replaying() {
+    for image_path in ["/images/pull", "/environments/create"] {
+        let received = Arc::new(tokio::sync::Notify::new());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let handler_received = received.clone();
+        let handler_calls = calls.clone();
+        let upstream = Router::new().route(
+            image_path,
+            any(move || {
+                let received = handler_received.clone();
+                let calls = handler_calls.clone();
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    received.notify_one();
+                    tokio::time::sleep(Duration::from_secs(910)).await;
+                    axum::Json(serde_json::json!({"image":"dev", "resolved":"verified-pin"}))
+                }
+            }),
+        );
+        let (path, server, _dir) = mock_uds(upstream).await;
+        let request = tokio::spawn(
+            proxy_app(&path).oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri(image_path)
+                    .body(Body::from(r#"{"image":"dev"}"#))
+                    .unwrap(),
+            ),
+        );
+        tokio::time::timeout(Duration::from_secs(5), received.notified())
+            .await
+            .unwrap();
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(910)).await;
+        tokio::time::resume();
+        let response = request.await.unwrap().unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({"image":"dev", "resolved":"verified-pin"})
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(upstream_deadline("/images"), REQUEST_TIMEOUT);
+        assert_eq!(upstream_deadline("/images/pull/extra"), REQUEST_TIMEOUT);
+        server.abort();
+    }
 }

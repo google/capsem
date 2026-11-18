@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Authenticated gateway forwarding for operator environment creation, with image-resolution deadlines and no mutation replay.
+
 - Added: Typed TypeScript SDK environment creation with validated draft selectors and mutation outcomes.
 
 - Added: Typed Python SDK environment creation, selector-only drafts and distinct decision/application outcomes.
