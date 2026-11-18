@@ -26,7 +26,7 @@ Capsem is a security tool whose job is to isolate AI coding agents inside hardwa
 - **Sandbox escape** -- any path for guest code to reach the host beyond the documented interfaces (vsock ports 5000--5005, VirtioFS mount, MITM proxy egress).
 - **MITM proxy bypass** -- guest traffic that reaches the internet without passing through the policy engine.
 - **Host-side privilege escalation** -- any way for a guest or local unprivileged user to elevate privileges on the host via the `capsem` service daemon, gateway, or per-VM process.
-- **Credential / key exposure** -- disclosure of the MITM CA private key, Tauri updater signing key, or user session credentials.
+- **Credential / key exposure** -- disclosure of the MITM CA private key, release publication credentials, or user session credentials.
 - **Supply-chain integrity** -- tampering with downloaded VM assets (kernel, rootfs, initrd) undetected by the manifest hash check.
 - **Gateway authentication bypass** -- unauthenticated calls that reach the service daemon via `capsem-gateway`.
 
