@@ -28,6 +28,7 @@ use capsem_core::container::admission::{CatalogSource, ImagePolicy};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use tokio::time::{Duration, Instant};
 pub(crate) mod inventory;
+mod saved;
 
 /// How long a catalog read is reused before the next request reads it again.
 pub(crate) const CATALOG_REFRESH: Duration = Duration::from_secs(capsem_proto::CACHE_IMAGE_CATALOG_REFRESH_SECONDS);

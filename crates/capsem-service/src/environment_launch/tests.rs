@@ -173,3 +173,104 @@ async fn environment_launch_receipts_require_original_generation_and_exact_ackno
         }
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn saved_image_preparation_requires_ack_before_revision_or_image_work() {
+    let _lock = SETTINGS_ENV_LOCK.lock().await;
+    let directory = tempfile::tempdir().unwrap();
+    let (_paths, _, _) = install_empty_settings_env(&directory);
+    let state = make_test_state();
+    let vm = id(90);
+    let session = directory.path().join(&vm);
+    std::fs::create_dir_all(&session).unwrap();
+    insert_fake_instance_with_session_dir(&state, &vm, std::process::id(), session);
+    state.instances.lock().unwrap().get_mut(&vm).unwrap().environment =
+        Some(EnvironmentBinding::starting(reference(2), String::new()));
+    // The historical revision deliberately does not exist. An unacknowledged
+    // owner must be rejected before attempting even that lookup.
+    let error = prepare_image(&state, &vm).await.unwrap_err().into_message();
+    assert!(error.contains("has not been acknowledged"), "{error}");
+    assert!(state.containers.status(&vm).is_none());
+    state
+        .instances
+        .lock()
+        .unwrap()
+        .get_mut(&vm)
+        .unwrap()
+        .environment
+        .as_mut()
+        .unwrap()
+        .acknowledged = true;
+    let error = prepare_image(&state, &vm).await.unwrap_err().into_message();
+    assert!(error.contains("verified environment image unavailable"), "{error}");
+    assert!(state.containers.status(&vm).is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn preparation_refreshes_current_corporate_policy_and_requires_exact_owner_ack() {
+    let _lock = SETTINGS_ENV_LOCK.lock().await;
+    let directory = tempfile::tempdir().unwrap();
+    let (_paths, _, corporate) = install_empty_settings_env(&directory);
+    let state = make_test_state();
+    state
+        .environments
+        .commit(revision(2, None, "allow"), 10)
+        .wait()
+        .await
+        .unwrap();
+    std::fs::write(
+        corporate,
+        "[corp.rules.mandatory]\nname='mandatory'\naction='block'\nmatch='http.host == \"scoped.example\"'",
+    )
+    .unwrap();
+    for (index, exact) in [true, false].into_iter().enumerate() {
+        let vm = id(100 + index as u64);
+        let session = directory.path().join(&vm);
+        std::fs::create_dir_all(&session).unwrap();
+        insert_fake_instance_with_session_dir(&state, &vm, std::process::id(), session.clone());
+        let owner = {
+            let mut instances = state.instances.lock().unwrap();
+            let instance = instances.get_mut(&vm).unwrap();
+            let mut binding = EnvironmentBinding::starting(reference(2), "previous-policy".into());
+            binding.acknowledged = true;
+            instance.environment = Some(binding);
+            let owner = crate::owner_connection::OwnerConnection::capture(instance).unwrap();
+            drop(instances);
+            owner
+        };
+        state
+            .register_proxy_worker(&vm, owner.generation(), crate::proxy_worker::ProxyWorker::test_stub())
+            .unwrap();
+        let published = state
+            .off_worker(move |state| {
+                state.materialize_environment_policy(&session, Some(&reference(2)), Some(&reference(2)))
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            !allowed(&published),
+            "preparation must enforce the current corporate block"
+        );
+        let expected = published.digest;
+        let peer = spawn_fake_process(&owner.uds_path, 1, move |message| {
+            let crate::ServiceToProcess::ReloadConfig { id, active_policy } = message else {
+                panic!("reload expected")
+            };
+            let digest = capsem_core::net::policy_config::active_policy_digest(active_policy);
+            assert_eq!(digest, expected);
+            let response = crate::ProcessToService::ConfigReloadResult {
+                id: *id,
+                active_policy_digest: Some(if exact { digest } else { "blake3:wrong".into() }),
+                error: None,
+            };
+            Box::pin(async { Some(response) })
+        });
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), preparation_policy(&state, &owner))
+            .await
+            .unwrap();
+        assert_eq!(result.is_ok(), exact);
+        drop(result);
+        peer.await.unwrap();
+    }
+}

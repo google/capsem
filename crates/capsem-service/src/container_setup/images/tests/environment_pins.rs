@@ -1,6 +1,76 @@
 //! Environment pinning consumes the same admitted result as image prefetch.
 use super::*;
 
+fn saved_image(reference: &str, selected: char) -> capsem_config::environment::EnvironmentImage {
+    capsem_config::environment::EnvironmentImage {
+        reference: reference.into(),
+        resolved_digest: digest(selected),
+        update_policy: Default::default(),
+    }
+}
+
+#[tokio::test]
+async fn saved_image_selection_retains_catalog_history_and_never_resolves_a_moving_tag() {
+    let fx = Fixture::default_policy();
+    let mut decision = Decision::new(&fx.state).await.unwrap();
+    let selected = decision.resolve_saved(&saved_image("codex-cli", 'a')).await.unwrap();
+    assert_eq!(
+        selected.pull,
+        format!("ghcr.io/google/capsem/codex-cli@{}", digest('a'))
+    );
+    assert_eq!(
+        decision.admit_saved(&selected).await.unwrap().digest().to_string(),
+        digest('a')
+    );
+    assert!(
+        fx.pulls().is_empty(),
+        "selecting an immutable pin does not pull an image"
+    );
+
+    let fx = Fixture::new(grants(&["registry.example"], &["registry.example"]));
+    let mut decision = Decision::new(&fx.state).await.unwrap();
+    let selected = decision
+        .resolve_saved(&saved_image("registry.example/app:moving", 'a'))
+        .await
+        .unwrap();
+    assert_eq!(selected.pull, format!("registry.example/app@{}", digest('a')));
+    decision.admit_saved(&selected).await.unwrap();
+    assert!(fx.pulls().is_empty());
+    assert!(decision
+        .resolve_saved(&saved_image(&format!("registry.example/app@{}", digest('b')), 'a'))
+        .await
+        .is_err());
+}
+
+#[tokio::test]
+async fn saved_image_selection_refuses_unlisted_incompatible_and_wrong_platform_pins() {
+    for (reference, selected) in [
+        ("codex-cli", '0'),
+        ("codex-cli", 'c'),
+        ("elsewhere", 'e'),
+        ("unknown", 'a'),
+    ] {
+        let fx = Fixture::default_policy();
+        let mut decision = Decision::new(&fx.state).await.unwrap();
+        assert!(
+            decision.resolve_saved(&saved_image(reference, selected)).await.is_err(),
+            "{reference}:{selected}"
+        );
+        assert!(fx.pulls().is_empty());
+    }
+    let fx = Fixture::default_policy();
+    let mut decision = Decision::new(&fx.state).await.unwrap();
+    let selected = decision
+        .resolve_saved(&saved_image("registry.example/app:moving", 'a'))
+        .await
+        .unwrap();
+    assert!(
+        decision.admit_saved(&selected).await.is_err(),
+        "saved pins do not grant source access"
+    );
+    assert!(fx.pulls().is_empty());
+}
+
 fn request(image: &str) -> ImagePullRequest {
     ImagePullRequest {
         image: image.into(),

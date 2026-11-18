@@ -6,6 +6,8 @@ use capsem_config::environment::EnvironmentSpecification;
 use capsem_core::environment::EnvironmentPolicyInputs;
 use capsem_logger::events::EnvironmentRevisionParent;
 use std::{collections::HashMap, path::Path};
+mod image;
+pub(crate) use image::{prepare_image, SelectedImage};
 
 #[derive(Clone, Debug)]
 pub(crate) struct EnvironmentBinding {
@@ -30,10 +32,6 @@ impl EnvironmentBinding {
 /// Refuse preparation fields until their trusted launch/binding owners are
 /// connected. Never launch a valid-looking environment with fields discarded.
 pub(crate) fn validate_preparation(specification: &EnvironmentSpecification) -> Result<()> {
-    ensure!(
-        specification.image.is_none(),
-        "environment image launch requires trusted workload preparation"
-    );
     ensure!(
         specification.startup.is_none() && specification.repositories.is_empty(),
         "environment startup and repositories require trusted workload preparation"
@@ -110,12 +108,15 @@ impl ServiceState {
             .context("admit and compile selected environment rule catalogs")?;
         Ok((
             crate::active_policy::publish_active_policy(session_dir, &policy)?,
-            Some(
-                boot.specification
-                    .variables
-                    .iter()
-                    .map(|(name, value)| (name.clone(), value.clone()))
-                    .collect(),
+            capsem_core::container::session_env(
+                Some(
+                    boot.specification
+                        .variables
+                        .iter()
+                        .map(|(name, value)| (name.clone(), value.clone()))
+                        .collect(),
+                ),
+                boot.specification.image.is_some(),
             ),
         ))
     }
@@ -152,14 +153,7 @@ pub(crate) async fn initialize(state: &std::sync::Arc<ServiceState>, id: &str) -
     {
         return Ok(());
     }
-    let (boot, live) = (binding.boot.clone(), binding.live_policy.clone());
-    let published = state
-        .off_worker(move |state| state.materialize_environment_policy(&session, Some(&boot), Some(&live)))
-        .await
-        .map_err(|error| error.body.error)?
-        .map_err(|error| format!("{error:#}"))?;
-    owner.validate(state, false)?;
-    crate::active_policy::apply_to_owner(state, &owner, &published, &mutation).await?;
+    refresh_binding(state, &owner, &binding, session, &mutation).await?;
     use capsem_logger::{
         db::{EnvironmentReferenceQuery, EnvironmentReferenceRecord},
         events::environment::{EnvironmentSandboxReferenceKind, EnvironmentSandboxReferenceMutation},
@@ -215,6 +209,53 @@ pub(crate) async fn initialize(state: &std::sync::Arc<ServiceState>, id: &str) -
     binding.acknowledged = true;
     drop(instances);
     Ok(())
+}
+
+/// Linearize guest preparation after current corporate publication and an
+/// exact original-owner ACK. Keep the guard until guest execution is dispatched.
+pub(crate) async fn preparation_policy<'a>(
+    state: &'a std::sync::Arc<ServiceState>,
+    owner: &crate::owner_connection::OwnerConnection,
+) -> Result<crate::policy_mutation::PolicyMutation<'a>, String> {
+    let mutation = state.policy_mutation.begin().await;
+    owner.validate(state, false)?;
+    let selected = {
+        let instances = state.instances.lock().unwrap();
+        let instance = instances
+            .get(owner.id())
+            .filter(|instance| instance.generation == owner.generation())
+            .ok_or("preparation owner changed")?;
+        let selected = instance
+            .environment
+            .as_ref()
+            .map(|binding| (binding.clone(), instance.session_dir.clone()));
+        drop(instances);
+        selected
+    };
+    if let Some((binding, session)) = selected {
+        if !binding.acknowledged {
+            return Err("environment policy has not been acknowledged".into());
+        }
+        refresh_binding(state, owner, &binding, session, &mutation).await?;
+    }
+    Ok(mutation)
+}
+
+async fn refresh_binding(
+    state: &std::sync::Arc<ServiceState>,
+    owner: &crate::owner_connection::OwnerConnection,
+    binding: &EnvironmentBinding,
+    session: std::path::PathBuf,
+    mutation: &crate::policy_mutation::PolicyMutation<'_>,
+) -> Result<(), String> {
+    let (boot, live) = (binding.boot.clone(), binding.live_policy.clone());
+    let published = state
+        .off_worker(move |state| state.materialize_environment_policy(&session, Some(&boot), Some(&live)))
+        .await
+        .map_err(|error| error.body.error)?
+        .map_err(|error| format!("{error:#}"))?;
+    owner.validate(state, false)?;
+    crate::active_policy::apply_to_owner(state, owner, &published, mutation).await
 }
 
 #[cfg(test)]

@@ -118,13 +118,15 @@ pub(crate) fn restore(state: &Arc<ServiceState>, id: &str) {
 /// A restored guest may be ready while its workload is still starting. Keep
 /// launch-record I/O off the async worker and await this boot's workload marker.
 pub(crate) async fn restore_ready(state: &Arc<ServiceState>, id: &str) -> Result<(), AppError> {
+    let started = crate::environment_launch::prepare_image(state, id).await?;
     let restore_id = id.to_owned();
-    let has_workload = state
-        .off_worker(move |state| {
-            restore(&state, &restore_id);
-            state.containers.status(&restore_id).is_some()
-        })
-        .await?;
+    let has_workload = started
+        || state
+            .off_worker(move |state| {
+                restore(&state, &restore_id);
+                state.containers.status(&restore_id).is_some()
+            })
+            .await?;
     if has_workload {
         require_ready(state, id).await?;
     }
@@ -150,7 +152,13 @@ fn relaunch_in_background(state: &Arc<ServiceState>, id: &str, generation: u64) 
     let Some(lease) = state.containers.work_lease(id, generation) else {
         return;
     };
-    let Ok(uds_path) = running_uds_path(state, id) else {
+    let owner = state
+        .instances
+        .lock()
+        .unwrap()
+        .get(id)
+        .map(crate::owner_connection::OwnerConnection::capture);
+    let Some(Ok(owner)) = owner else {
         return;
     };
     let (state, id) = (Arc::clone(state), id.to_owned());
@@ -162,10 +170,20 @@ fn relaunch_in_background(state: &Arc<ServiceState>, id: &str, generation: u64) 
         if !state.containers.advance(&id, generation, |_| {}) {
             return;
         }
+        let preparation = match crate::environment_launch::preparation_policy(&state, &owner).await {
+            Ok(preparation) => preparation,
+            Err(error) => {
+                state.containers.advance(&id, generation, |status| {
+                    status.state = ContainerState::Failed;
+                    status.error = Some(error);
+                });
+                return;
+            }
+        };
         let reply = tokio::select! {
-            reply = send_ipc_command(
+            reply = crate::vm_files::send_owner_command(
             &state,
-            &uds_path,
+            &owner,
             ServiceToProcess::Exec {
                 id: state.next_job_id(),
                 command: capsem_core::container::detached_launch_command(),
@@ -175,6 +193,7 @@ fn relaunch_in_background(state: &Arc<ServiceState>, id: &str, generation: u64) 
         ) => reply,
             () = lease.cancelled() => return,
         };
+        drop(preparation);
         match reply {
             Ok(ProcessToService::ExecResult { exit_code: 0, .. }) => {
                 info!(

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Saved-image environments launch their retained digest and ordinary variables after policy acknowledgement. Resume and fork re-admit the recorded image against current policy and rebind trusted controls to the new owner. Other workload preparation fields remain incomplete.
+
 - Security: Persisted workload launch options identify their exact environment revision and actual VM owner. Cold rebind preserves approved variables and refuses a different revision.
 
 - Security: The service publishes workload controls outside the writable workspace and starts cold workloads after policy admission. Replacement setups drain retired staging writers before touching the share, preventing stale writers from replacing launch inputs.

@@ -151,7 +151,11 @@ impl ServiceState {
                 ))
                 .map_err(anyhow::Error::msg)
                 .context("failed to clone sandbox state")?;
-            if from.as_ref().is_some_and(|clone| clone.replace_image) {
+            if from.as_ref().is_some_and(|clone| clone.replace_image)
+                || environment
+                    .as_ref()
+                    .is_some_and(|selected| entry.environment.as_ref() != Some(selected))
+            {
                 crate::container_setup::drop_carried_image(&session_dir)
                     .map_err(anyhow::Error::msg)
                     .context("failed to drop the source's staged image")?;

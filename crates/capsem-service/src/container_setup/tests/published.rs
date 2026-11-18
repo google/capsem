@@ -36,7 +36,9 @@ async fn catalog_root_failure_refuses_create_before_staging_or_launch() {
     let mut request = spec(None);
     request.image = "published".into();
     let generation = fx.state.containers.begin("box", &request.image);
-    let result = run(&fx.state, "box", generation, request).await;
+    let connection =
+        crate::owner_connection::OwnerConnection::capture(&fx.state.instances.lock().unwrap()["box"]).unwrap();
+    let result = run(&fx.state, "box", generation, request, None, &connection).await;
     owner.abort();
     assert!(
         result.unwrap_err().contains("fixture artifact unavailable"),

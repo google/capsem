@@ -1,6 +1,24 @@
 //! Immutable application identity retained with the launched workload.
 use super::*;
 
+/// Missing differs from corrupt: a saved workload cannot silently become a
+/// fresh setup merely because its durable launch record is unreadable.
+pub(crate) fn recorded_image(state: &ServiceState, id: &str) -> Result<Option<String>, String> {
+    let session = resolve_session_dir(state, id).map_err(AppError::into_message)?;
+    if !session
+        .join(LAUNCH_RECORD)
+        .try_exists()
+        .map_err(|error| error.to_string())?
+    {
+        return Ok(None);
+    }
+    let record = read_launch_record(&session).ok_or("invalid recorded workload identity")?;
+    record
+        .resolved
+        .map(Some)
+        .ok_or_else(|| "recorded workload has no immutable image identity".into())
+}
+
 impl ContainerSetups {
     pub(super) fn set_app(&self, id: &str, generation: u64, app: Option<api::ImageApp>) -> bool {
         let mut records = self.records.lock().unwrap();
