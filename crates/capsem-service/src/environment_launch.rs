@@ -237,6 +237,7 @@ pub(crate) async fn preparation_policy<'a>(
             return Err("environment policy has not been acknowledged".into());
         }
         refresh_binding(state, owner, &binding, session, &mutation).await?;
+        image::admit_preparation_image(state, owner).await?;
     }
     Ok(mutation)
 }
@@ -265,6 +266,7 @@ mod tests;
 pub(crate) async fn validate_selection(
     state: &std::sync::Arc<ServiceState>,
     reference: &capsem_api::environments::EnvironmentRevisionReference,
+    attach: bool,
 ) -> Result<(), crate::AppError> {
     use axum::http::StatusCode;
     let unavailable = |_| {
@@ -297,6 +299,12 @@ pub(crate) async fn validate_selection(
                 "verified environment launch selection unavailable".into(),
             )
         })?;
+    if attach && selected.specification.image.is_none() {
+        return Err(crate::AppError::new(
+            StatusCode::BAD_REQUEST,
+            "attached environment execution requires an image".into(),
+        ));
+    }
     validate_preparation(&selected.specification)
         .map_err(|error| crate::AppError::new(StatusCode::NOT_IMPLEMENTED, error.to_string()))
 }

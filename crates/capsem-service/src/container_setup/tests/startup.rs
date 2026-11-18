@@ -2,6 +2,33 @@
 use super::*;
 
 #[tokio::test]
+async fn attached_startup_failure_keeps_its_exit_code_and_failure_detail() {
+    let fx = fixture(images());
+    let generation = fx.state.containers.stage_for_tests("box", "registry.example/app:1");
+    std::fs::create_dir_all(fx.workspace.join(".capsem-image")).unwrap();
+    let failure = fx.workspace.join(".capsem-image/failed");
+    std::fs::write(&failure, "startup exit (17)\nrequired setup refused").unwrap();
+    finish_attach(&fx.state, "box", generation, Ok(17)).await;
+    let status = fx.state.containers.status("box").unwrap();
+    assert_eq!(status.state, ContainerState::Failed);
+    assert_eq!(status.exit_code, Some(17));
+    assert_eq!(
+        status.error.as_deref(),
+        Some("startup exit (17)\nrequired setup refused")
+    );
+    std::fs::write(&failure, "1\n").unwrap();
+    let generation = fx.state.containers.stage_for_tests("box", "registry.example/app:1");
+    finish_attach(&fx.state, "box", generation, Ok(7)).await;
+    let status = fx.state.containers.status("box").unwrap();
+    assert_eq!(status.state, ContainerState::Exited);
+    assert_eq!(status.exit_code, Some(7));
+    assert!(
+        status.error.is_none(),
+        "ordinary entrypoint exit is not preparation failure"
+    );
+}
+
+#[tokio::test]
 async fn startup_marker_is_preparing_and_failure_detail_is_bounded() {
     let fx = fixture(images());
     let generation = fx.state.containers.begin("box", "registry.example/app:1");

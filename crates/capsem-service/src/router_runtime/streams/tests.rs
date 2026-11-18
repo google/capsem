@@ -4,6 +4,7 @@ use capsem_api::stream::{decode_server_frame, encode_control, encode_data, Serve
 use tokio_tungstenite::tungstenite::{client::IntoClientRequest, Message as ClientMessage};
 
 mod flow;
+mod preparation;
 
 type Client = tokio_tungstenite::WebSocketStream<tokio::net::UnixStream>;
 

@@ -214,6 +214,7 @@ impl ManagedLifecycle {
             .map_err(app_error)?;
         let binding = self.binding.clone();
         let container = request.container.clone();
+        let attach = request.attach;
         let request = request.clone();
         let _vz = self.state.lifecycle.vz.read().await;
         let _host = vm_lifecycle::acquire_vz_host_lock(startup::VzHostLockMode::Shared)
@@ -276,7 +277,7 @@ impl ManagedLifecycle {
             () = self.work.cancel.cancelled() => anyhow::bail!("managed creation cancelled"),
         }
         tokio::select! {
-            created = vm_files::complete_create(&self.state, self.binding.id(), &networks, container) => { created.map_err(app_error)?; },
+            created = vm_files::complete_create(&self.state, self.binding.id(), &networks, container, attach) => { created.map_err(app_error)?; },
             () = cancel.cancelled() => anyhow::bail!("managed workload setup cancelled"),
             () = self.work.cancel.cancelled() => anyhow::bail!("managed workload setup cancelled"),
         }

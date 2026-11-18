@@ -166,7 +166,7 @@ async fn a_failed_container_create_discards_the_vm_and_keeps_its_ledger() {
 
     let error = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        finish_create(&state, "box", &[], Some(spec)),
+        finish_create(&state, "box", &[], Some(spec), false),
     )
     .await
     .expect("a refused create must not spend the persistent-session flush grace")

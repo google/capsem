@@ -11,6 +11,70 @@ fn reference(revision: u64) -> EnvironmentRevisionParent {
         revision_id: id(revision),
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn attached_selection_requires_an_image_before_allocating_an_owner() {
+    let _lock = SETTINGS_ENV_LOCK.lock().await;
+    let directory = tempfile::tempdir().unwrap();
+    let (_paths, _, _) = install_empty_settings_env(&directory);
+    let state = make_test_state();
+    state
+        .environments
+        .commit(revision(2, None, "block"), 10)
+        .wait()
+        .await
+        .unwrap();
+    let selected = capsem_api::environments::EnvironmentRevisionReference {
+        environment_id: id(1),
+        revision_id: id(2),
+    };
+    validate_selection(&state, &selected, false).await.unwrap();
+    let error = validate_selection(&state, &selected, true).await.unwrap_err();
+    assert_eq!(error.status, axum::http::StatusCode::BAD_REQUEST);
+    assert!(error.into_message().contains("requires an image"));
+    assert!(state.instances.lock().unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_image_admission_uses_current_policy_and_original_owner() {
+    let _lock = SETTINGS_ENV_LOCK.lock().await;
+    let directory = tempfile::tempdir().unwrap();
+    let (_paths, settings, _) = install_empty_settings_env(&directory);
+    let state = make_test_state();
+    let digest = format!("sha256:{}", "a".repeat(64));
+    let mut saved = revision(2, None, "block");
+    saved.specification.image = Some(capsem_config::environment::EnvironmentImage {
+        reference: "registry.example/app:1".into(),
+        resolved_digest: digest.clone(),
+        update_policy: Default::default(),
+    });
+    state.environments.commit(saved, 10).wait().await.unwrap();
+    let session = directory.path().join("session");
+    insert_fake_instance_with_session_dir(&state, "box", std::process::id(), session);
+    let owner = {
+        let mut instances = state.instances.lock().unwrap();
+        let instance = instances.get_mut("box").unwrap();
+        let mut binding = EnvironmentBinding::starting(reference(2), "acknowledged".into());
+        binding.acknowledged = true;
+        instance.environment = Some(binding);
+        let owner = crate::owner_connection::OwnerConnection::capture(instance).unwrap();
+        drop(instances);
+        owner
+    };
+    std::fs::write(
+        &settings,
+        format!("[images]\ncatalog=false\nsources=['registry.example/app']\nadmit=['registry.example/app@{digest}']\n"),
+    )
+    .unwrap();
+    image::admit_preparation_image(&state, &owner).await.unwrap();
+    std::fs::write(&settings, "[images]\ncatalog=false\n").unwrap();
+    assert!(image::admit_preparation_image(&state, &owner)
+        .await
+        .unwrap_err()
+        .contains("image admission"));
+    state.instances.lock().unwrap().get_mut("box").unwrap().generation = uuid::Uuid::parse_str(&id(9)).unwrap();
+    assert!(image::admit_preparation_image(&state, &owner).await.is_err());
+}
 fn revision(number: u64, previous: Option<u64>, action: &str) -> PreparedEnvironmentRevision {
     PreparedEnvironmentRevision {
         environment_id: id(1), revision_id: id(number), previous_revision_id: previous.map(id), fork_parent: None,
@@ -188,7 +252,7 @@ async fn saved_image_preparation_requires_ack_before_revision_or_image_work() {
         Some(EnvironmentBinding::starting(reference(2), String::new()));
     // The historical revision deliberately does not exist. An unacknowledged
     // owner must be rejected before attempting even that lookup.
-    let error = prepare_image(&state, &vm).await.unwrap_err().into_message();
+    let error = prepare_image(&state, &vm, false).await.unwrap_err().into_message();
     assert!(error.contains("has not been acknowledged"), "{error}");
     assert!(state.containers.status(&vm).is_none());
     state
@@ -201,7 +265,7 @@ async fn saved_image_preparation_requires_ack_before_revision_or_image_work() {
         .as_mut()
         .unwrap()
         .acknowledged = true;
-    let error = prepare_image(&state, &vm).await.unwrap_err().into_message();
+    let error = prepare_image(&state, &vm, false).await.unwrap_err().into_message();
     assert!(error.contains("verified environment image unavailable"), "{error}");
     assert!(state.containers.status(&vm).is_none());
 }

@@ -3,6 +3,30 @@ use crate::tests::{insert_fake_instance_with_session_dir, make_test_state_owned}
 
 const IMAGE: &str = "registry.example/app:1";
 
+#[test]
+fn a_carried_image_can_be_staged_for_attach_without_auto_launching_or_retargeting() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = Arc::new(make_test_state_owned());
+    let session = dir.path().join("session");
+    write_record(&session, &record(None));
+    staged(&session, &[capsem_core::container::STAGE_READY]);
+    insert_fake_instance_with_session_dir(&state, "box", std::process::id(), session.clone());
+    restore_with_transport(&state, "box", true).unwrap();
+    let live = state.containers.status("box").unwrap();
+    assert_eq!(live.state, ContainerState::Staged);
+    assert_eq!(live.resolved.as_deref(), Some("registry.example/app@sha256:aa"));
+    assert_eq!(
+        state.containers.launch_record("box").unwrap().manifest.as_deref(),
+        Some(MANIFEST)
+    );
+    std::fs::write(stage_of(&session).join(capsem_core::container::STAGE_RUNNING), "1\n").unwrap();
+    assert!(
+        restore_with_transport(&state, "box", true).is_err(),
+        "a live workload must never be executed again"
+    );
+    assert_eq!(state.containers.status("box").unwrap().state, ContainerState::Staged);
+}
+
 fn record(exposure_id: Option<&str>) -> LaunchRecord {
     LaunchRecord {
         app: None,

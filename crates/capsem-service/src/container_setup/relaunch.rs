@@ -72,13 +72,21 @@ pub(crate) fn refresh_staged_workspace_owner(session_dir: &std::path::Path) -> R
 /// Put VM `id`'s recorded workload back under this owner: live again, with
 /// no exposure, and its surface granted once the workload reports running.
 /// A VM without a record has no workload and is left alone.
+#[cfg(test)]
 pub(crate) fn restore(state: &Arc<ServiceState>, id: &str) {
+    let _ = restore_with_transport(state, id, false);
+}
+
+fn restore_with_transport(state: &Arc<ServiceState>, id: &str, attach: bool) -> Result<(), String> {
     let Ok(session_dir) = resolve_session_dir(state, id) else {
-        return;
+        return Ok(());
     };
     let Some(record) = read_launch_record(&session_dir) else {
-        return;
+        return Ok(());
     };
+    if attach && !needs_relaunch(state, id) {
+        return Err("attached startup requires a workload that has not run in this generation".into());
+    }
     let app = record.app.clone();
     let manifest = record.manifest.clone();
     let owner = match record
@@ -102,6 +110,9 @@ pub(crate) fn restore(state: &Arc<ServiceState>, id: &str) {
         _ => None,
     };
     let mut status = record.starting();
+    if attach {
+        status.state = ContainerState::Staged;
+    }
     if let Some(surface) = status.surface.as_mut() {
         surface.exposure_id = None;
     }
@@ -109,24 +120,36 @@ pub(crate) fn restore(state: &Arc<ServiceState>, id: &str) {
     state.containers.advance(id, generation, |live| *live = status);
     state.containers.pin_image(id, generation, manifest, owner);
     state.containers.set_app(id, generation, app);
-    if needs_relaunch(state, id) {
+    if !attach && needs_relaunch(state, id) {
         relaunch_in_background(state, id, generation);
     }
-    grant_surface_in_background(state, id, generation);
+    if !attach {
+        grant_surface_in_background(state, id, generation);
+    }
+    Ok(())
 }
 
 /// A restored guest may be ready while its workload is still starting. Keep
 /// launch-record I/O off the async worker and await this boot's workload marker.
 pub(crate) async fn restore_ready(state: &Arc<ServiceState>, id: &str) -> Result<(), AppError> {
-    let started = crate::environment_launch::prepare_image(state, id).await?;
+    restore_ready_with_transport(state, id, false).await
+}
+
+pub(crate) async fn restore_ready_with_transport(
+    state: &Arc<ServiceState>,
+    id: &str,
+    attach: bool,
+) -> Result<(), AppError> {
+    let started = crate::environment_launch::prepare_image(state, id, attach).await?;
     let restore_id = id.to_owned();
     let has_workload = started
         || state
             .off_worker(move |state| {
-                restore(&state, &restore_id);
-                state.containers.status(&restore_id).is_some()
+                restore_with_transport(&state, &restore_id, attach)?;
+                Ok::<_, String>(state.containers.status(&restore_id).is_some())
             })
-            .await?;
+            .await?
+            .map_err(|error| AppError::new(StatusCode::CONFLICT, error))?;
     if has_workload {
         require_ready(state, id).await?;
     }

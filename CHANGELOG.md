@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Security: Attached saved workloads re-admit the retained image and check the original owner's current policy acknowledgement before dispatch. Streams release the policy mutation lock after dispatch; startup failures retain their exit code and bounded diagnostics, and clones can wait for attachment without starting their entrypoint.
+
 - Added: VM creation accepts an independent `attach` choice for a saved environment's image, preserving its approved workload and variables. The default remains detached execution.
 
 - Fixed: Image and published filesystem pulls inherit the configured catalog CA for the same registry host and port. CA bundles are bounded to 1 MiB regular files; explicit request trust remains authoritative.

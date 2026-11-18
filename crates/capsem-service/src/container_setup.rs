@@ -31,7 +31,9 @@ pub(crate) mod images;
 mod relaunch;
 #[cfg(test)]
 pub(crate) use relaunch::restore;
-pub(crate) use relaunch::{carry_launch_record, drop_carried_image, forget_previous_run, restore_ready};
+pub(crate) use relaunch::{
+    carry_launch_record, drop_carried_image, forget_previous_run, restore_ready, restore_ready_with_transport,
+};
 
 const CREATE_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(110);
 
@@ -249,11 +251,22 @@ impl ContainerSetups {
     }
 
     /// Record how an attached workload ended.
-    pub(crate) fn finish_attach(&self, id: &str, generation: u64, outcome: Result<i32, String>) {
+    fn finish_attach(
+        &self,
+        id: &str,
+        generation: u64,
+        outcome: Result<i32, String>,
+        preparation_failure: Option<String>,
+    ) {
         self.advance(id, generation, |status| match outcome {
             Ok(code) => {
-                status.state = ContainerState::Exited;
+                status.state = if preparation_failure.is_some() {
+                    ContainerState::Failed
+                } else {
+                    ContainerState::Exited
+                };
                 status.exit_code = Some(code);
+                status.error = preparation_failure;
             }
             Err(error) => {
                 status.state = ContainerState::Failed;
@@ -642,6 +655,21 @@ fn failed_marker(state: &ServiceState, id: &str) -> Option<String> {
         return None;
     }
     message.starts_with("startup ").then_some(message)
+}
+
+/// Settle attachment once with bounded preparation diagnostics, off the async
+/// worker. Observations of an exited container gain no new filesystem reads.
+pub(crate) async fn finish_attach(state: &Arc<ServiceState>, id: &str, generation: u64, outcome: Result<i32, String>) {
+    let (outcome, failure) = if outcome.is_ok() {
+        let observed = id.to_owned();
+        match state.off_worker(move |state| failed_marker(&state, &observed)).await {
+            Ok(failure) => (outcome, failure),
+            Err(error) => (Err(error.into_message()), None),
+        }
+    } else {
+        (outcome, None)
+    };
+    state.containers.finish_attach(id, generation, outcome, failure);
 }
 
 /// A workload that ran and ended, as its stage records it.

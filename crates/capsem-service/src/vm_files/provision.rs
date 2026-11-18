@@ -16,7 +16,7 @@ pub(crate) async fn handle_provision(
         if let Err(error) = actor.require_operator() {
             return error.into_response();
         }
-        if let Err(error) = crate::environment_launch::validate_selection(&state, reference).await {
+        if let Err(error) = crate::environment_launch::validate_selection(&state, reference, payload.attach).await {
             return error.into_response();
         }
     }
@@ -167,7 +167,9 @@ async fn provision(state: Arc<ServiceState>, payload: ProvisionRequest) -> Resul
     drop(_launch);
 
     match result {
-        Ok(Ok(_)) => finish_create(&state, &id, &networks, payload.container).await.map(Json),
+        Ok(Ok(_)) => finish_create(&state, &id, &networks, payload.container, payload.attach)
+            .await
+            .map(Json),
         Ok(Err(app_err)) => Err(app_err),
         Err(timed_out) => {
             // Exhausted retries on launchd transient. Surface the most
@@ -202,8 +204,9 @@ pub(crate) async fn finish_create(
     id: &str,
     networks: &[uuid::Uuid],
     container: Option<api::ContainerSpec>,
+    attach: bool,
 ) -> Result<ProvisionResponse, AppError> {
-    let created = complete_create(state, id, networks, container).await;
+    let created = complete_create(state, id, networks, container, attach).await;
     if matches!(&created, Err(error) if error.status != StatusCode::GATEWAY_TIMEOUT) {
         discard_failed_create(state, id).await;
     }
@@ -215,6 +218,7 @@ pub(crate) async fn complete_create(
     id: &str,
     networks: &[uuid::Uuid],
     container: Option<api::ContainerSpec>,
+    attach: bool,
 ) -> Result<ProvisionResponse, AppError> {
     crate::environment_launch::initialize(state, id)
         .await
@@ -234,7 +238,7 @@ pub(crate) async fn complete_create(
     network_routes::attach_provisioned(state, id, networks).await?;
     if container.is_none() {
         // A `--from` clone boots its source's staged image, if it had one.
-        container_setup::restore_ready(state, id).await?;
+        container_setup::restore_ready_with_transport(state, id, attach).await?;
     }
     if let Some(spec) = container {
         container_setup::start(state, id.to_owned(), spec);

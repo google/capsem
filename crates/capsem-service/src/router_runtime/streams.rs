@@ -92,6 +92,7 @@ async fn session(
                     &grant,
                     owner?,
                     (command, proto_exec_target(target)),
+                    None,
                     &mut client_tx,
                     &mut client_rx,
                 )
@@ -104,21 +105,34 @@ async fn session(
                 };
                 let result = match owner {
                     Ok(owner) => {
-                        if let Err(error) = container_setup::record_launched(&state, &id) {
-                            warn!(vm_id = id.as_str(), %error, "attached container launch record not written");
+                        async {
+                            let preparation = crate::environment_launch::preparation_policy(&state, &grant).await?;
+                            if let Err(error) = container_setup::record_launched(&state, &id) {
+                                warn!(vm_id = id.as_str(), %error, "attached container launch record not written");
+                            }
+                            container_setup::grant_surface_in_background(&state, &id, generation);
+                            // The launcher is the VM's: it is what starts the workload.
+                            let command = capsem_core::container::LAUNCH_COMMAND.to_string();
+                            let job = (command, capsem_proto::ipc::ExecTarget::Vm);
+                            exec(
+                                &state,
+                                &grant,
+                                owner,
+                                job,
+                                Some(preparation),
+                                &mut client_tx,
+                                &mut client_rx,
+                            )
+                            .await
                         }
-                        container_setup::grant_surface_in_background(&state, &id, generation);
-                        // The launcher is the VM's: it is what starts the workload.
-                        let command = capsem_core::container::LAUNCH_COMMAND.to_string();
-                        let job = (command, capsem_proto::ipc::ExecTarget::Vm);
-                        exec(&state, &grant, owner, job, &mut client_tx, &mut client_rx).await
+                        .await
                     }
                     Err(error) => Err(error),
                 };
                 let ended = result
                     .clone()
                     .and_then(|exit| exit.ok_or_else(|| "attached client left".to_string()));
-                state.containers.finish_attach(&id, generation, ended);
+                container_setup::finish_attach(&state, &id, generation, ended).await;
                 result.map(drop)
             }
         }
@@ -262,6 +276,7 @@ async fn exec(
     grant: &crate::owner_connection::OwnerConnection,
     (owner_tx, owner_rx): OwnerChannel,
     (command, target): (String, capsem_proto::ipc::ExecTarget),
+    preparation: Option<crate::policy_mutation::PolicyMutation<'_>>,
     client_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
     client_rx: &mut futures::stream::SplitStream<WebSocket>,
 ) -> Result<Option<i32>, String> {
@@ -276,6 +291,8 @@ async fn exec(
         })
         .await
         .map_err(owner_closed)?;
+    // Admission covers dispatch, not the workload or startup approval lifetime.
+    drop(preparation);
     let mut stdin_closed = false;
     // Stdin frames the owner can still queue. Client frames are read only
     // while there is credit, so the owner's read loop never waits on a full

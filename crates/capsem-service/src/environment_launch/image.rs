@@ -23,7 +23,7 @@ impl SelectedImage {
 
 /// Returns true when a fresh image setup was started. Recorded workloads are
 /// re-admitted and rebound here, then restored by the existing lifecycle owner.
-pub(crate) async fn prepare_image(state: &Arc<ServiceState>, id: &str) -> Result<bool, crate::AppError> {
+pub(crate) async fn prepare_image(state: &Arc<ServiceState>, id: &str, attach: bool) -> Result<bool, crate::AppError> {
     let unavailable = |error: String| crate::AppError::new(axum::http::StatusCode::SERVICE_UNAVAILABLE, error);
     let selected = selected_image(state, id).await.map_err(unavailable)?;
     let Some((selected, variables)) = selected else {
@@ -70,7 +70,7 @@ pub(crate) async fn prepare_image(state: &Arc<ServiceState>, id: &str) -> Result
         args: Vec::new(),
         env: variables,
         registry: None,
-        attach: false,
+        attach,
     };
     crate::container_setup::start_selected(state, id.to_owned(), spec, selected);
     Ok(true)
@@ -123,4 +123,28 @@ pub(crate) async fn preparation_timeout(state: &Arc<ServiceState>, id: &str) -> 
         .and_then(|(selected, _variables)| selected.startup)
         .map_or(0, |startup| startup.timeout_seconds);
     Ok(std::time::Duration::from_secs(u64::from(seconds)))
+}
+
+/// Staging may precede attachment by hours. Re-admit the retained image under
+/// the dispatch policy lock, without resolving a moving tag or pulling bytes.
+pub(super) async fn admit_preparation_image(state: &Arc<ServiceState>, owner: &OwnerConnection) -> Result<(), String> {
+    let Some((selected, _variables)) = selected_image(state, owner.id()).await? else {
+        return Ok(());
+    };
+    if selected.owner.generation() != owner.generation() {
+        return Err("image admission owner changed".into());
+    }
+    owner.validate(state, false)?;
+    let mut decision = crate::container_setup::images::Decision::new(state)
+        .await
+        .map_err(|error| format!("saved image admission: {error}"))?;
+    let requested = decision
+        .resolve_saved(&selected.image)
+        .await
+        .map_err(|error| format!("saved image admission: {error}"))?;
+    decision
+        .admit_saved(&requested)
+        .await
+        .map_err(|error| format!("saved image admission: {error}"))?;
+    owner.validate(state, false)
 }
