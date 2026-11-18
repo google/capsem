@@ -86,6 +86,24 @@ The service admits upstream addresses from trusted policy and supplies connected
 descriptors. Security engines and MCP workers request these through their own
 capabilities; neither receives permission to dial arbitrary host addresses.
 
+## Release trust
+
+The Capsem-published release manifest is the root of trust for official
+updates. Using Capsem requires trusting Capsem's release publisher and the
+manifest origin. The manifest selects the packages and VM assets to install
+and declares their expected content digests.
+
+This model requires authenticated HTTPS retrieval of the manifest from the
+configured trusted release origin, followed by verification of downloaded
+artifacts against the manifest before use. An unauthenticated manifest,
+transport downgrade, or bypass of artifact verification breaks this boundary.
+Protecting publication credentials is also a security requirement.
+
+Digest verification detects bytes that differ from the trusted manifest. It
+does not establish a separate authority over that manifest or protect against
+a trusted publisher authorizing a malicious release. Independent manifest
+signing is not part of this trust model.
+
 ## Failure and revocation
 
 Stopping or replacing a VM retires its original worker generation and revokes

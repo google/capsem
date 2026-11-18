@@ -30,6 +30,16 @@ Capsem is a security tool whose job is to isolate AI coding agents inside hardwa
 - **Supply-chain integrity** -- tampering with downloaded VM assets (kernel, rootfs, initrd) undetected by the manifest hash check.
 - **Gateway authentication bypass** -- unauthenticated calls that reach the service daemon via `capsem-gateway`.
 
+## Release trust
+
+The Capsem-published release manifest is the root of trust for official updates.
+Using Capsem requires trusting its release publisher and manifest origin.
+Authenticated manifest retrieval, artifact verification against its declared
+digests, and protection of publication credentials are security requirements.
+Independent manifest signing is not part of this model. See the
+[release trust boundary](https://docs.capsem.org/architecture/security/#release-trust)
+for the guarantees and limits.
+
 ## Out of scope
 
 - Anything running inside the guest VM **by design**. The guest is an attacker-controlled environment; arbitrary code execution inside the guest is the whole point of the product.
