@@ -647,8 +647,27 @@ pub(crate) async fn handle_pull_image(
     State(state): State<Arc<ServiceState>>,
     Json(request): Json<ImagePullRequest>,
 ) -> Result<Json<ImagePullResponse>, AppError> {
+    let image = request.image.clone();
+    let admitted = pull_image(&state, request).await?;
+    Ok(Json(ImagePullResponse {
+        image,
+        resolved: admitted.resolved.to_string(),
+        digest: admitted.platform_digest,
+    }))
+}
+
+/// A verified host result. The resolved digest pins the requested image/index;
+/// the platform digest identifies only the manifest selected for this machine.
+pub(crate) struct AdmittedImage {
+    pub(crate) resolved: ResolvedImage,
+    pub(crate) platform_digest: String,
+}
+
+/// Shared native operation for HTTP prefetch and environment pin resolution.
+/// Callers receive an admitted identity only after filesystem verification.
+pub(crate) async fn pull_image(state: &ServiceState, request: ImagePullRequest) -> Result<AdmittedImage, AppError> {
     let budget = capsem_api::IMAGE_PULL_TIMEOUT_SECS;
-    tokio::time::timeout(Duration::from_secs(budget), pull_image(&state, request))
+    tokio::time::timeout(Duration::from_secs(budget), fetch_image(state, request))
         .await
         .map_err(|_| {
             AppError::new(
@@ -659,7 +678,7 @@ pub(crate) async fn handle_pull_image(
         })?
 }
 
-async fn pull_image(state: &ServiceState, request: ImagePullRequest) -> Result<Json<ImagePullResponse>, AppError> {
+async fn fetch_image(state: &ServiceState, request: ImagePullRequest) -> Result<AdmittedImage, AppError> {
     let mut decision = Decision::new(state).await?;
     let requested = decision.resolve(&request.image).await?;
     decision.check_source(&requested).await?;
@@ -687,11 +706,10 @@ async fn pull_image(state: &ServiceState, request: ImagePullRequest) -> Result<J
         )
         .await?;
     info!(image = %request.image, resolved = %resolved, "pulled image into the host cache");
-    Ok(Json(ImagePullResponse {
-        image: request.image,
-        resolved: resolved.to_string(),
-        digest: image.digest.clone(),
-    }))
+    Ok(AdmittedImage {
+        resolved,
+        platform_digest: image.digest.clone(),
+    })
 }
 
 #[cfg(test)]

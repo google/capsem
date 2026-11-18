@@ -3,6 +3,7 @@ use crate::tests::route_request;
 use capsem_assets::asset_manager::PackageArchitecture;
 use capsem_core::net::policy_config::{CatalogSetting, ImagePolicyConfig, SettingsFile};
 use serde_json::{json, Value};
+mod environment_pins;
 mod inventory;
 
 #[tokio::test]
