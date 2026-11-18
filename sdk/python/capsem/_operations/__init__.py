@@ -15,6 +15,7 @@ from .check_hypervisor_update import check_hypervisor_update as check_hypervisor
 from .claim_managed_session import claim_managed_session as claim_managed_session
 from .close_managed_session import close_managed_session as close_managed_session
 from .create_agent_access import create_agent_access as create_agent_access
+from .create_environment import create_environment as create_environment
 from .create_network import create_network as create_network
 from .create_proxy import create_proxy as create_proxy
 from .create_session_credential_grant import (

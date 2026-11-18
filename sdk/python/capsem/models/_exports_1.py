@@ -1,5 +1,31 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .environment_sandbox_target import EnvironmentSandboxTarget
+from .environment_secret_binding import EnvironmentSecretBinding
+from .environment_specification__environment_image__environment_repository__environment_catalog_pin import (
+    EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin,
+)
+from .environment_specification__environment_image__environment_repository__environment_catalog_pin_image import (
+    EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPinImage,
+)
+from .environment_specification__environment_image__environment_repository__environment_catalog_pin_repositories_item import (
+    EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPinRepositoriesItem,
+)
+from .environment_specification__environment_image_selection__environment_repository_selection__environment_catalog_selection import (
+    EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection,
+)
+from .environment_specification__environment_image_selection__environment_repository_selection__environment_catalog_selection_image import (
+    EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelectionImage,
+)
+from .environment_specification__environment_image_selection__environment_repository_selection__environment_catalog_selection_repositories_item import (
+    EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelectionRepositoriesItem,
+)
+from .environment_startup import EnvironmentStartup
+from .error_code import ErrorCode
+from .error_event import ErrorEvent
+from .error_response import ErrorResponse
+from .event_bodies_response import EventBodiesResponse
+from .event_body import EventBody
 from .exec_history_details import ExecHistoryDetails
 from .exec_output import ExecOutput
 from .exec_output_encoding import ExecOutputEncoding
@@ -66,22 +92,22 @@ from .json_content import JsonContent
 from .json_content_kind import JsonContentKind
 from .list_response import ListResponse
 from .local_credential_authority import LocalCredentialAuthority
-from .logs_response import LogsResponse
-from .managed_session_claim_request import ManagedSessionClaimRequest
-from .managed_session_claim_response import ManagedSessionClaimResponse
-from .managed_session_close_request import ManagedSessionCloseRequest
-from .managed_session_close_response import ManagedSessionCloseResponse
-from .managed_session_closed_state import ManagedSessionClosedState
-from .managed_session_create import ManagedSessionCreate
-from .managed_session_error_code import ManagedSessionErrorCode
-from .managed_session_failure import ManagedSessionFailure
-from .managed_session_outcome import ManagedSessionOutcome
-from .managed_session_ownership import ManagedSessionOwnership
-from .managed_session_state import ManagedSessionState
-from .material_class import MaterialClass
-from .mcp_default_permission_response import McpDefaultPermissionResponse
 
 __all__ = [
+    'EnvironmentSandboxTarget',
+    'EnvironmentSecretBinding',
+    'EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection',
+    'EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelectionImage',
+    'EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelectionRepositoriesItem',
+    'EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin',
+    'EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPinImage',
+    'EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPinRepositoriesItem',
+    'EnvironmentStartup',
+    'ErrorCode',
+    'ErrorEvent',
+    'ErrorResponse',
+    'EventBodiesResponse',
+    'EventBody',
     'ExecHistoryDetails',
     'ExecOutput',
     'ExecOutputEncoding',
@@ -148,18 +174,4 @@ __all__ = [
     'JsonContentKind',
     'ListResponse',
     'LocalCredentialAuthority',
-    'LogsResponse',
-    'ManagedSessionClaimRequest',
-    'ManagedSessionClaimResponse',
-    'ManagedSessionCloseRequest',
-    'ManagedSessionCloseResponse',
-    'ManagedSessionClosedState',
-    'ManagedSessionCreate',
-    'ManagedSessionErrorCode',
-    'ManagedSessionFailure',
-    'ManagedSessionOutcome',
-    'ManagedSessionOwnership',
-    'ManagedSessionState',
-    'MaterialClass',
-    'McpDefaultPermissionResponse',
 ]

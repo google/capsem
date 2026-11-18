@@ -1,5 +1,19 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .logs_response import LogsResponse
+from .managed_session_claim_request import ManagedSessionClaimRequest
+from .managed_session_claim_response import ManagedSessionClaimResponse
+from .managed_session_close_request import ManagedSessionCloseRequest
+from .managed_session_close_response import ManagedSessionCloseResponse
+from .managed_session_closed_state import ManagedSessionClosedState
+from .managed_session_create import ManagedSessionCreate
+from .managed_session_error_code import ManagedSessionErrorCode
+from .managed_session_failure import ManagedSessionFailure
+from .managed_session_outcome import ManagedSessionOutcome
+from .managed_session_ownership import ManagedSessionOwnership
+from .managed_session_state import ManagedSessionState
+from .material_class import MaterialClass
+from .mcp_default_permission_response import McpDefaultPermissionResponse
 from .mcp_info_response import McpInfoResponse
 from .mcp_permission_action import McpPermissionAction
 from .mcp_refresh_response import McpRefreshResponse
@@ -94,6 +108,8 @@ from .raw_content import RawContent
 from .raw_content_kind import RawContentKind
 from .raw_content_reason import RawContentReason
 from .registry_access import RegistryAccess
+from .request_application_state import RequestApplicationState
+from .request_state import RequestState
 from .resource_summary import ResourceSummary
 from .restart_authentication import RestartAuthentication
 from .restart_response import RestartResponse
@@ -102,24 +118,22 @@ from .revoke_session_grant_response import RevokeSessionGrantResponse
 from .revoked_credential_authority import RevokedCredentialAuthority
 from .run_request import RunRequest
 from .sandbox_info import SandboxInfo
-from .scope_profile_summary import ScopeProfileSummary
-from .security_ask_decision import SecurityAskDecision
-from .security_ask_list_response import SecurityAskListResponse
-from .security_ask_request import SecurityAskRequest
-from .security_ask_resolve_request import SecurityAskResolveRequest
-from .security_ask_status import SecurityAskStatus
-from .service_availability import ServiceAvailability
-from .service_manager import ServiceManager
-from .session_db_status import SessionDbStatus
-from .session_grant_list_response import SessionGrantListResponse
-from .session_grant_summary import SessionGrantSummary
-from .slow_op_event import SlowOpEvent
-from .stop_proxy_response import StopProxyResponse
-from .stop_response import StopResponse
-from .storage_diagnostics import StorageDiagnostics
-from .stream_control import StreamControl
 
 __all__ = [
+    'LogsResponse',
+    'ManagedSessionClaimRequest',
+    'ManagedSessionClaimResponse',
+    'ManagedSessionCloseRequest',
+    'ManagedSessionCloseResponse',
+    'ManagedSessionClosedState',
+    'ManagedSessionCreate',
+    'ManagedSessionErrorCode',
+    'ManagedSessionFailure',
+    'ManagedSessionOutcome',
+    'ManagedSessionOwnership',
+    'ManagedSessionState',
+    'MaterialClass',
+    'McpDefaultPermissionResponse',
     'McpInfoResponse',
     'McpPermissionAction',
     'McpRefreshResponse',
@@ -176,6 +190,8 @@ __all__ = [
     'RawContentKind',
     'RawContentReason',
     'RegistryAccess',
+    'RequestApplicationState',
+    'RequestState',
     'ResourceSummary',
     'RestartAuthentication',
     'RestartResponse',
@@ -184,20 +200,4 @@ __all__ = [
     'RevokedCredentialAuthority',
     'RunRequest',
     'SandboxInfo',
-    'ScopeProfileSummary',
-    'SecurityAskDecision',
-    'SecurityAskListResponse',
-    'SecurityAskRequest',
-    'SecurityAskResolveRequest',
-    'SecurityAskStatus',
-    'ServiceAvailability',
-    'ServiceManager',
-    'SessionDbStatus',
-    'SessionGrantListResponse',
-    'SessionGrantSummary',
-    'SlowOpEvent',
-    'StopProxyResponse',
-    'StopResponse',
-    'StorageDiagnostics',
-    'StreamControl',
 ]

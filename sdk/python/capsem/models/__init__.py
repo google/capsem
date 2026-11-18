@@ -58,6 +58,13 @@ from ._exports_0 import (
 from ._exports_0 import (
     EnvironmentCatalogSelections_EnvironmentCatalogPinSelectedItem as EnvironmentCatalogSelections_EnvironmentCatalogPinSelectedItem,
 )
+from ._exports_0 import (
+    EnvironmentCatalogSelections_EnvironmentCatalogSelection as EnvironmentCatalogSelections_EnvironmentCatalogSelection,
+)
+from ._exports_0 import (
+    EnvironmentCatalogSelections_EnvironmentCatalogSelectionSelectedItem as EnvironmentCatalogSelections_EnvironmentCatalogSelectionSelectedItem,
+)
+from ._exports_0 import EnvironmentCreateRequest as EnvironmentCreateRequest
 from ._exports_0 import EnvironmentCurrentResponse as EnvironmentCurrentResponse
 from ._exports_0 import EnvironmentDocument as EnvironmentDocument
 from ._exports_0 import EnvironmentIdentity as EnvironmentIdentity
@@ -71,8 +78,13 @@ from ._exports_0 import EnvironmentMcpPermissions as EnvironmentMcpPermissions
 from ._exports_0 import (
     EnvironmentMcps_EnvironmentCatalogPin as EnvironmentMcps_EnvironmentCatalogPin,
 )
+from ._exports_0 import (
+    EnvironmentMcps_EnvironmentCatalogSelection as EnvironmentMcps_EnvironmentCatalogSelection,
+)
+from ._exports_0 import EnvironmentMutationResponse as EnvironmentMutationResponse
 from ._exports_0 import EnvironmentPackages as EnvironmentPackages
 from ._exports_0 import EnvironmentPlugins as EnvironmentPlugins
+from ._exports_0 import EnvironmentRevisionReference as EnvironmentRevisionReference
 from ._exports_0 import EnvironmentRuleParameter as EnvironmentRuleParameter
 from ._exports_0 import (
     EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRule as EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRule,
@@ -86,22 +98,44 @@ from ._exports_0 import (
 from ._exports_0 import (
     EnvironmentRules_EnvironmentCatalogPin_EnvironmentDetectionRuleCustomValue as EnvironmentRules_EnvironmentCatalogPin_EnvironmentDetectionRuleCustomValue,
 )
-from ._exports_0 import EnvironmentSecretBinding as EnvironmentSecretBinding
 from ._exports_0 import (
+    EnvironmentRules_EnvironmentCatalogSelection_EnvironmentAccessRule as EnvironmentRules_EnvironmentCatalogSelection_EnvironmentAccessRule,
+)
+from ._exports_0 import (
+    EnvironmentRules_EnvironmentCatalogSelection_EnvironmentAccessRuleCustomValue as EnvironmentRules_EnvironmentCatalogSelection_EnvironmentAccessRuleCustomValue,
+)
+from ._exports_0 import (
+    EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRule as EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRule,
+)
+from ._exports_0 import (
+    EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRuleCustomValue as EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRuleCustomValue,
+)
+from ._exports_1 import EnvironmentSandboxTarget as EnvironmentSandboxTarget
+from ._exports_1 import EnvironmentSecretBinding as EnvironmentSecretBinding
+from ._exports_1 import (
     EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin as EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin,
 )
-from ._exports_0 import (
+from ._exports_1 import (
     EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPinImage as EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPinImage,
 )
-from ._exports_0 import (
+from ._exports_1 import (
     EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPinRepositoriesItem as EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPinRepositoriesItem,
 )
-from ._exports_0 import EnvironmentStartup as EnvironmentStartup
-from ._exports_0 import ErrorCode as ErrorCode
-from ._exports_0 import ErrorEvent as ErrorEvent
-from ._exports_0 import ErrorResponse as ErrorResponse
-from ._exports_0 import EventBodiesResponse as EventBodiesResponse
-from ._exports_0 import EventBody as EventBody
+from ._exports_1 import (
+    EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection as EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection,
+)
+from ._exports_1 import (
+    EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelectionImage as EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelectionImage,
+)
+from ._exports_1 import (
+    EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelectionRepositoriesItem as EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelectionRepositoriesItem,
+)
+from ._exports_1 import EnvironmentStartup as EnvironmentStartup
+from ._exports_1 import ErrorCode as ErrorCode
+from ._exports_1 import ErrorEvent as ErrorEvent
+from ._exports_1 import ErrorResponse as ErrorResponse
+from ._exports_1 import EventBodiesResponse as EventBodiesResponse
+from ._exports_1 import EventBody as EventBody
 from ._exports_1 import ExecHistoryDetails as ExecHistoryDetails
 from ._exports_1 import ExecOutput as ExecOutput
 from ._exports_1 import ExecOutputEncoding as ExecOutputEncoding
@@ -168,20 +202,20 @@ from ._exports_1 import JsonContent as JsonContent
 from ._exports_1 import JsonContentKind as JsonContentKind
 from ._exports_1 import ListResponse as ListResponse
 from ._exports_1 import LocalCredentialAuthority as LocalCredentialAuthority
-from ._exports_1 import LogsResponse as LogsResponse
-from ._exports_1 import ManagedSessionClaimRequest as ManagedSessionClaimRequest
-from ._exports_1 import ManagedSessionClaimResponse as ManagedSessionClaimResponse
-from ._exports_1 import ManagedSessionClosedState as ManagedSessionClosedState
-from ._exports_1 import ManagedSessionCloseRequest as ManagedSessionCloseRequest
-from ._exports_1 import ManagedSessionCloseResponse as ManagedSessionCloseResponse
-from ._exports_1 import ManagedSessionCreate as ManagedSessionCreate
-from ._exports_1 import ManagedSessionErrorCode as ManagedSessionErrorCode
-from ._exports_1 import ManagedSessionFailure as ManagedSessionFailure
-from ._exports_1 import ManagedSessionOutcome as ManagedSessionOutcome
-from ._exports_1 import ManagedSessionOwnership as ManagedSessionOwnership
-from ._exports_1 import ManagedSessionState as ManagedSessionState
-from ._exports_1 import MaterialClass as MaterialClass
-from ._exports_1 import McpDefaultPermissionResponse as McpDefaultPermissionResponse
+from ._exports_2 import LogsResponse as LogsResponse
+from ._exports_2 import ManagedSessionClaimRequest as ManagedSessionClaimRequest
+from ._exports_2 import ManagedSessionClaimResponse as ManagedSessionClaimResponse
+from ._exports_2 import ManagedSessionClosedState as ManagedSessionClosedState
+from ._exports_2 import ManagedSessionCloseRequest as ManagedSessionCloseRequest
+from ._exports_2 import ManagedSessionCloseResponse as ManagedSessionCloseResponse
+from ._exports_2 import ManagedSessionCreate as ManagedSessionCreate
+from ._exports_2 import ManagedSessionErrorCode as ManagedSessionErrorCode
+from ._exports_2 import ManagedSessionFailure as ManagedSessionFailure
+from ._exports_2 import ManagedSessionOutcome as ManagedSessionOutcome
+from ._exports_2 import ManagedSessionOwnership as ManagedSessionOwnership
+from ._exports_2 import ManagedSessionState as ManagedSessionState
+from ._exports_2 import MaterialClass as MaterialClass
+from ._exports_2 import McpDefaultPermissionResponse as McpDefaultPermissionResponse
 from ._exports_2 import McpInfoResponse as McpInfoResponse
 from ._exports_2 import McpPermissionAction as McpPermissionAction
 from ._exports_2 import McpRefreshResponse as McpRefreshResponse
@@ -276,6 +310,8 @@ from ._exports_2 import RawContent as RawContent
 from ._exports_2 import RawContentKind as RawContentKind
 from ._exports_2 import RawContentReason as RawContentReason
 from ._exports_2 import RegistryAccess as RegistryAccess
+from ._exports_2 import RequestApplicationState as RequestApplicationState
+from ._exports_2 import RequestState as RequestState
 from ._exports_2 import ResourceSummary as ResourceSummary
 from ._exports_2 import RestartAuthentication as RestartAuthentication
 from ._exports_2 import RestartResponse as RestartResponse
@@ -284,22 +320,22 @@ from ._exports_2 import RevokedCredentialAuthority as RevokedCredentialAuthority
 from ._exports_2 import RevokeSessionGrantResponse as RevokeSessionGrantResponse
 from ._exports_2 import RunRequest as RunRequest
 from ._exports_2 import SandboxInfo as SandboxInfo
-from ._exports_2 import ScopeProfileSummary as ScopeProfileSummary
-from ._exports_2 import SecurityAskDecision as SecurityAskDecision
-from ._exports_2 import SecurityAskListResponse as SecurityAskListResponse
-from ._exports_2 import SecurityAskRequest as SecurityAskRequest
-from ._exports_2 import SecurityAskResolveRequest as SecurityAskResolveRequest
-from ._exports_2 import SecurityAskStatus as SecurityAskStatus
-from ._exports_2 import ServiceAvailability as ServiceAvailability
-from ._exports_2 import ServiceManager as ServiceManager
-from ._exports_2 import SessionDbStatus as SessionDbStatus
-from ._exports_2 import SessionGrantListResponse as SessionGrantListResponse
-from ._exports_2 import SessionGrantSummary as SessionGrantSummary
-from ._exports_2 import SlowOpEvent as SlowOpEvent
-from ._exports_2 import StopProxyResponse as StopProxyResponse
-from ._exports_2 import StopResponse as StopResponse
-from ._exports_2 import StorageDiagnostics as StorageDiagnostics
-from ._exports_2 import StreamControl as StreamControl
+from ._exports_3 import ScopeProfileSummary as ScopeProfileSummary
+from ._exports_3 import SecurityAskDecision as SecurityAskDecision
+from ._exports_3 import SecurityAskListResponse as SecurityAskListResponse
+from ._exports_3 import SecurityAskRequest as SecurityAskRequest
+from ._exports_3 import SecurityAskResolveRequest as SecurityAskResolveRequest
+from ._exports_3 import SecurityAskStatus as SecurityAskStatus
+from ._exports_3 import ServiceAvailability as ServiceAvailability
+from ._exports_3 import ServiceManager as ServiceManager
+from ._exports_3 import SessionDbStatus as SessionDbStatus
+from ._exports_3 import SessionGrantListResponse as SessionGrantListResponse
+from ._exports_3 import SessionGrantSummary as SessionGrantSummary
+from ._exports_3 import SlowOpEvent as SlowOpEvent
+from ._exports_3 import StopProxyResponse as StopProxyResponse
+from ._exports_3 import StopResponse as StopResponse
+from ._exports_3 import StorageDiagnostics as StorageDiagnostics
+from ._exports_3 import StreamControl as StreamControl
 from ._exports_3 import StreamControlCloseStdin as StreamControlCloseStdin
 from ._exports_3 import StreamControlFocus as StreamControlFocus
 from ._exports_3 import StreamControlResize as StreamControlResize

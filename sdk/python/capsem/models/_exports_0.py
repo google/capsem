@@ -58,6 +58,13 @@ from .environment_catalog_selections__environment_catalog_pin import (
 from .environment_catalog_selections__environment_catalog_pin_selected_item import (
     EnvironmentCatalogSelections_EnvironmentCatalogPinSelectedItem,
 )
+from .environment_catalog_selections__environment_catalog_selection import (
+    EnvironmentCatalogSelections_EnvironmentCatalogSelection,
+)
+from .environment_catalog_selections__environment_catalog_selection_selected_item import (
+    EnvironmentCatalogSelections_EnvironmentCatalogSelectionSelectedItem,
+)
+from .environment_create_request import EnvironmentCreateRequest
 from .environment_current_response import EnvironmentCurrentResponse
 from .environment_document import EnvironmentDocument
 from .environment_identity import EnvironmentIdentity
@@ -69,8 +76,13 @@ from .environment_mcp_permissions import EnvironmentMcpPermissions
 from .environment_mcps__environment_catalog_pin import (
     EnvironmentMcps_EnvironmentCatalogPin,
 )
+from .environment_mcps__environment_catalog_selection import (
+    EnvironmentMcps_EnvironmentCatalogSelection,
+)
+from .environment_mutation_response import EnvironmentMutationResponse
 from .environment_packages import EnvironmentPackages
 from .environment_plugins import EnvironmentPlugins
+from .environment_revision_reference import EnvironmentRevisionReference
 from .environment_rule_parameter import EnvironmentRuleParameter
 from .environment_rules__environment_catalog_pin__environment_access_rule import (
     EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRule,
@@ -84,22 +96,18 @@ from .environment_rules__environment_catalog_pin__environment_detection_rule imp
 from .environment_rules__environment_catalog_pin__environment_detection_rule_custom_value import (
     EnvironmentRules_EnvironmentCatalogPin_EnvironmentDetectionRuleCustomValue,
 )
-from .environment_secret_binding import EnvironmentSecretBinding
-from .environment_specification__environment_image__environment_repository__environment_catalog_pin import (
-    EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin,
+from .environment_rules__environment_catalog_selection__environment_access_rule import (
+    EnvironmentRules_EnvironmentCatalogSelection_EnvironmentAccessRule,
 )
-from .environment_specification__environment_image__environment_repository__environment_catalog_pin_image import (
-    EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPinImage,
+from .environment_rules__environment_catalog_selection__environment_access_rule_custom_value import (
+    EnvironmentRules_EnvironmentCatalogSelection_EnvironmentAccessRuleCustomValue,
 )
-from .environment_specification__environment_image__environment_repository__environment_catalog_pin_repositories_item import (
-    EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPinRepositoriesItem,
+from .environment_rules__environment_catalog_selection__environment_detection_rule import (
+    EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRule,
 )
-from .environment_startup import EnvironmentStartup
-from .error_code import ErrorCode
-from .error_event import ErrorEvent
-from .error_response import ErrorResponse
-from .event_bodies_response import EventBodiesResponse
-from .event_body import EventBody
+from .environment_rules__environment_catalog_selection__environment_detection_rule_custom_value import (
+    EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRuleCustomValue,
+)
 
 __all__ = [
     'AgentAccessScope',
@@ -156,6 +164,9 @@ __all__ = [
     'EnvironmentCapabilityDecision',
     'EnvironmentCatalogSelections_EnvironmentCatalogPin',
     'EnvironmentCatalogSelections_EnvironmentCatalogPinSelectedItem',
+    'EnvironmentCatalogSelections_EnvironmentCatalogSelection',
+    'EnvironmentCatalogSelections_EnvironmentCatalogSelectionSelectedItem',
+    'EnvironmentCreateRequest',
     'EnvironmentCurrentResponse',
     'EnvironmentDocument',
     'EnvironmentIdentity',
@@ -165,21 +176,18 @@ __all__ = [
     'EnvironmentMcpDefinitionSandbox',
     'EnvironmentMcpPermissions',
     'EnvironmentMcps_EnvironmentCatalogPin',
+    'EnvironmentMcps_EnvironmentCatalogSelection',
+    'EnvironmentMutationResponse',
     'EnvironmentPackages',
     'EnvironmentPlugins',
+    'EnvironmentRevisionReference',
     'EnvironmentRuleParameter',
     'EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRule',
     'EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRuleCustomValue',
     'EnvironmentRules_EnvironmentCatalogPin_EnvironmentDetectionRule',
     'EnvironmentRules_EnvironmentCatalogPin_EnvironmentDetectionRuleCustomValue',
-    'EnvironmentSecretBinding',
-    'EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin',
-    'EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPinImage',
-    'EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPinRepositoriesItem',
-    'EnvironmentStartup',
-    'ErrorCode',
-    'ErrorEvent',
-    'ErrorResponse',
-    'EventBodiesResponse',
-    'EventBody',
+    'EnvironmentRules_EnvironmentCatalogSelection_EnvironmentAccessRule',
+    'EnvironmentRules_EnvironmentCatalogSelection_EnvironmentAccessRuleCustomValue',
+    'EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRule',
+    'EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRuleCustomValue',
 ]

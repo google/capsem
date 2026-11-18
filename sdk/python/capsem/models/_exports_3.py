@@ -1,5 +1,21 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .scope_profile_summary import ScopeProfileSummary
+from .security_ask_decision import SecurityAskDecision
+from .security_ask_list_response import SecurityAskListResponse
+from .security_ask_request import SecurityAskRequest
+from .security_ask_resolve_request import SecurityAskResolveRequest
+from .security_ask_status import SecurityAskStatus
+from .service_availability import ServiceAvailability
+from .service_manager import ServiceManager
+from .session_db_status import SessionDbStatus
+from .session_grant_list_response import SessionGrantListResponse
+from .session_grant_summary import SessionGrantSummary
+from .slow_op_event import SlowOpEvent
+from .stop_proxy_response import StopProxyResponse
+from .stop_response import StopResponse
+from .storage_diagnostics import StorageDiagnostics
+from .stream_control import StreamControl
 from .stream_control_close_stdin import StreamControlCloseStdin
 from .stream_control_focus import StreamControlFocus
 from .stream_control_resize import StreamControlResize
@@ -57,6 +73,22 @@ from .vm_status_response import VmStatusResponse
 from .vm_summary import VmSummary
 
 __all__ = [
+    'ScopeProfileSummary',
+    'SecurityAskDecision',
+    'SecurityAskListResponse',
+    'SecurityAskRequest',
+    'SecurityAskResolveRequest',
+    'SecurityAskStatus',
+    'ServiceAvailability',
+    'ServiceManager',
+    'SessionDbStatus',
+    'SessionGrantListResponse',
+    'SessionGrantSummary',
+    'SlowOpEvent',
+    'StopProxyResponse',
+    'StopResponse',
+    'StorageDiagnostics',
+    'StreamControl',
     'StreamControlCloseStdin',
     'StreamControlFocus',
     'StreamControlResize',
