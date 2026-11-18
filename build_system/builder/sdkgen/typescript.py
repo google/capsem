@@ -46,6 +46,9 @@ def _body(name: str, schema: Schema) -> str:
         fields = [f"  {member} = {json.dumps(value)},"
                   for member, value in zip(members, schema.enum, strict=True)]
         return f"export enum {name} {{\n" + "\n".join(fields) + "\n}\n"
+    if schema.type == "object" and not schema.properties and not isinstance(schema.additional_properties, Schema):
+        value = "never" if schema.additional_properties is False else "JSONType"
+        return f"export type {name} = Record<string, {value}>;\n"
     if schema.type != "object" or isinstance(schema.additional_properties, Schema):
         return f"export type {name} = {type_name(schema)};\n"
     fields = [f"  {json.dumps(key)}{'' if key in schema.required else '?'}: {type_name(field)};"
@@ -58,7 +61,7 @@ def render_models(schemas: dict[str, Schema]) -> dict[str, str]:
     files: dict[str, str] = {}
     exports = []
     for name, schema in sorted(schemas.items()):
-        if not re.fullmatch(r"[A-Z][A-Za-z0-9]*", name):
+        if not re.fullmatch(r"[A-Z][A-Za-z0-9_]*", name):
             raise ValueError(f"invalid schema identifier: {name}")
         imports = [f'import type {{ {dep} }} from "./{dep}.js";'
                    for dep in sorted(schema.references() - {name})]

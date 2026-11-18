@@ -12,7 +12,7 @@ from graphlib import CycleError, TopologicalSorter
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 Primitive = Literal["object", "array", "string", "integer", "number", "boolean", "null"]
 
@@ -25,6 +25,8 @@ class Schema(BaseModel):
     ref: str | None = Field(default=None, alias="$ref", pattern=r"^#/components/schemas/\w+$")
     type: Primitive | list[Primitive] | None = None
     description: str | None = None
+    # Informational only: never synthesize an omitted optional property.
+    default_value: JsonValue = Field(default=None, alias="default")
     write_only: bool = Field(default=False, alias="writeOnly")
     format: Literal["int32", "int64", "double", "binary", "ipv4", "uuid", "date-time"] | None = None
     pattern: str | None = None
@@ -44,7 +46,12 @@ class Schema(BaseModel):
 
     @model_validator(mode="after")
     def supported_shape(self) -> Schema:
-        fields = self.model_fields_set - {"description"}
+        nullable = self.type == "null" or (isinstance(self.type, list) and "null" in self.type) or any(
+            branch.type == "null" for branch in self.one_of or []
+        )
+        if "default_value" in self.model_fields_set and self.default_value is None and not nullable:
+            raise ValueError("null default requires an explicitly nullable schema")
+        fields = self.model_fields_set - {"description", "default_value"}
         # An explicitly empty schema is arbitrary JSON, including JSON null.
         # Unknown constraints still fail validation; this is not an error fallback.
         if not fields:
@@ -54,8 +61,10 @@ class Schema(BaseModel):
                 raise ValueError("reference may only carry a description")
             return self
         if self.one_of is not None:
-            if fields != {"one_of"} or len(self.one_of) < 2:
-                raise ValueError("oneOf needs at least two alternatives and no sibling constraints")
+            annotated_reference = (len(self.one_of) == 1 and self.one_of[0].ref is not None
+                                   and "default_value" in self.model_fields_set)
+            if fields != {"one_of"} or (len(self.one_of) < 2 and not annotated_reference):
+                raise ValueError("oneOf needs alternatives or an annotated reference, without sibling constraints")
             return self
         kinds = self.type if isinstance(self.type, list) else [self.type]
         if not kinds:
@@ -141,6 +150,7 @@ def read_schemas(path: Path) -> dict[str, Schema]:
     if not schemas:
         raise ValueError("OpenAPI document contains no schemas")
     name_tagged_variants(schemas)
+    name_inline_objects(schemas)
     schema_order(schemas)
     return schemas
 
@@ -172,3 +182,46 @@ def name_tagged_variants(schemas: dict[str, Schema]) -> None:
             schemas[variant] = member
             members.append(Schema(ref=f"#/components/schemas/{variant}"))
         schemas[name] = schema.model_copy(update={"one_of": members})
+
+
+def name_inline_objects(schemas: dict[str, Schema]) -> None:
+    """Lift Rust generic inline object members without changing their shape.
+
+    Names derive from the containing component/property path, not source order
+    or a content hash. Ambiguous names fail instead of overwriting a model.
+    """
+    def property_suffix(key: str) -> str:
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            raise ValueError("unsafe inline model property path")
+        suffix = "".join(part[:1].upper() + part[1:] for part in key.split("_"))
+        if not suffix:
+            raise ValueError("empty inline model property path")
+        return suffix
+
+    def visit(schema: Schema, path: str, *, root: bool = False) -> Schema:
+        named_object = schema.type == "object" and not isinstance(schema.additional_properties, Schema)
+        named_enum = schema.enum is not None and len(schema.enum) > 1
+        if not root and (named_object or named_enum):
+            if path in schemas:
+                raise ValueError(f"inline model name collision: {path}")
+            schemas[path] = schema
+            visit(schema, path, root=True)
+            return Schema.model_validate({"$ref": f"#/components/schemas/{path}"})
+        for key, child in list(schema.properties.items()):
+            # Preserve wire property spelling; the suffix only names a new
+            # model, and is needed solely when there is a nested object.
+            nested = (child.type == "object" or child.items is not None or child.one_of is not None
+                      or (child.enum is not None and len(child.enum) > 1))
+            suffix = property_suffix(key) if nested else ""
+            schema.properties[key] = visit(child, path + suffix)
+        if schema.items is not None:
+            schema.items = visit(schema.items, path + "Item")
+        if isinstance(schema.additional_properties, Schema):
+            schema.additional_properties = visit(schema.additional_properties, path + "Value")
+        if schema.one_of is not None:
+            schema.one_of = [visit(child, path + f"Alternative{index}")
+                             for index, child in enumerate(schema.one_of)]
+        return schema
+
+    for name, schema in list(schemas.items()):
+        visit(schema, name, root=True)

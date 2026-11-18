@@ -14,6 +14,8 @@ def expression(schema: Schema) -> str:
     if schema.ref is not None:
         return f"z.lazy(() => {schema.ref.rsplit('/', 1)[1]}Schema)"
     if schema.one_of is not None:
+        if len(schema.one_of) == 1:
+            return expression(schema.one_of[0])
         return "z.union([" + ", ".join(expression(member) for member in schema.one_of) + "])"
     if isinstance(schema.type, list):
         kind = next(kind for kind in schema.type if kind != "null")

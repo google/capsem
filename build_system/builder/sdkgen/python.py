@@ -247,6 +247,9 @@ def render_models(schemas: dict[str, Schema]) -> dict[str, str]:
         if base_names:
             local.append(f"from .model_base import {', '.join(sorted(base_names))}")
         imports += sorted(local)
+        imports = [line if len(line) <= 88 or " import " not in line
+                   else line.split(" import ")[0] + " import (\n    " + line.split(" import ")[1] + ",\n)"
+                   for line in imports]
         source = HEADER + "from __future__ import annotations\n\n"
         spacing = "\n\n\n" if body.startswith("class ") else "\n\n"
         source += "\n".join(imports).strip() + spacing + body

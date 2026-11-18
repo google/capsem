@@ -17,19 +17,22 @@ def test_actual_export_preserves_every_schema() -> None:
     original = json.loads(path.read_text())["components"]["schemas"]
     schemas = read_schemas(path)
     assert set(original) <= set(schema_order(schemas))
-    lifted = set()
+    lifted = set(schemas) - original.keys()
+
+    def expand(value: object) -> object:
+        if isinstance(value, list):
+            return [expand(child) for child in value]
+        if isinstance(value, dict):
+            ref = value.get("$ref", "").rsplit("/", 1)[-1]
+            if ref in lifted:
+                return expand(schemas[ref].model_dump(by_alias=True, exclude_unset=True))
+            return {key: expand(child) for key, child in value.items()}
+        return value
+
     for name, value in original.items():
         rendered = schemas[name].model_dump(by_alias=True, exclude_unset=True)
-        if "oneOf" in value:
-            # Normalization names inline tagged objects; expanding only those
-            # new references must recover the exact Rust-exported schema.
-            for index, member in enumerate(value["oneOf"]):
-                if member.get("type") == "object" and member.get("properties"):
-                    ref = rendered["oneOf"][index]["$ref"].rsplit("/", 1)[1]
-                    lifted.add(ref)
-                    rendered["oneOf"][index] = schemas[ref].model_dump(by_alias=True, exclude_unset=True)
-        assert rendered == value
-    assert set(schemas) == set(original) | lifted
+        assert expand(rendered) == value
+
 
 
 @pytest.mark.parametrize("value", [
@@ -131,3 +134,42 @@ def test_empty_schema_document_fails(tmp_path: Path) -> None:
 def test_length_budgets_must_match_their_shape(value: dict) -> None:
     with pytest.raises(ValidationError):
         Schema.model_validate(value)
+
+@pytest.mark.parametrize(("shape", "default"), [
+    ({"type": ["string", "null"]}, None),
+    ({"oneOf": [{"type": "null"}, {"$ref": "#/components/schemas/Value"}]}, None),
+    ({"type": "string"}, "example"),
+    ({"type": "object", "additionalProperties": {"type": "boolean"}}, {"enabled": True}),
+])
+def test_default_is_annotation_not_field_presence(shape: dict, default: object) -> None:
+    from capsem_builder.sdkgen.python import render_models as python_models
+    from capsem_builder.sdkgen.typescript import render_models as typescript_models
+    from capsem_builder.sdkgen.typescript_validation import render_validators
+
+    def models(property_schema: dict) -> dict[str, Schema]:
+        return {"Value": Schema(type="string"), "Owner": Schema.model_validate({
+            "type": "object", "additionalProperties": False,
+            "properties": {"optional": property_schema},
+        })}
+
+    plain = models(shape)
+    annotated = models({**shape, "default": default})
+    assert annotated["Owner"].required == []
+    for render in (python_models, typescript_models, render_validators):
+        assert render(annotated) == render(plain)
+
+
+@pytest.mark.parametrize("value", [
+    {"type": "string", "default": None},
+    {"type": ["string", "null"], "default": object()},
+    {"type": ["string", "null"], "default": None, "unknownConstraint": True},
+])
+def test_defaults_do_not_weaken_supported_schema_constraints(value: dict) -> None:
+    with pytest.raises(ValueError):
+        Schema.model_validate(value)
+
+
+def test_single_reference_default_uses_the_named_validator_without_union() -> None:
+    from capsem_builder.sdkgen.typescript_validation import expression
+    schema = Schema.model_validate({"oneOf": [{"$ref": "#/components/schemas/Direction"}], "default": {"enabled": True}})
+    assert expression(schema) == expression(Schema.model_validate({"$ref": "#/components/schemas/Direction"}))

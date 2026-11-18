@@ -74,3 +74,8 @@ def test_colliding_enum_members_are_rejected() -> None:
 def test_invalid_schema_identifiers_are_rejected() -> None:
     with pytest.raises(ValueError, match="identifier"):
         render_models({"../Escape": Schema.model_validate({"type": "string"})})
+
+
+def test_closed_empty_objects_do_not_admit_nonobject_values() -> None:
+    schema = Schema.model_validate({"type": "object", "additionalProperties": False})
+    assert "export type Empty = Record<string, never>;" in render_models({"Empty": schema})["Empty.ts"]
