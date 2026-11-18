@@ -6,7 +6,13 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use capsem_api::{environments::EnvironmentCurrentResponse, AgentOperation};
+use capsem_api::{
+    environments::{EnvironmentCreateRequest, EnvironmentCurrentResponse, EnvironmentMutationResponse},
+    AgentOperation,
+};
+use capsem_core::environment::EnvironmentResolutionError;
+use capsem_service::environment_revisions::{EnvironmentCreateCoordinator, EnvironmentCreateError};
+mod sources;
 use capsem_core::managed_sessions::LeaseClock;
 use capsem_logger::db::EnvironmentReferenceQuery;
 use capsem_service::environment_files::EnvironmentFileError;
@@ -80,6 +86,38 @@ pub(crate) async fn info(
         reason: current.revision.reason,
         request_id: current.revision.request_id,
     }))
+}
+
+/// Operator creation commits a new blueprint; it does not mutate running VMs.
+pub(crate) async fn create(
+    actor: AuthenticatedActor,
+    State(state): State<Arc<ServiceState>>,
+    Json(request): Json<EnvironmentCreateRequest>,
+) -> Result<Json<EnvironmentMutationResponse>, AppError> {
+    actor.require_operator()?;
+    let owner = Arc::new(EnvironmentCreateCoordinator::new(state.environments.clone()));
+    let job = owner.submit(request, sources::Sources(state)).map_err(creation_error)?;
+    job.wait().await.map(Json).map_err(creation_error)
+}
+
+fn creation_error(error: EnvironmentCreateError) -> AppError {
+    use EnvironmentCreateError as Create;
+    let status = match error {
+        Create::InvalidIntent | Create::Resolution(EnvironmentResolutionError::InvalidIntent) => {
+            StatusCode::BAD_REQUEST
+        }
+        Create::Conflict
+        | Create::Publication(EnvironmentFileError::Changed | EnvironmentFileError::RecoveryRequired) => {
+            StatusCode::CONFLICT
+        }
+        Create::Resolution(EnvironmentResolutionError::Refused | EnvironmentResolutionError::UnusableCatalogEntry) => {
+            StatusCode::FORBIDDEN
+        }
+        Create::Resolution(EnvironmentResolutionError::InvalidPin) => StatusCode::BAD_GATEWAY,
+        _ => StatusCode::SERVICE_UNAVAILABLE,
+    };
+    // Source and durability diagnostics never expose draft values or credentials.
+    AppError::new(status, error.to_string())
 }
 
 #[cfg(test)]

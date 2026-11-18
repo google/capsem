@@ -75,3 +75,51 @@ async fn native_pin_keeps_the_shared_operation_deadline() {
     assert_eq!(error.body.timeout_secs, Some(capsem_api::IMAGE_PULL_TIMEOUT_SECS));
     assert!(fx.roots.lock().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn operator_creation_freezes_the_native_image_pin_and_never_refreshes_on_retry() {
+    let fx = Fixture::default_policy();
+    let intent = json!({"request_id":"00000000-0000-4000-8000-000000000100", "specification":{"name":"development","image":{"reference":"codex-cli"}}, "reason":"create with a verified image"});
+    let (status, body) = fx
+        .call(axum::http::Method::POST, "/environments/create", Some(intent.clone()))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let result: capsem_api::EnvironmentMutationResponse = serde_json::from_value(body.clone()).unwrap();
+    let current = fx
+        .state
+        .environments
+        .load_current(&result.environment_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        current.document.specification.image.unwrap().resolved_digest,
+        digest('b')
+    );
+    assert_eq!(fx.pulls().len(), 1);
+    // Neither a newer tag nor loss of source access can change a committed retry.
+    *fx.catalog.lock().unwrap() = None;
+    let (status, repeat) = fx
+        .call(axum::http::Method::POST, "/environments/create", Some(intent))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{repeat}");
+    assert_eq!(repeat, body);
+    assert_eq!(fx.pulls().len(), 1);
+}
+
+#[tokio::test]
+async fn operator_creation_preserves_native_source_policy_refusal() {
+    let fx = Fixture::default_policy();
+    let intent = json!({"request_id":"00000000-0000-4000-8000-000000000100", "specification":{"name":"development","image":{"reference":"registry.example/app:stable"}}, "reason":"test source policy"});
+    let (status, _) = fx
+        .call(axum::http::Method::POST, "/environments/create", Some(intent))
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(fx.pulls().is_empty());
+    assert!(fx
+        .state
+        .host_ledger
+        .environment_request_snapshot("00000000-0000-4000-8000-000000000100")
+        .await
+        .unwrap()
+        .is_none());
+}
