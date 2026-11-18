@@ -8,6 +8,7 @@ pub(crate) struct SelectedImage {
     pub(crate) owner: Arc<OwnerConnection>,
     pub(crate) reference: EnvironmentRevisionParent,
     pub(crate) image: EnvironmentImage,
+    pub(crate) startup: Option<capsem_config::environment::EnvironmentStartup>,
 }
 impl SelectedImage {
     pub(crate) fn context(&self) -> Result<capsem_core::container::stage::EnvironmentLaunchContext> {
@@ -108,6 +109,7 @@ async fn selected_image(
             owner,
             reference,
             image,
+            startup: specification.startup,
         },
         specification.variables,
     )))

@@ -216,6 +216,7 @@ pub(super) async fn run(
             size: *size,
         }),
         environment: environment.as_ref(),
+        startup: selected.as_ref().and_then(|selected| selected.startup.as_ref()),
     };
     let plan = stage::stage_plan(staged_image, &spec.args, &spec.env, resources, declared)
         .map_err(|e| format!("plan stage: {e:#}"))?;
