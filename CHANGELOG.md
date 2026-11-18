@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Security: Persisted workload launch options identify their exact environment revision and actual VM owner. Cold rebind preserves approved variables and refuses a different revision.
+
 - Security: The service publishes workload controls outside the writable workspace and starts cold workloads after policy admission. Replacement setups drain retired staging writers before touching the share, preventing stale writers from replacing launch inputs.
 
 - Security: Workload options and launcher modules live on the host-owned read-only image share. Cold controller refresh refuses guest-writable legacy launch controls, and forked controls use independent files. Launch, attach and exec use an isolated Python controller.

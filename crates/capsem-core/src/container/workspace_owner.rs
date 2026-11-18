@@ -6,6 +6,7 @@
 
 use anyhow::{ensure, Context, Result};
 use capsem_foundation::unix::contained::{ContainedDir, ContainedOpenOptions};
+use serde::Deserialize;
 use std::io::Read;
 
 const OWNER_POLICY: &str = "image_user";
@@ -33,8 +34,7 @@ pub fn refresh(session_dir: &std::path::Path) -> Result<bool> {
     for (name, bytes) in super::LAUNCHER_FILES {
         controllers_current &= read_control_file(&stage, name)?.as_deref() == Some(*bytes);
     }
-    let mut options: serde_json::Value =
-        serde_json::from_slice(&options_bytes).context("parse staged workload options")?;
+    let mut options = decode_options(&options_bytes)?;
     let object = options
         .as_object_mut()
         .context("staged workload options are not an object")?;
@@ -46,12 +46,7 @@ pub fn refresh(session_dir: &std::path::Path) -> Result<bool> {
 
     let encoded = if upgrade_owner {
         object.insert("workspace_owner".into(), OWNER_POLICY.into());
-        let encoded = serde_json::to_vec(&options).context("encode staged workload options")?;
-        ensure!(
-            encoded.len() as u64 <= CONTROL_FILE_LIMIT,
-            "staged workload options exceed the control-file limit"
-        );
-        Some(encoded)
+        Some(encode_options(&options)?)
     } else {
         None
     };
@@ -66,6 +61,45 @@ pub fn refresh(session_dir: &std::path::Path) -> Result<bool> {
         crate::session::publish_contained_private(&stage, "options.json", &encoded)?;
     }
     Ok(true)
+}
+
+/// Rebind a trusted saved workload to its actual new owner, preserving its
+/// approved variables and runtime configuration. A different revision requires
+/// deliberate preparation, never a metadata-only retarget.
+pub fn rebind_environment(
+    session_dir: &std::path::Path,
+    context: &super::stage::EnvironmentLaunchContext,
+) -> Result<()> {
+    let value = super::stage::environment_value(context)?;
+    let stage = ContainedDir::open_root(session_dir)?.descend(crate::session::IMAGE_SHARE_DIR.as_ref())?;
+    let bytes = read_control_file(&stage, "options.json")?.context("trusted workload options are missing")?;
+    let mut options = decode_options(&bytes)?;
+    let previous = super::stage::EnvironmentLaunchContext::deserialize(
+        options
+            .get("environment")
+            .context("trusted workload has no environment context")?,
+    )
+    .context("invalid saved environment context")?;
+    previous.validate()?;
+    ensure!(
+        previous.environment_id == context.environment_id && previous.revision_id == context.revision_id,
+        "trusted workload belongs to another environment revision"
+    );
+    options["environment"] = value;
+    crate::session::publish_launch_control(session_dir, "options.json", &encode_options(&options)?)
+}
+
+fn decode_options(bytes: &[u8]) -> Result<serde_json::Value> {
+    serde_json::from_slice(bytes).context("parse staged workload options")
+}
+
+fn encode_options(options: &serde_json::Value) -> Result<Vec<u8>> {
+    let bytes = serde_json::to_vec(options).context("encode staged workload options")?;
+    ensure!(
+        bytes.len() as u64 <= CONTROL_FILE_LIMIT,
+        "staged workload options exceed the control-file limit"
+    );
+    Ok(bytes)
 }
 
 fn refuse_writable_controls(session_dir: &std::path::Path) -> Result<()> {

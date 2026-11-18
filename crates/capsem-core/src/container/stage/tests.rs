@@ -4,6 +4,41 @@ use super::*;
 const MANIFEST: &str = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
 #[test]
+fn launch_options_keep_environment_and_actual_owner_identity_outside_policy_bytes() {
+    let context = EnvironmentLaunchContext {
+        session_id: uuid::Uuid::from_u128(1),
+        owner_generation: uuid::Uuid::from_u128(2),
+        environment_id: uuid::Uuid::from_u128(3),
+        revision_id: uuid::Uuid::from_u128(4),
+    };
+    let image = StageImage {
+        manifest: MANIFEST,
+        rootfs: None,
+        environment: Some(&context),
+    };
+    let resources = super::super::workload_resources(2048, 2).unwrap();
+    let files = stage_plan(image, &[], &BTreeMap::new(), resources, DeclaredSurface::Terminal).unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&files[0].bytes).unwrap();
+    assert_eq!(value["environment"], serde_json::to_value(&context).unwrap());
+    let invalid = EnvironmentLaunchContext {
+        owner_generation: uuid::Uuid::nil(),
+        ..context
+    };
+    assert!(stage_plan(
+        StageImage {
+            manifest: MANIFEST,
+            rootfs: None,
+            environment: Some(&invalid)
+        },
+        &[],
+        &BTreeMap::new(),
+        resources,
+        DeclaredSurface::Terminal
+    )
+    .is_err());
+}
+
+#[test]
 fn published_root_stage_metadata_is_typed_and_keeps_the_single_stage_path() {
     let rootfs = RootfsFile {
         digest: MANIFEST,
@@ -13,6 +48,7 @@ fn published_root_stage_metadata_is_typed_and_keeps_the_single_stage_path() {
     let image = StageImage {
         manifest: MANIFEST,
         rootfs: Some(rootfs),
+        environment: None,
     };
     let resources = super::super::workload_resources(2048, 2).unwrap();
     let plan = stage_plan(image, &[], &BTreeMap::new(), resources, DeclaredSurface::Terminal).unwrap();
@@ -64,6 +100,7 @@ fn published_root_stage_metadata_rejects_bad_digests_and_out_of_bound_sizes() {
                 integrity: "blake3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 size,
             }),
+            environment: None,
         };
         assert!(stage_plan(image, &[], &BTreeMap::new(), resources, DeclaredSurface::Terminal).is_err());
     }

@@ -38,11 +38,50 @@ pub struct RootfsFile<'a> {
 pub struct StageImage<'a> {
     pub manifest: &'a str,
     pub rootfs: Option<RootfsFile<'a>>,
+    pub environment: Option<&'a EnvironmentLaunchContext>,
+}
+
+/// Host-assigned bookkeeping in the persisted launch options. These identities
+/// describe the selected owner; deserializing them never grants authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentLaunchContext {
+    pub session_id: uuid::Uuid,
+    pub owner_generation: uuid::Uuid,
+    pub environment_id: uuid::Uuid,
+    pub revision_id: uuid::Uuid,
+}
+impl EnvironmentLaunchContext {
+    pub(super) fn validate(&self) -> Result<()> {
+        anyhow::ensure!(
+            [
+                self.session_id,
+                self.owner_generation,
+                self.environment_id,
+                self.revision_id
+            ]
+            .iter()
+            .all(|identity| !identity.is_nil()),
+            "launch context requires non-nil identities"
+        );
+        Ok(())
+    }
+}
+
+pub(super) fn environment_value(context: &EnvironmentLaunchContext) -> Result<serde_json::Value> {
+    context.validate()?;
+    // The existing persisted launcher JSON document keeps owner/revision
+    // bookkeeping outside pure policy bytes; this is not an IPC envelope.
+    Ok(serde_json::to_value(context)?)
 }
 
 impl<'a> From<&'a str> for StageImage<'a> {
     fn from(manifest: &'a str) -> Self {
-        Self { manifest, rootfs: None }
+        Self {
+            manifest,
+            rootfs: None,
+            environment: None,
+        }
     }
 }
 
@@ -126,6 +165,9 @@ pub fn stage_plan<'a>(
     });
     if cfg!(target_os = "linux") {
         options["workspace_owner"] = serde_json::json!("image_user");
+    }
+    if let Some(context) = image.environment {
+        options["environment"] = environment_value(context)?;
     }
     if let Some(rootfs) = image.rootfs {
         digest_hex(rootfs.digest)?;

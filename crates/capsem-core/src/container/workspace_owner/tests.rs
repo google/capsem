@@ -38,6 +38,40 @@ fn legacy_stage(session: &std::path::Path) -> std::path::PathBuf {
 }
 
 #[test]
+fn cold_rebind_preserves_options_and_refuses_another_environment_revision() {
+    use crate::container::stage::EnvironmentLaunchContext;
+    let root = tempfile::tempdir().unwrap();
+    let session = root.path().join("session");
+    let stage = legacy_stage(&session);
+    let original = EnvironmentLaunchContext {
+        session_id: uuid::Uuid::from_u128(1),
+        owner_generation: uuid::Uuid::from_u128(2),
+        environment_id: uuid::Uuid::from_u128(3),
+        revision_id: uuid::Uuid::from_u128(4),
+    };
+    let options = serde_json::json!({"env":{"KEEP":"yes"},"environment":original});
+    std::fs::write(stage.join("options.json"), serde_json::to_vec(&options).unwrap()).unwrap();
+    let next = EnvironmentLaunchContext {
+        session_id: uuid::Uuid::from_u128(5),
+        owner_generation: uuid::Uuid::from_u128(6),
+        ..original
+    };
+    rebind_environment(&session, &next).unwrap();
+    let bound: serde_json::Value = serde_json::from_slice(&std::fs::read(stage.join("options.json")).unwrap()).unwrap();
+    assert_eq!(bound["env"], options["env"]);
+    assert_eq!(bound["environment"], serde_json::to_value(&next).unwrap());
+    let changed = EnvironmentLaunchContext {
+        revision_id: uuid::Uuid::from_u128(7),
+        ..next
+    };
+    assert!(rebind_environment(&session, &changed).is_err());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&std::fs::read(stage.join("options.json")).unwrap()).unwrap(),
+        bound
+    );
+}
+
+#[test]
 #[cfg(target_os = "linux")]
 fn legacy_stage_is_upgraded_once_without_losing_options() {
     let root = tempfile::tempdir().unwrap();
