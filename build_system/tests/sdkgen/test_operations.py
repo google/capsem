@@ -12,6 +12,49 @@ ROOT = Path(__file__).resolve().parents[3]
 SPEC = ROOT / "sdk/specification/openapi.json"
 
 
+@pytest.mark.parametrize("required", [False, None])
+def test_optional_json_body_preserves_omission(required: bool | None, tmp_path: Path) -> None:
+    document = json.loads(SPEC.read_text())
+    body = document["paths"]["/vms/{id}/start"]["post"]["requestBody"]
+    if required is None:
+        body.pop("required")
+    else:
+        body["required"] = required
+    path = tmp_path / "optional.json"
+    path.write_text(json.dumps(document))
+    operation = next(route.operation for route in read_operations(path)
+                     if route.operation.operation_id == "startVm")
+    assert operation.request_body is not None
+    assert operation.request_body.required is False
+
+
+@pytest.mark.parametrize("schema", [
+    {"type": ["object", "null"]}, {"type": "string"},
+    {"oneOf": [{"$ref": "#/components/schemas/VmStartRequest"}, {"type": "null"}]},
+])
+def test_optional_unsupported_body_shapes_fail_closed(schema: dict, tmp_path: Path) -> None:
+    document = json.loads(SPEC.read_text())
+    document["components"]["schemas"]["OptionalBody"] = schema
+    document["paths"]["/vms/{id}/start"]["post"]["requestBody"]["content"] = {
+        "application/json": {"schema": {"$ref": "#/components/schemas/OptionalBody"}},
+    }
+    path = tmp_path / "unsupported.json"
+    path.write_text(json.dumps(document))
+    with pytest.raises(ValueError, match="optional request bodies require a nonnullable JSON object"):
+        read_operations(path)
+
+
+def test_optional_binary_body_fails_closed(tmp_path: Path) -> None:
+    document = json.loads(SPEC.read_text())
+    document["paths"]["/vms/{id}/start"]["post"]["requestBody"]["content"] = {
+        "application/octet-stream": {"schema": {"type": "string", "format": "binary"}},
+    }
+    path = tmp_path / "optional-binary.json"
+    path.write_text(json.dumps(document))
+    with pytest.raises(ValueError, match="optional request bodies require a nonnullable JSON object"):
+        read_operations(path)
+
+
 def test_every_documented_operation_is_read_with_its_wire_contract() -> None:
     source = json.loads(SPEC.read_text())
     routes = read_operations(SPEC)

@@ -65,6 +65,9 @@ pub struct ProvisionRequest {
     /// be cloned from this existing persistent sandbox.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
+    /// Expected original clone-source selection. This is a precondition, never authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_source: Option<crate::VmLifecycleSelection>,
     /// Existing named networks joined atomically during provisioning.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub networks: Vec<String>,
@@ -81,6 +84,12 @@ pub struct ProvisionRequest {
 
 impl ProvisionRequest {
     pub fn validate_environment(&self) -> Result<(), &'static str> {
+        if let Some(expected) = &self.expected_source {
+            if self.from.is_none() {
+                return Err("expected source selection requires a clone source");
+            }
+            expected.validate()?;
+        }
         if self.attach && self.environment.is_none() {
             return Err("attached environment execution requires a saved environment");
         }
@@ -95,13 +104,26 @@ impl ProvisionRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ForkRequest {
     pub name: String,
+    /// Expected original source selection; the service compares it before copying.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<crate::VmLifecycleSelection>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// Key-value metadata labels for the forked sandbox. If absent, inherits the source's labels.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub labels: Option<HashMap<String, String>>,
+}
+
+impl ForkRequest {
+    pub fn validate_expected(&self, id: &str) -> Result<(), &'static str> {
+        if let Some(expected) = &self.expected {
+            expected.validate_target(id)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]

@@ -10,7 +10,7 @@ export interface Schema {
 export interface Operation {
   operationId: string;
   parameters?: {name: string; in: string; required: boolean; schema: Schema}[];
-  requestBody?: {content: Record<string, {schema: Schema}>};
+  requestBody?: {required?: boolean; content: Record<string, {schema: Schema}>};
   responses: Record<string, {content: Record<string, {schema: Schema}>}>;
 }
 interface Specification {

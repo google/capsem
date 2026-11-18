@@ -34,7 +34,8 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
             if "body" in properties:
                 raise ValueError("request body collides with parameter")
             properties["body"] = operation.request_body.schema
-            required.append("body")
+            if operation.request_body.required:
+                required.append("body")
         response = operation.success
         binary = is_binary_media_type(response.media_type)
         schemas = [*properties.values(), response.schema]
@@ -62,7 +63,11 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
             body_binary = is_binary_media_type(operation.request_body.media_type)
             value = "input.body" if body_binary else "JSON.stringify(input.body)"
             request_media = "GZIP" if operation.request_body.media_type == "application/gzip" else "BINARY" if body_binary else "JSON"
-            lines.append(f"    body: {value}, contentType: MediaType.{request_media},")
+            fields = f"body: {value}, contentType: MediaType.{request_media}"
+            if operation.request_body.required:
+                lines.append(f"    {fields},")
+            else:
+                lines.append(f"    ...(input.body === undefined ? {{}} : {{{fields}}}),")
         lines.append("  });")
         if not binary:
             lines.append(f"  return {expression(response.schema)}.parse(JSON.parse(new TextDecoder().decode(payload)));")

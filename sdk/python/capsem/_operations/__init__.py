@@ -60,6 +60,7 @@ from .get_vm_event_bodies import get_vm_event_bodies as get_vm_event_bodies
 from .get_vm_history import get_vm_history as get_vm_history
 from .get_vm_info import get_vm_info as get_vm_info
 from .get_vm_logs import get_vm_logs as get_vm_logs
+from .get_vm_readiness import get_vm_readiness as get_vm_readiness
 from .get_vm_stats_detail import get_vm_stats_detail as get_vm_stats_detail
 from .get_vm_stats_summary import get_vm_stats_summary as get_vm_stats_summary
 from .get_vm_status import get_vm_status as get_vm_status

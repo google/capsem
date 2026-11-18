@@ -37,7 +37,7 @@ for (const {path, method, operation} of routes) {
       }
       let expectedBody: Uint8Array | string = '';
       let contentType: string | undefined;
-      if (operation.requestBody) {
+      if (operation.requestBody && (operation.requestBody.required || complete)) {
         const bodyContent = operation.requestBody.content;
         if (MediaType.BINARY in bodyContent) {
           parameters.body = expectedBody = new Uint8Array([0, 255]);
@@ -80,6 +80,7 @@ for (const {path, method, operation} of routes) {
           expect(request?.headers.authorization).toBe('Bearer secret');
           expect(request?.headers.accept).toBe(responseMediaType);
           if (contentType) expect(request?.headers['content-type']).toBe(contentType);
+          else expect(request?.headers['content-type']).toBeUndefined();
         } finally {
           transport.close();
         }
@@ -95,6 +96,8 @@ it('rejects invalid operation parameters before network IO', async () => {
     await expect(generated.getHypervisorLogs(transport, {name: 'unknown'} as never)).rejects.toBeInstanceOf(ZodError);
     await expect(generated.getVmHistory(transport, {id: 'vm', limit: -1})).rejects.toBeInstanceOf(ZodError);
     await expect(generated.execVm(transport, {id: 'vm', body: {command: true}} as never)).rejects.toBeInstanceOf(ZodError);
+    await expect(generated.createVm(transport, {} as never)).rejects.toBeInstanceOf(ZodError);
+    await expect(generated.startVm(transport, {id: 'vm', body: null} as never)).rejects.toBeInstanceOf(ZodError);
   } finally {
     transport.close();
   }

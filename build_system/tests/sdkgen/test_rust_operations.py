@@ -24,7 +24,9 @@ def test_all_routes_are_generated_in_small_modules() -> None:
     routes = read_operations(SPEC)
     sources = render_operations(routes)
     assert len(sources) == len(routes) + 1
-    assert max(len(source.splitlines()) for source in sources.values()) < 150
+    # The export index grows with the operation count; each HTTP operation
+    # still belongs in its own compact module.
+    assert max(len(source.splitlines()) for name, source in sources.items() if name != "mod.rs") < 150
     assert sources == render_operations(list(reversed(routes)))
 
 

@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 from capsem_builder.sdkgen.operations import Operation, read_operations
+from capsem_builder.sdkgen.python import module_name
 from capsem_builder.sdkgen.python_operations import render_operations as render_python
 from capsem_builder.sdkgen.rust_operations import render_operations as render_rust
 from capsem_builder.sdkgen.typescript_operations import render_operations as render_typescript
@@ -22,21 +23,27 @@ SPEC = Path(__file__).resolve().parents[3] / "sdk/specification/openapi.json"
 
 
 def test_python_operations_accept_and_forward_a_request_timeout() -> None:
-    files = render_python(read_operations(SPEC))
+    routes = read_operations(SPEC)
+    files = render_python(routes)
+    timed = {module_name(route.operation.operation_id) + ".py" for route in routes
+             if route.operation.request_timeout_ms is not None}
     operations = {name: text for name, text in files.items() if name != "__init__.py"}
     assert operations
     for name, text in operations.items():
         assert "    request_timeout: float | None = None," in text, name
-        if name != "pull_image.py":
+        if name not in timed:
             assert "        timeout=request_timeout," in text, name
 
 
 def test_typescript_operations_forward_the_call_timeout() -> None:
-    files = render_typescript(read_operations(SPEC))
+    routes = read_operations(SPEC)
+    files = render_typescript(routes)
+    timed = {route.operation.operation_id + ".ts" for route in routes
+             if route.operation.request_timeout_ms is not None}
     operations = {name: text for name, text in files.items() if name != "index.ts"}
     assert operations
     for name, text in operations.items():
-        if name != "pullImage.ts":
+        if name not in timed:
             assert "signal: options.signal, timeoutMs: options.timeoutMs," in text, name
 
 

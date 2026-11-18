@@ -13,13 +13,12 @@ from urllib.parse import quote
 
 import pytest
 from aiohttp import web
+from build_system.tests.sdkgen.test_python import _sample as sample
 from capsem_builder.sdkgen.operations import Route, is_binary_media_type, read_operations
 from capsem_builder.sdkgen.python import module_name, render_models, type_name
 from capsem_builder.sdkgen.python_operations import render_operations
 from capsem_builder.sdkgen.schema import read_schemas
 from pydantic import TypeAdapter, ValidationError
-
-from build_system.tests.sdkgen.test_python import _sample as sample
 
 ROOT = Path(__file__).resolve().parents[3]
 SPEC = ROOT / "sdk/specification/openapi.json"
@@ -149,6 +148,56 @@ def test_invalid_input_fails_before_network_io(package: ModuleType) -> None:
                 await package.operations.get_hypervisor_logs(transport, name="unknown")
             with pytest.raises(ValidationError):
                 await package.operations.get_vm_history(transport, id="vm", limit=-1)
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("operation", ["start_vm", "resume_vm"])
+@pytest.mark.parametrize("body", [None, {}, {"expected": {
+    "id": "original-vm", "generation": "fc120782-2272-4b3d-a2e6-a26ee2f8ab61",
+    "running": False, "environment": {
+        "environment_id": "ac120782-2272-4b3d-a2e6-a26ee2f8ab61",
+        "revision_id": "bc120782-2272-4b3d-a2e6-a26ee2f8ab61",
+    },
+}}])
+def test_optional_body_omission_and_exact_selection(operation: str, body: dict | None,
+                                                    package: ModuleType) -> None:
+    async def run() -> None:
+        received = []
+
+        async def handle(request: web.Request) -> web.Response:
+            received.append((await request.read(), request.headers.get("Content-Type")))
+            return web.json_response(sample(SCHEMAS["ProvisionResponse"]))
+
+        app = web.Application()
+        app.router.add_post("/vms/original-vm/{action}", handle)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        try:
+            await web.TCPSite(runner, "127.0.0.1", 0).start()
+            async with package._transport.Transport(f"http://127.0.0.1:{runner.addresses[0][1]}", "secret") as transport:
+                arguments = {} if body is None else {"body": body}
+                await getattr(package.operations, operation)(transport, id="original-vm", **arguments)
+            payload, content_type = received[0]
+            assert len(received) == 1
+            if body is None:
+                assert payload == b""
+                assert content_type is None
+            else:
+                assert json.loads(payload) == body
+                assert content_type == "application/json"
+        finally:
+            await runner.cleanup()
+    asyncio.run(run())
+
+
+def test_body_validation_precedes_network_io(package: ModuleType) -> None:
+    async def run() -> None:
+        async with package._transport.Transport("http://127.0.0.1:1", "secret") as transport:
+            with pytest.raises(TypeError, match="body"):
+                await package.operations.create_vm(transport)
+            for body in (False, "invalid", {"unexpected": True}):
+                with pytest.raises(ValidationError):
+                    await package.operations.start_vm(transport, id="vm", body=body)
     asyncio.run(run())
 
 

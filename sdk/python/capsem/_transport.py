@@ -161,6 +161,7 @@ class Transport:
             self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self._timeout))
         async with self._session.request(
             method.value, URL(target, encoded=True), headers=headers, data=data, allow_redirects=False,
+            skip_auto_headers={"Content-Type"},
             timeout=aiohttp.ClientTimeout(total=self._timeout if timeout is None else timeout),
         ) as response:
             payload = await response.read()

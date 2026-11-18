@@ -46,6 +46,7 @@ export {getVmEventBodies} from "./getVmEventBodies.js";
 export {getVmHistory} from "./getVmHistory.js";
 export {getVmInfo} from "./getVmInfo.js";
 export {getVmLogs} from "./getVmLogs.js";
+export {getVmReadiness} from "./getVmReadiness.js";
 export {getVmStatsDetail} from "./getVmStatsDetail.js";
 export {getVmStatsSummary} from "./getVmStatsSummary.js";
 export {getVmStatus} from "./getVmStatus.js";

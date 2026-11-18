@@ -5,6 +5,7 @@ import type {ProvisionRequest} from "../models/ProvisionRequest.js";
 import {ContainerSpecSchema} from "./ContainerSpec.js";
 import {EnvironmentRevisionReferenceSchema} from "./EnvironmentRevisionReference.js";
 import {ManagedSessionCreateSchema} from "./ManagedSessionCreate.js";
+import {VmLifecycleSelectionSchema} from "./VmLifecycleSelection.js";
 
 export const ProvisionRequestSchema: z.ZodType<ProvisionRequest> = z.strictObject({
   "attach": z.boolean().exactOptional(),
@@ -12,6 +13,7 @@ export const ProvisionRequestSchema: z.ZodType<ProvisionRequest> = z.strictObjec
   "cpus": z.int().min(0).nullable().exactOptional(),
   "env": z.record(z.string(), z.string()).nullable().exactOptional(),
   "environment": z.union([z.null(), z.lazy(() => EnvironmentRevisionReferenceSchema)]).exactOptional(),
+  "expected_source": z.union([z.null(), z.lazy(() => VmLifecycleSelectionSchema)]).exactOptional(),
   "from": z.string().nullable().exactOptional(),
   "labels": z.record(z.string(), z.string()).nullable().exactOptional(),
   "managed": z.union([z.null(), z.lazy(() => ManagedSessionCreateSchema)]).exactOptional(),

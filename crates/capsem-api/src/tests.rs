@@ -660,3 +660,118 @@ fn environment_readiness_roundtrips_the_full_approved_timeout_without_executable
     wire["script"] = serde_json::json!("hidden");
     assert!(serde_json::from_value::<EnvironmentReadinessResponse>(wire).is_err());
 }
+
+#[test]
+fn lifecycle_readiness_contract_preserves_optional_original_selection_preconditions() {
+    let doc = serde_json::to_value(openapi()).unwrap();
+    assert_eq!(
+        doc["paths"]["/vms/{id}/readiness"]["get"]["operationId"],
+        "getVmReadiness"
+    );
+    for path in ["/vms/{id}/start", "/vms/{id}/resume"] {
+        let body = &doc["paths"][path]["post"]["requestBody"];
+        assert_eq!(body["required"], false, "empty legacy requests remain valid");
+        assert_eq!(
+            body["content"]["application/json"]["schema"]["$ref"],
+            "#/components/schemas/VmStartRequest"
+        );
+    }
+    let selection = &doc["components"]["schemas"]["VmLifecycleSelection"];
+    assert_eq!(selection["additionalProperties"], false);
+    assert_eq!(
+        selection["properties"].as_object().unwrap().len(),
+        4,
+        "only identity and launch timing selection"
+    );
+    assert_eq!(
+        doc["components"]["schemas"]["VmReadinessResponse"]["properties"]
+            .as_object()
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn lifecycle_selection_is_strict_matching_data_with_legacy_absence_only_when_stopped() {
+    let selection = VmLifecycleSelection {
+        id: "vm-1".into(),
+        generation: Some("00000000-0000-4000-8000-000000000001".into()),
+        running: true,
+        environment: Some(environments::EnvironmentRevisionReference {
+            environment_id: "00000000-0000-4000-8000-000000000002".into(),
+            revision_id: "00000000-0000-4000-8000-000000000003".into(),
+        }),
+    };
+    assert_eq!(selection.validate_target("vm-1"), Ok(()));
+    assert!(selection.validate_target("vm-2").is_err());
+    let mut invalid = selection.clone();
+    invalid.generation = None;
+    assert!(invalid.validate().is_err());
+    invalid.running = false;
+    assert_eq!(invalid.validate(), Ok(()));
+    for generation in [
+        "not-a-generation",
+        "00000000-0000-0000-0000-000000000000",
+        "00000000-0000-4000-8000-00000000000A",
+    ] {
+        invalid.generation = Some(generation.into());
+        assert!(invalid.validate().is_err());
+    }
+    for field in ["actor", "approval", "script", "capability"] {
+        let mut value = serde_json::to_value(&selection).unwrap();
+        value[field] = serde_json::json!("forged");
+        assert!(serde_json::from_value::<VmLifecycleSelection>(value).is_err());
+    }
+    assert_eq!(
+        serde_json::to_value(VmStartRequest::default()).unwrap(),
+        serde_json::json!({})
+    );
+    let start: VmStartRequest = serde_json::from_value(serde_json::json!({})).unwrap();
+    assert_eq!(start.validate("vm-1"), Ok(()));
+    assert!(serde_json::from_value::<VmStartRequest>(serde_json::json!({"actor":"operator"})).is_err());
+    let mut request = ProvisionRequest {
+        expected_source: Some(selection.clone()),
+        ..Default::default()
+    };
+    assert!(request.validate_environment().is_err());
+    request.from = Some("source-name".into());
+    assert_eq!(request.validate_environment(), Ok(()));
+    for seconds in [0, u32::MAX] {
+        let response = VmReadinessResponse {
+            selection: selection.clone(),
+            startup_timeout_seconds: seconds,
+        };
+        let encoded = serde_json::to_value(&response).unwrap();
+        assert_eq!(
+            serde_json::from_value::<VmReadinessResponse>(encoded).unwrap(),
+            response
+        );
+    }
+}
+
+#[test]
+fn lifecycle_optional_expectations_preserve_legacy_fork_and_start_bytes() {
+    let value = serde_json::json!({"name":"child"});
+    let mut fork: ForkRequest = serde_json::from_value(value.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&fork).unwrap(), value);
+    assert_eq!(fork.validate_expected("parent"), Ok(()));
+    assert!(serde_json::from_value::<ForkRequest>(serde_json::json!({"name":"child", "actor":"operator"})).is_err());
+    let selection = VmLifecycleSelection {
+        id: "parent".into(),
+        generation: None,
+        running: false,
+        environment: None,
+    };
+    fork.expected = Some(selection.clone());
+    assert_eq!(fork.validate_expected("parent"), Ok(()));
+    assert!(fork.validate_expected("other").is_err());
+    let start = VmStartRequest {
+        expected: Some(selection),
+    };
+    assert_eq!(start.validate("parent"), Ok(()));
+    assert!(start.validate("other").is_err());
+    let wire = serde_json::to_value(start).unwrap();
+    assert_eq!(wire["expected"]["generation"], serde_json::Value::Null);
+    assert_eq!(wire["expected"]["running"], false);
+}

@@ -67,7 +67,8 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
             if "body" in properties:
                 raise ValueError("request body collides with parameter")
             properties["body"] = op.request_body.schema
-            required.add("body")
+            if op.request_body.required:
+                required.add("body")
         attributes = {key: parameter_name(key) for key in properties}
         params = op.operation_id[0].upper() + op.operation_id[1:] + "Params"
         lines = ["use crate::transport::{CallOptions, Request, Transport};", ""]
@@ -117,7 +118,10 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
             lines.append("        query: &query,")
         if op.request_body:
             binary = is_binary_media_type(op.request_body.media_type)
-            lines.append(f"        body: Some({'input.body.clone()' if binary else 'serde_json::to_vec(&input.body)?'}),")
+            value = f"Some({'input.body.clone()' if binary else 'serde_json::to_vec(&input.body)?'})"
+            if not op.request_body.required:
+                value = "input.body.as_ref().map(serde_json::to_vec).transpose()?"
+            lines.append(f"        body: {value},")
             if binary:
                 member = "Gzip" if op.request_body.media_type == "application/gzip" else "Binary"
                 lines.append(f"        content_type: crate::transport::MediaType::{member},")

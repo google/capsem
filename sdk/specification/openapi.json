@@ -3338,6 +3338,48 @@
         }
       }
     },
+    "/vms/{id}/readiness": {
+      "get": {
+        "operationId": "getVmReadiness",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VmReadinessResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/vms/{id}/resume": {
       "post": {
         "operationId": "resumeVm",
@@ -3351,6 +3393,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VmStartRequest"
+              }
+            }
+          },
+          "required": false
+        },
         "responses": {
           "200": {
             "description": "Success",
@@ -3557,6 +3609,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VmStartRequest"
+              }
+            }
+          },
+          "required": false
+        },
         "responses": {
           "200": {
             "description": "Success",
@@ -6999,6 +7061,17 @@
               "null"
             ]
           },
+          "expected": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/VmLifecycleSelection",
+                "description": "Expected original source selection; the service compares it before copying."
+              }
+            ]
+          },
           "labels": {
             "type": [
               "object",
@@ -7015,7 +7088,8 @@
           "name": {
             "type": "string"
           }
-        }
+        },
+        "additionalProperties": false
       },
       "ForkResponse": {
         "type": "object",
@@ -9420,6 +9494,17 @@
               }
             ]
           },
+          "expected_source": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/VmLifecycleSelection",
+                "description": "Expected original clone-source selection. This is a precondition, never authority."
+              }
+            ]
+          },
           "from": {
             "type": [
               "string",
@@ -11728,6 +11813,43 @@
           }
         }
       },
+      "VmLifecycleSelection": {
+        "type": "object",
+        "description": "The exact host selection used to plan a lifecycle wait. The service must\ncompare every field with its actual selection before admitting a mutation.\nA stopped legacy VM may have no prior spawn generation; an active owner may not.",
+        "required": [
+          "id",
+          "running"
+        ],
+        "properties": {
+          "environment": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EnvironmentRevisionReference",
+                "description": "Effective intended launch revision, not an applied-policy receipt."
+              }
+            ]
+          },
+          "generation": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Actual owner generation, or the retained last spawn when stopped.\nAbsence is a legacy matching fact, never a wildcard for any generation."
+          },
+          "id": {
+            "type": "string"
+          },
+          "running": {
+            "type": "boolean",
+            "description": "Whether an actual native owner was registered, including preparation."
+          }
+        },
+        "additionalProperties": false
+      },
       "VmLifecycleState": {
         "type": "string",
         "enum": [
@@ -11780,6 +11902,42 @@
             "minimum": 0
           }
         }
+      },
+      "VmReadinessResponse": {
+        "type": "object",
+        "description": "Timing for the original host selection. It grants no permission and makes\nno claim that the workload has finished preparing or that policy is applied.",
+        "required": [
+          "selection",
+          "startup_timeout_seconds"
+        ],
+        "properties": {
+          "selection": {
+            "$ref": "#/components/schemas/VmLifecycleSelection"
+          },
+          "startup_timeout_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "VmStartRequest": {
+        "type": "object",
+        "description": "Omit the expectation for compatibility with earlier empty start/resume calls.\nNew clients carry a verified selection; it is checked at admission, not trusted.",
+        "properties": {
+          "expected": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/VmLifecycleSelection"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
       },
       "VmStatsDetailResponse": {
         "type": "object",

@@ -38,7 +38,12 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
             parameters[parameter.location].append(f"{parameter.name!r}: {attr}")
         if operation.request_body is not None:
             schemas.append(operation.request_body.schema)
-            arguments.append(f"    body: {type_name(operation.request_body.schema)},")
+            annotation = type_name(operation.request_body.schema)
+            if operation.request_body.required:
+                arguments.append(f"    body: {annotation},")
+            else:
+                arguments.append(f"    body: {annotation} | None = None,")
+                validation.append(f"    body = TypeAdapter({annotation} | None).validate_python(body)")
         # A per-call deadline in seconds; None keeps the transport default.
         arguments.append("    request_timeout: float | None = None,")
         signature = [f"async def {name}(", "    transport: Transport,", "    *,", *arguments]
@@ -50,7 +55,8 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
         if operation.request_body is not None:
             lines.append("        body=body,")
             if operation.request_body.media_type == "application/json":
-                lines.append("        json_body=True,")
+                present = "True" if operation.request_body.required else "body is not None"
+                lines.append(f"        json_body={present},")
         if binary:
             member = "GZIP" if response.media_type == "application/gzip" else "BINARY"
             lines.append(f"        accept=MediaType.{member},")

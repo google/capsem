@@ -58,6 +58,7 @@ pub fn openapi() -> OpenApi {
     doc.post::<ProxyLeaseRequest, StopProxyResponse>("/proxies/{id}/stop", "stopProxy");
     doc.post::<PersistRequest, PersistResponse>("/vms/{id}/save", "persistVm");
     doc.get::<SandboxInfo>("/vms/{id}/info", "getVmInfo");
+    doc.get::<VmReadinessResponse>("/vms/{id}/readiness", "getVmReadiness");
     doc.get::<VmStatusResponse>("/vms/{id}/status", "getVmStatus");
     doc.post::<BrowserAcknowledgeRequest, BrowserAcknowledgeResponse>(
         "/vms/{id}/browser/acknowledge",
@@ -78,8 +79,8 @@ pub fn openapi() -> OpenApi {
     doc.exposures();
     doc.post::<ExecRequest, ExecResponse>("/vms/{id}/exec", "execVm");
     doc.post::<ForkRequest, ForkResponse>("/vms/{id}/fork", "forkVm");
-    doc.empty_post::<ProvisionResponse>("/vms/{id}/start", "startVm");
-    doc.empty_post::<ProvisionResponse>("/vms/{id}/resume", "resumeVm");
+    doc.optional_post::<VmStartRequest, ProvisionResponse>("/vms/{id}/start", "startVm");
+    doc.optional_post::<VmStartRequest, ProvisionResponse>("/vms/{id}/resume", "resumeVm");
     doc.empty_post::<StopResponse>("/vms/{id}/stop", "stopVm");
     doc.empty_post::<VmActionResponse>("/vms/{id}/pause", "pauseVm");
     let delete = doc.operation::<VmActionResponse>("/vms/{id}/delete", "deleteVm");
@@ -240,6 +241,17 @@ impl Document {
     fn get<T: ToSchema>(&mut self, path: &str, id: &str) {
         let operation = self.operation::<T>(path, id);
         self.add(path, HttpMethod::Get, operation);
+    }
+
+    fn optional_post<Q: ToSchema, T: ToSchema>(&mut self, path: &str, id: &str) {
+        let request = self.schema::<Q>();
+        let operation = self.operation::<T>(path, id).request_body(Some(
+            RequestBodyBuilder::new()
+                .required(Some(Required::False))
+                .content("application/json", Content::new(Some(request)))
+                .build(),
+        ));
+        self.add(path, HttpMethod::Post, operation);
     }
 
     fn post<Q: ToSchema, T: ToSchema>(&mut self, path: &str, id: &str) {

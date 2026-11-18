@@ -3,21 +3,26 @@
 import {z} from "zod";
 import {Transport, Method, MediaType, type CallOptions} from "../transport.js";
 import type {ProvisionResponse} from "../models/ProvisionResponse.js";
+import type {VmStartRequest} from "../models/VmStartRequest.js";
 import {ProvisionResponseSchema} from "../validation/ProvisionResponse.js";
+import {VmStartRequestSchema} from "../validation/VmStartRequest.js";
 
 export async function startVm(
   transport: Transport,
   parameters: {
     "id": string;
+    "body"?: VmStartRequest;
   },
   options: CallOptions = {},
 ): Promise<ProvisionResponse> {
   const input = z.object({
   "id": z.string(),
+  "body": z.lazy(() => VmStartRequestSchema).exactOptional(),
 }).parse(parameters);
   const payload = await transport.request(Method.POST, "/vms/{id}/start", {
     signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
     parameters: {"id": input["id"]},
+    ...(input.body === undefined ? {} : {body: JSON.stringify(input.body), contentType: MediaType.JSON}),
   });
   return z.lazy(() => ProvisionResponseSchema).parse(JSON.parse(new TextDecoder().decode(payload)));
 }

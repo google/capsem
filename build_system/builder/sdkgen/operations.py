@@ -44,7 +44,7 @@ class Content(Strict):
 
 
 class RequestBody(Content):
-    required: Literal[True]
+    required: bool = False
 
 
 class Response(Content):
@@ -102,7 +102,7 @@ class Route:
     operation: Operation
 
 
-def _validate(route: Route, names: set[str]) -> None:
+def _validate(route: Route, components: dict[str, Schema]) -> None:
     operation = route.operation
     parameters = operation.parameters
     if len({p.name for p in parameters}) != len(parameters):
@@ -134,9 +134,18 @@ def _validate(route: Route, names: set[str]) -> None:
     schemas.extend(media.schema_ for media in operation.responses["default"].content.values())
     if any(not (schema.model_fields_set - {"description"}) for schema in schemas):
         raise ValueError("operation boundaries require a named or concrete typed schema")
-    missing = {name for schema in schemas for name in schema.references()} - names
+    missing = {name for schema in schemas for name in schema.references()} - components.keys()
     if missing:
         raise ValueError(f"missing operation schema references: {sorted(missing)}")
+    body = operation.request_body
+    if body is not None and not body.required:
+        schema = body.schema
+        while schema.ref:
+            schema = components[schema.ref.rsplit("/", 1)[1]]
+        # None represents omission in Python. A nullable body would need a
+        # distinct omission sentinel rather than silently losing JSON null.
+        if body.media_type != "application/json" or schema.type != "object":
+            raise ValueError("optional request bodies require a nonnullable JSON object")
 
 
 def read_operations(path: Path) -> list[Route]:
@@ -145,14 +154,14 @@ def read_operations(path: Path) -> list[Route]:
     if (document.get("security") != [{"bearerAuth": []}]
             or schemes != {"bearerAuth": {"type": "http", "scheme": "bearer"}}):
         raise ValueError("SDK operations require the shared bearer authentication contract")
-    names = set(read_schemas(path))
+    components = read_schemas(path)
     routes: list[Route] = []
     ids: set[str] = set()
     for route_path, methods in sorted(document["paths"].items()):
         for method, value in sorted(methods.items()):
             operation = Operation.model_validate(value)
             route = Route(route_path, Method(method.upper()), operation)
-            _validate(route, names)
+            _validate(route, components)
             if operation.operation_id in ids:
                 raise ValueError(f"duplicate operation id: {operation.operation_id}")
             ids.add(operation.operation_id)
