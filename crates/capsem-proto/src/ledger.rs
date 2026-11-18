@@ -14,7 +14,7 @@ use thiserror::Error;
 /// Version 15 adds exact revision lookup by approved request identity for
 /// recovery between revision publication and the request-result receipt.
 /// Logger-owned operation semantics are not covered by the declaration hash.
-pub const LEDGER_PROTOCOL_VERSION: u16 = 15;
+pub const LEDGER_PROTOCOL_VERSION: u16 = 16;
 /// Hash of ledger wire declarations, separate from the guest protocol hash.
 pub const LEDGER_SCHEMA_HASH: u64 = include!(concat!(env!("OUT_DIR"), "/ledger_schema_hash.txt"));
 /// Largest diagnostic admitted into a response.
