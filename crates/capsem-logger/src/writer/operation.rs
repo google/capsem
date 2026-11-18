@@ -4,6 +4,7 @@ use super::*;
 impl WriteOp {
     pub fn kind(&self) -> &'static str {
         match self {
+            WriteOp::ObserveCatalogRevocation(_) => "catalog_revocation",
             WriteOp::TransportEvent(_) => "transport_event",
             WriteOp::NetEvent(_) => "net_event",
             WriteOp::ModelCall(_) => "model_call",
@@ -54,6 +55,7 @@ impl WriteOp {
             WriteOp::PolicyMutationEvent(event) => Some(event.mutation_id.clone()),
             // Registry rows are state, not events: keyed by their ids, no event id.
             WriteOp::ExecEventComplete(_)
+            | WriteOp::ObserveCatalogRevocation(_)
             | WriteOp::HostEvent(_)
             | WriteOp::PrepareEnvironmentRevision(_)
             | WriteOp::EnvironmentRevisionTransition(_)
@@ -86,6 +88,7 @@ impl WriteOp {
             WriteOp::SecurityDecisionEvent(event) => Some(event.event_id.as_str()),
             WriteOp::PolicyMutationEvent(event) => Some(event.mutation_id.as_str()),
             WriteOp::ExecEventComplete(_)
+            | WriteOp::ObserveCatalogRevocation(_)
             | WriteOp::HostEvent(_)
             | WriteOp::PrepareEnvironmentRevision(_)
             | WriteOp::EnvironmentRevisionTransition(_)
@@ -175,7 +178,10 @@ pub(super) fn affected_memory_tables(op: &WriteOp, tables: &mut BTreeSet<&'stati
             tables.insert("host_events");
         }
         // Disk-only registry tables: written to main directly, nothing to flush.
-        WriteOp::Network(_) | WriteOp::NetworkMembership(_) | WriteOp::NetworkDeparture(_) => {}
+        WriteOp::ObserveCatalogRevocation(_)
+        | WriteOp::Network(_)
+        | WriteOp::NetworkMembership(_)
+        | WriteOp::NetworkDeparture(_) => {}
     }
 }
 

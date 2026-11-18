@@ -25,6 +25,7 @@ mod flush_faults;
 #[cfg(test)]
 use flush::flush_dirty_tables_to_disk;
 use flush::{flush_dirty_tables_to_disk_recorded, FlushRequest};
+mod catalog_revocations;
 mod environment;
 mod environment_applications;
 mod environment_purges;
@@ -213,6 +214,7 @@ pub fn output_preview(bytes: &[u8]) -> String {
 /// Typed write operations sent to the writer thread.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WriteOp {
+    ObserveCatalogRevocation(crate::catalog_revocations::CatalogRevocation),
     TransportEvent(TransportEvent),
     NetEvent(NetEvent),
     ModelCall(ModelCall),

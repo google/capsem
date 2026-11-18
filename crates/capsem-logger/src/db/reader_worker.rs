@@ -50,6 +50,15 @@ pub(super) fn reader_loop(
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
         match request {
+            ReadRequest::CatalogRevocation { key, reply } => {
+                let result = observe_change(&reader).and_then(|observed| {
+                    catalog_revocations::execute(&reader, &key).map(|value| Observed {
+                        changed: commit(&reader, observed),
+                        value,
+                    })
+                });
+                let _ = reply.send(result);
+            }
             ReadRequest::EnvironmentVariablePurges { query, reply } => {
                 let result = observe_change(&reader).and_then(|observed| {
                     environment::purges::execute(&reader, &query).map(|value| Observed {

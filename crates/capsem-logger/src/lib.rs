@@ -1,3 +1,4 @@
+pub mod catalog_revocations;
 pub mod counters;
 pub mod db;
 pub mod events;

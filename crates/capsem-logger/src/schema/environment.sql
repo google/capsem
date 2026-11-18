@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS environment_schema (
     id INTEGER PRIMARY KEY CHECK (id=1),
     version INTEGER NOT NULL CHECK (version>0)
 );
-INSERT OR IGNORE INTO environment_schema(id,version) VALUES(1,2);
+INSERT OR IGNORE INTO environment_schema(id,version) VALUES(1,3);
 
 CREATE TABLE IF NOT EXISTS environment_revisions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -179,3 +179,14 @@ CREATE TABLE IF NOT EXISTS environment_request_purges (
     PRIMARY KEY(purge_id,request_id)
 );
 CREATE INDEX IF NOT EXISTS idx_environment_request_purges_request ON environment_request_purges(request_id,purge_id);
+
+-- Monotonic observed catalog revocations survive refresh, retention and restart.
+CREATE TABLE IF NOT EXISTS environment_catalog_revocations (
+    catalog_kind TEXT NOT NULL CHECK (catalog_kind IN ('skills','rules','mcp')),
+    source_repository TEXT NOT NULL CHECK (length(source_repository)>0),
+    entry_id TEXT NOT NULL CHECK (length(entry_id)>0),
+    version TEXT NOT NULL CHECK (length(version)>0),
+    catalog_digest TEXT NOT NULL CHECK (length(catalog_digest)=71 AND substr(catalog_digest,1,7)='sha256:' AND substr(catalog_digest,8) NOT GLOB '*[^0-9a-f]*'),
+    observed_at_unix_ms INTEGER NOT NULL CHECK (observed_at_unix_ms>=0),
+    PRIMARY KEY(catalog_kind,source_repository,entry_id,version)
+) WITHOUT ROWID;

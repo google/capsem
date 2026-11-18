@@ -293,6 +293,17 @@ pub(crate) const READY_SCHEMA_COLUMNS: &[(&str, &[&str])] = &[
     ("transport_schema", &["id", "version"]),
     ("environment_schema", &["id", "version"]),
     (
+        "environment_catalog_revocations",
+        &[
+            "catalog_kind",
+            "source_repository",
+            "entry_id",
+            "version",
+            "catalog_digest",
+            "observed_at_unix_ms",
+        ],
+    ),
+    (
         "environment_revisions",
         &[
             "id",

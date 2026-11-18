@@ -20,9 +20,9 @@ pub(crate) fn assert_current(conn: &Connection) -> rusqlite::Result<()> {
             row.get::<_, i64>(0)
         })
         .optional()?;
-    // Format 2 retains resolved proposal content so review cannot silently
-    // acquire different image/repository/catalog pins after a restart.
-    if version != Some(2) {
+    // Format 3 also retains monotonic observed catalog revocations, so older
+    // layouts cannot silently admit versions whose revocation history is absent.
+    if version != Some(3) {
         return Err(contract_error(
             "unsupported or missing environment ledger format version",
         ));

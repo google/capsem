@@ -203,6 +203,7 @@ fn insert_batch_ops<'a>(
             WriteOp::PrepareEnvironmentRequest(record) => environment_requests::prepare(tx, record, bodies)?,
             WriteOp::EnvironmentRequestDecision(record) => environment_requests::decide(tx, record)?,
             WriteOp::PrepareEnvironmentVariablePurge(record) => environment_purges::prepare(tx, record, bodies)?,
+            WriteOp::ObserveCatalogRevocation(record) => catalog_revocations::observe(tx, record)?,
             WriteOp::EnvironmentApplication(record) => environment_applications::apply(tx, record, bodies)?,
             WriteOp::EnvironmentRequestInvalidation(record) => environment_requests::invalidate(tx, record)?,
             WriteOp::EnvironmentRequestResult(record) => environment_requests::bind_result(tx, record, bodies)?,

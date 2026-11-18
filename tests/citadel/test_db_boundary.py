@@ -127,6 +127,8 @@ LOGGER_DB_INTERNALS = {
     # The writer thread's own modules. They run on the thread that owns the
     # connection and are handed it as an argument; they do not open one.
     Path("crates/capsem-logger/src/writer/barriers.rs"),
+    # Catalog observations execute on that same owning writer connection.
+    Path("crates/capsem-logger/src/writer/catalog_revocations.rs"),
     Path("crates/capsem-logger/src/writer/bodies.rs"),
     Path("crates/capsem-logger/src/writer/model_rows.rs"),
     Path("crates/capsem-logger/src/writer/retention.rs"),

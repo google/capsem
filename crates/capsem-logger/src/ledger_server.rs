@@ -346,7 +346,8 @@ impl LedgerServer {
 
 fn requires_coordinator(operation: &LedgerCommand) -> bool {
     let trusted_metadata = |event: &crate::WriteOp| match event {
-        crate::WriteOp::PrepareEnvironmentRevision(_)
+        crate::WriteOp::ObserveCatalogRevocation(_)
+        | crate::WriteOp::PrepareEnvironmentRevision(_)
         | crate::WriteOp::EnvironmentRevisionTransition(_)
         | crate::WriteOp::PrepareEnvironmentRequest(_)
         | crate::WriteOp::EnvironmentRequestDecision(_)

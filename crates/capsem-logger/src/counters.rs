@@ -231,6 +231,7 @@ impl LedgerTally {
             | WriteOp::DnsEvent(_)
             | WriteOp::SecurityDecisionEvent(_)
             | WriteOp::PolicyMutationEvent(_)
+            | WriteOp::ObserveCatalogRevocation(_)
             | WriteOp::HostEvent(_)
             | WriteOp::PrepareEnvironmentRevision(_)
             | WriteOp::EnvironmentRevisionTransition(_)

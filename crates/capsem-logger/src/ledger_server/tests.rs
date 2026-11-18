@@ -366,6 +366,16 @@ async fn environment_authority_cannot_be_forged_by_producer_admission() {
     use crate::events::{EnvironmentRevisionState, EnvironmentRevisionTransition};
     let id = |n: u64| format!("00000000-0000-4000-8000-{n:012x}");
     let mut operations = vec![
+        WriteOp::ObserveCatalogRevocation(crate::catalog_revocations::CatalogRevocation {
+            key: crate::catalog_revocations::CatalogRevocationKey {
+                kind: capsem_config::catalogs::CatalogKind::Skills,
+                source_repository: "registry.example/team/catalog".into(),
+                entry_id: "review".into(),
+                version: "1.0.0".into(),
+            },
+            catalog_digest: format!("sha256:{}", "a".repeat(64)),
+            observed_at_unix_ms: 10,
+        }),
         WriteOp::EnvironmentRevisionTransition(EnvironmentRevisionTransition {
             environment_id: id(2),
             revision_id: id(3),

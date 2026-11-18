@@ -126,6 +126,10 @@ pub(crate) struct ReaderIntrospection {
 }
 
 enum ReadRequest {
+    CatalogRevocation {
+        key: crate::catalog_revocations::CatalogRevocationKey,
+        reply: tokio::sync::oneshot::Sender<DbResult<Observed<Option<crate::catalog_revocations::CatalogRevocation>>>>,
+    },
     EnvironmentVariablePurges {
         query: EnvironmentVariablePurgeQuery,
         reply: tokio::sync::oneshot::Sender<DbResult<Observed<Vec<EnvironmentVariablePurgeRecord>>>>,
@@ -864,6 +868,7 @@ impl SessionDb {
 }
 
 mod bodies;
+mod catalog_revocations;
 mod environment;
 pub(crate) use environment::valid_id as valid_environment_id;
 mod host;
