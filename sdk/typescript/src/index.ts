@@ -5,6 +5,7 @@ export {Hypervisor} from './hypervisor.js';
 export {delegatedBearer} from './identity.js';
 export {ManagedSession} from './managed.js';
 export {Images} from './images.js';
+export {Environments} from './environments.js';
 export {Credentials} from './credentials.js';
 export {Connections, CredentialGrants} from './connections.js';
 export {VM} from './vm.js';
