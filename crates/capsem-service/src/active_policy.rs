@@ -31,28 +31,7 @@ impl ServiceState {
         let active_policy = ActivePolicyFile::from_settings_and_corp(&settings, &corp)
             .map_err(anyhow::Error::msg)
             .context("build the active policy")?;
-        let active_policy_dir = session_dir.join(ACTIVE_POLICY_DIR);
-        std::fs::create_dir_all(&active_policy_dir)
-            .with_context(|| format!("create {}", active_policy_dir.display()))?;
-        let active_policy_path = active_policy_dir.join(ACTIVE_POLICY_FILE);
-        let serialized = toml::to_string_pretty(&active_policy).context("serialize active policy")?;
-        let exact: ActivePolicyFile = toml::from_str(&serialized).context("parse serialized active policy")?;
-        let runtime = Arc::new(
-            exact
-                .compile_runtime()
-                .map_err(anyhow::Error::msg)
-                .context("compile serialized active policy")?,
-        );
-        // Keep the durable audit copy whole; the same exact bytes are sent to
-        // capsem-process over its authenticated coordinator channel.
-        capsem_foundation::unix::fs::atomic_write_private(&active_policy_path, serialized.as_bytes())
-            .with_context(|| format!("write {}", active_policy_path.display()))?;
-        Ok(PublishedActivePolicy {
-            path: active_policy_path,
-            digest: capsem_core::net::policy_config::active_policy_digest(serialized.as_bytes()),
-            bytes: serialized.into_bytes(),
-            runtime,
-        })
+        publish_active_policy(session_dir, &active_policy)
     }
 
     /// Re-materialize the active policy of every running VM. Returns each VM's
@@ -214,4 +193,33 @@ pub(crate) async fn push_policy_to_running_instances(
             ),
         ))
     }
+}
+
+/// Serialize once, compile the exact bytes for the host broker, and retain the
+/// identical bytes for the confined owner. Both workload input models use this rail.
+pub(crate) fn publish_active_policy(
+    session_dir: &StdPath,
+    active_policy: &ActivePolicyFile,
+) -> Result<PublishedActivePolicy> {
+    let active_policy_dir = session_dir.join(ACTIVE_POLICY_DIR);
+    std::fs::create_dir_all(&active_policy_dir).with_context(|| format!("create {}", active_policy_dir.display()))?;
+    let active_policy_path = active_policy_dir.join(ACTIVE_POLICY_FILE);
+    let serialized = toml::to_string_pretty(active_policy).context("serialize active policy")?;
+    let exact: ActivePolicyFile = toml::from_str(&serialized).context("parse serialized active policy")?;
+    let runtime = Arc::new(
+        exact
+            .compile_runtime()
+            .map_err(anyhow::Error::msg)
+            .context("compile serialized active policy")?,
+    );
+    // Keep the durable audit copy whole; the same exact bytes are sent to
+    // capsem-process over its authenticated coordinator channel.
+    capsem_foundation::unix::fs::atomic_write_private(&active_policy_path, serialized.as_bytes())
+        .with_context(|| format!("write {}", active_policy_path.display()))?;
+    Ok(PublishedActivePolicy {
+        path: active_policy_path,
+        digest: capsem_core::net::policy_config::active_policy_digest(serialized.as_bytes()),
+        bytes: serialized.into_bytes(),
+        runtime,
+    })
 }

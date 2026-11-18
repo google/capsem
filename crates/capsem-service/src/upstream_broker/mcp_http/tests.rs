@@ -371,3 +371,39 @@ async fn broker_bounds_request_bodies_even_when_the_worker_skips_client_validati
     driver.abort();
     let _ = driver.await;
 }
+
+#[tokio::test]
+async fn environment_policy_published_bytes_control_the_native_builtin_broker() {
+    use capsem_core::environment::EnvironmentPolicyInputs;
+    let upstream = upstream().await;
+    let directory = tempfile::tempdir().unwrap();
+    let boot: capsem_config::environment::EnvironmentSpecification = toml::from_str("name='development'\n[access.custom.loopback]\nname='Loopback'\naction='allow'\nmatch='http.host == \"127.0.0.1\"'").unwrap();
+    let publish = |live: &capsem_config::environment::EnvironmentSpecification, corporate: &SettingsFile| {
+        let active =
+            ActivePolicyFile::from_environment(&EnvironmentPolicyInputs::new(&boot, live, corporate), None).unwrap();
+        let published = crate::active_policy::publish_active_policy(directory.path(), &active).unwrap();
+        assert_eq!(std::fs::read(&published.path).unwrap(), published.bytes);
+        assert_eq!(
+            published.digest,
+            capsem_core::net::policy_config::active_policy_digest(&published.bytes)
+        );
+        published.broker_policy()
+    };
+    let allowed = publish(&boot, &SettingsFile::default());
+    let (client, publisher, authority, task) = capability(allowed, McpHttpRole::Builtin).await;
+    let request = || reqwest::Client::new().get(&upstream.url).build().unwrap();
+    assert_eq!(client.execute(request()).await.unwrap().status(), StatusCode::OK);
+    let mut live = boot.clone();
+    live.access.custom.get_mut("loopback").unwrap().action = capsem_config::SecurityRuleAction::Block;
+    publisher.send_replace(publish(&live, &SettingsFile::default()));
+    assert_eq!(client.execute(request()).await.unwrap().status(), StatusCode::FORBIDDEN);
+    let corporate: SettingsFile = toml::from_str("[corp.rules.mandatory]\nname='mandatory'\naction='block'\nmatch='http.host == \"127.0.0.1\"'\n[environment_plugins.utf8_guard]\nmode='block'\n[environment_plugins.utf8_guard.options]\ninbound=false\noutbound=true").unwrap();
+    publisher.send_replace(publish(&boot, &corporate));
+    assert_eq!(client.execute(request()).await.unwrap().status(), StatusCode::FORBIDDEN);
+    assert_eq!(upstream.requests.lock().unwrap().len(), 1);
+    authority.revoke();
+    tokio::time::timeout(Duration::from_secs(2), task)
+        .await
+        .unwrap()
+        .unwrap();
+}
