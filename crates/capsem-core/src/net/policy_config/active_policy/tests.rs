@@ -382,3 +382,5 @@ fn legacy_policy_publication_cannot_silently_drop_typed_corporate_plugin_options
     assert!(ActivePolicyFile::from_settings_and_corp(&SettingsFile::default(), &corporate).is_err());
     assert!(ActivePolicyFile::from_settings_and_corp(&corporate, &SettingsFile::default()).is_err());
 }
+
+mod environment;

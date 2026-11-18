@@ -4,11 +4,13 @@ use capsem_config::environment::EnvironmentSpecification;
 
 mod plugins;
 mod policy_inputs;
+mod runtime_policy;
 pub use plugins::{
     CompiledEnvironmentPlugins, CompiledPluginConfiguration, CompiledPluginOptions, EnvironmentPluginSource,
     PluginDirection,
 };
 pub use policy_inputs::EnvironmentPolicyInputs;
+pub use runtime_policy::EnvironmentRuntimePolicy;
 mod catalog_contents;
 mod catalog_rules;
 mod catalog_sources;

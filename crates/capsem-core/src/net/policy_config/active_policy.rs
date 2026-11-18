@@ -1,12 +1,12 @@
 //! The policy one session enforces.
 //!
-//! Built-in defaults, the user's settings.toml and the corp config are merged
+//! Selected environment sections (or legacy settings) and current corp config are merged
 //! into one file per session, `vm/active_policy.toml`. capsem-process and
 //! capsem-mcp-builtin read only that file, so what a VM enforces is exactly
 //! what the service published, and nothing re-reads the user's files behind
 //! its back.
 //!
-//! The file has no identity of its own: it is a pure function of the three
+//! The file has no identity of its own: it is a pure function of its selected
 //! inputs. A file in any other shape, such as one carrying an id and revision,
 //! is refused, not adapted.
 
@@ -34,6 +34,9 @@ pub struct ActivePolicyFile {
     /// Built-in plugin modes, then the user's, then corp's.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub plugins: BTreeMap<String, SecurityPluginConfig>,
+    /// Selected environment rules/plugins; never a desired revision or identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<crate::environment::EnvironmentRuntimePolicy>,
     pub network: NetworkConfig,
     /// The user's MCP servers with corp's laid over them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -71,6 +74,32 @@ impl ActivePolicyFile {
         if settings.environment_plugins.is_some() || corp.environment_plugins.is_some() {
             return Err("typed corporate plugin overrides require environment policy publication".into());
         }
+        Self::from_rule_inputs(settings, corp)
+    }
+
+    /// Rule-only compilation never returns a publishable policy with omitted
+    /// typed options. Complete snapshots use `from_environment` below.
+    pub(crate) fn compile_corporate_rule_set(corp: &SettingsFile) -> Result<SecurityRuleSet, String> {
+        Self::from_rule_inputs(&SettingsFile::default(), corp)?.compile_security_rule_set()
+    }
+
+    /// Select acknowledged environment inputs, retaining verified catalog content
+    /// for confined runtime owners that cannot access registry or host settings.
+    pub fn from_environment(
+        inputs: &crate::environment::EnvironmentPolicyInputs<'_>,
+        catalogs: Option<&crate::environment::RuleCatalogInputs<'_>>,
+    ) -> Result<Self, String> {
+        let selected = crate::environment::EnvironmentRuntimePolicy::select(inputs, catalogs)?;
+        let mut active = Self::from_rule_inputs(&SettingsFile::default(), inputs.corporate())?;
+        active.plugins.clear();
+        active.environment = Some(selected);
+        active.compile_runtime()?;
+        Ok(active)
+    }
+
+    fn from_rule_inputs(settings: &SettingsFile, corp: &SettingsFile) -> Result<Self, String> {
+        settings.validate_metadata_contract()?;
+        corp.validate_metadata_contract()?;
         let mut user_rules = SecurityRuleProfile {
             default: settings.default.clone(),
             profiles: settings.profiles.clone(),
@@ -105,6 +134,7 @@ impl ActivePolicyFile {
             user_rules,
             corp_rules,
             plugins: merge_plugin_policy(settings, corp),
+            environment: None,
             network,
             mcp: McpConfig::merged(settings.mcp.as_ref(), corp.mcp.as_ref()),
         };
@@ -113,6 +143,12 @@ impl ActivePolicyFile {
     }
 
     pub fn validate(&self) -> Result<(), String> {
+        if let Some(environment) = &self.environment {
+            if !self.plugins.is_empty() || self.user_rules != SecurityRuleProfile::default() {
+                return Err("environment policy cannot include legacy user rules or plugin modes".into());
+            }
+            environment.validate()?;
+        }
         self.user_rules.validate()?;
         self.corp_rules.validate()?;
         for plugin_id in self.plugins.keys() {
@@ -145,8 +181,14 @@ impl ActivePolicyFile {
         Ok(CompiledActivePolicy {
             network: merged.network,
             dns_upstreams,
-            security_rules: merged.security_rules,
-            plugins: self.plugins.clone().into(),
+            security_rules: match &self.environment {
+                Some(environment) => environment.compile_rules(merged.security_rules)?,
+                None => merged.security_rules,
+            },
+            plugins: match &self.environment {
+                Some(environment) => environment.compile_plugins()?,
+                None => self.plugins.clone().into(),
+            },
             model_endpoints: merged.model_endpoints,
             mcp: self.mcp.clone().unwrap_or_default(),
         })
@@ -174,7 +216,11 @@ impl ActivePolicyFile {
     pub fn compile_security_rule_set(&self) -> Result<SecurityRuleSet, String> {
         self.validate()?;
         let (user, corp) = self.merged_policy_inputs();
-        Ok(MergedPolicies::from_files(&user, &corp)?.security_rules)
+        let baseline = MergedPolicies::from_files(&user, &corp)?.security_rules;
+        match &self.environment {
+            Some(environment) => environment.compile_rules(baseline),
+            None => Ok(baseline),
+        }
     }
 
     pub fn model_endpoint_registry(&self) -> Result<ModelEndpointRegistry, String> {

@@ -83,3 +83,27 @@ match = 'http.host == "blocked.test"'
             .admits(&clean));
     }
 }
+
+#[test]
+fn credential_preflight_compiles_selected_environment_policy_in_both_snapshots() {
+    let boot = toml::from_str("name='development'").unwrap();
+    let mut live: capsem_config::environment::EnvironmentSpecification = toml::from_str("name='development'\n[access.custom.destination]\nname='Destination'\naction='block'\nmatch='http.host == \"blocked.test\"'").unwrap();
+    live.plugins = toml::from_str("[credential_broker.options]\ncapture_enabled=false").unwrap();
+    let corporate = SettingsFile::default();
+    let policy = |live: &capsem_config::environment::EnvironmentSpecification| {
+        ActivePolicyFile::from_environment(
+            &crate::environment::EnvironmentPolicyInputs::new(live, live, &corporate),
+            None,
+        )
+        .unwrap()
+    };
+    let open = policy(&boot);
+    let blocked = policy(&live);
+    let clean = capability("clean", &[("GET", "https://example.test/probe")]);
+    let denied = capability("denied", &[("GET", "https://blocked.test/probe")]);
+    for (current, applied) in [(&blocked, &open), (&open, &blocked)] {
+        let admission = CredentialGrantAdmission::new(current, applied, [&clean, &denied].into_iter()).unwrap();
+        assert!(admission.admits(&clean));
+        assert!(!admission.admits(&denied));
+    }
+}

@@ -10,33 +10,43 @@ impl EnvironmentPolicyInputs<'_> {
     /// Core's complete policy compiler must compose these rules with current
     /// corporate constraints; transport, enablement and pin gates remain separate.
     pub fn compile_mcp_permissions(&self) -> Result<Vec<CompiledSecurityRule>, String> {
-        if self
-            .mcp_servers()
-            .len()
-            .saturating_add(self.mcp_catalog().selected.len())
-            > capsem_proto::ENVIRONMENT_MAX_MCP_SERVERS
-            || self.mcp_permissions().len() > capsem_proto::ENVIRONMENT_MAX_MCP_SERVERS + 1
-        {
+        compile_selected_mcp_permissions(
+            self.mcp_servers()
+                .keys()
+                .map(String::as_str)
+                .chain(self.mcp_catalog().selected.iter().map(|pin| pin.id.as_str())),
+            self.mcp_permissions(),
+        )
+    }
+}
+
+pub(super) fn compile_selected_mcp_permissions<'a>(
+    identities: impl IntoIterator<Item = &'a str>,
+    permissions: &std::collections::BTreeMap<String, EnvironmentMcpPermissions>,
+) -> Result<Vec<CompiledSecurityRule>, String> {
+    if permissions.len() > capsem_proto::ENVIRONMENT_MAX_MCP_SERVERS + 1 {
+        return Err("too many environment MCP policy entries".into());
+    }
+    for (id, permission) in permissions {
+        capsem_config::validate_identifier_shape(id)
+            .map_err(|_| "invalid environment MCP permission identity".to_string())?;
+        permission.validate().map_err(String::from)?;
+    }
+    let mut servers = BTreeSet::new();
+    for id in identities {
+        if id == capsem_proto::mcp_contracts::BUILTIN_SERVER_NAME || !servers.insert(id) {
+            return Err("reserved or duplicate environment MCP server identity".into());
+        }
+        if servers.len() > capsem_proto::ENVIRONMENT_MAX_MCP_SERVERS {
             return Err("too many environment MCP policy entries".into());
         }
-        let mut servers = BTreeSet::new();
-        for id in self
-            .mcp_servers()
-            .keys()
-            .map(String::as_str)
-            .chain(self.mcp_catalog().selected.iter().map(|pin| pin.id.as_str()))
-        {
-            if id == capsem_proto::mcp_contracts::BUILTIN_SERVER_NAME || !servers.insert(id) {
-                return Err("reserved or duplicate environment MCP server identity".into());
-            }
-        }
-        servers.insert(capsem_proto::mcp_contracts::BUILTIN_SERVER_NAME);
-        let default = EnvironmentMcpPermissions::default();
-        let mut rules = Vec::new();
-        for server in servers {
-            let permissions = self.mcp_permissions().get(server).unwrap_or(&default);
-            rules.extend(capsem_config::compile_environment_mcp_permissions(server, permissions)?);
-        }
-        Ok(rules)
     }
+    servers.insert(capsem_proto::mcp_contracts::BUILTIN_SERVER_NAME);
+    let default = EnvironmentMcpPermissions::default();
+    let mut rules = Vec::new();
+    for server in servers {
+        let permissions = permissions.get(server).unwrap_or(&default);
+        rules.extend(capsem_config::compile_environment_mcp_permissions(server, permissions)?);
+    }
+    Ok(rules)
 }

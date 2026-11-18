@@ -243,3 +243,69 @@ fn catalog_rule_compilation_bounds_snapshot_inputs_and_refuses_ambiguous_current
     assert!(RuleCatalogInputs::new(&references, &[]).is_err());
     assert!(RuleCatalogInputs::new(&[], &references).is_err());
 }
+
+#[test]
+fn environment_policy_freezes_selected_catalog_rules_and_refuses_pin_or_parameter_mismatch() {
+    use crate::net::policy_config::ActivePolicyFile;
+    let pinned = snapshot(document("block"), 'a');
+    let current = snapshot(document("allow"), 'b');
+    let catalogs = RuleCatalogInputs::new(&[&current], &[&pinned]).unwrap();
+    let mut boot = specification();
+    boot.access
+        .catalog
+        .selected
+        .push(pinned.pin("endpoint", "1.0.0").unwrap());
+    boot.access.parameters.insert(
+        "endpoint".into(),
+        [("host".into(), EnvironmentRuleParameter::Text("live.example".into()))].into(),
+    );
+    boot.detection
+        .catalog
+        .selected
+        .push(pinned.pin("observe", "1.0.0").unwrap());
+    boot.detection.parameters.insert(
+        "observe".into(),
+        [("host".into(), EnvironmentRuleParameter::Text("live.example".into()))].into(),
+    );
+    let corp = SettingsFile::default();
+    let inputs = EnvironmentPolicyInputs::new(&boot, &boot, &corp);
+    assert!(ActivePolicyFile::from_environment(&inputs, None).is_err());
+    let active = ActivePolicyFile::from_environment(&inputs, Some(&catalogs)).unwrap();
+    let encoded = toml::to_string(&active).unwrap();
+    let exact: ActivePolicyFile = toml::from_str(&encoded).unwrap();
+    let runtime = exact.compile_runtime().unwrap();
+    let result =
+        crate::security_engine::evaluate_security_boundary(&runtime.security_rules, runtime.plugins, event()).unwrap();
+    assert!(
+        !result.enforcement.is_allowed(),
+        "the moving catalog must not replace pinned block with allow"
+    );
+    assert!(result
+        .event
+        .detections
+        .iter()
+        .any(|d| d.rule_id.as_deref() == Some("environment.detection.catalog.observe")));
+    for mutation in 0..4 {
+        let mut changed: toml::Value = toml::from_str(&encoded).unwrap();
+        match mutation {
+            0 => changed["environment"]["catalog_rules"].as_array_mut().unwrap().clear(),
+            1 => changed["environment"]["access"]["catalog"]["selected"][0]["version"] = "2.0.0".into(),
+            2 => changed["environment"]["access"]["parameters"]["endpoint"]["host"] = "other.example".into(),
+            _ => {
+                let extra = changed["environment"]["catalog_rules"][0].clone();
+                changed["environment"]["catalog_rules"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(extra);
+            }
+        }
+        let changed: ActivePolicyFile = toml::from_str(&toml::to_string(&changed).unwrap()).unwrap();
+        assert!(changed.compile_runtime().is_err(), "mutation {mutation}");
+    }
+    boot.detection.catalog.selected[0] = pinned.pin("endpoint", "1.0.0").unwrap();
+    boot.detection.parameters.clear();
+    assert!(
+        ActivePolicyFile::from_environment(&EnvironmentPolicyInputs::new(&boot, &boot, &corp), Some(&catalogs))
+            .is_err()
+    );
+}
