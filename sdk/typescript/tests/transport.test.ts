@@ -106,7 +106,7 @@ it.each(['file:///tmp/socket', 'http://user:pass@localhost', 'https://host/?x=1'
 it.each(['', 'bad\nheader', 'bad\rheader'])('rejects token %j', token => {
   expect(() => new Transport('http://localhost', token)).toThrow();
 });
-it.each([0, -1, NaN, Infinity, 0.5, 2 ** 32])('rejects timeout %s', timeoutMs => {
+it.each([0, -1, NaN, Infinity, 0.5, Number.MAX_SAFE_INTEGER + 1])('rejects timeout %s', timeoutMs => {
   expect(() => new Transport('http://localhost', 'secret', {timeoutMs})).toThrow();
 });
 it.each(['relative', '/query?x=1', '/fragment#x', '/vms/{id}'])('refuses invalid operation path %s before HTTP', async path => {
@@ -153,4 +153,13 @@ it('links cancellation without AbortSignal.any', async () => {
   transport.close();
   await expect(closing).rejects.toBeDefined();
   expect(seen.at(-1)?.aborted).toBe(true);
+});
+
+it('accepts an approved u32-second deadline without overflowing native timers', async () => {
+  const seconds = 2 ** 32 - 1;
+  const timeoutMs = (seconds + 230) * 1000;
+  vi.stubGlobal('fetch', vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response('ready')));
+  const transport = new Transport('http://localhost', 'secret');
+  expect(new TextDecoder().decode(await transport.request(Method.GET, '/wait', {timeoutMs}))).toBe('ready');
+  transport.close();
 });

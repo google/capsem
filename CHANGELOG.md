@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed: TypeScript requests accept long approved deadlines without native timer overflow, and release their timers and cancellation listeners after completion.
+
 - Added: The API contract describes exact-revision startup wait metadata, without exposing scripts or variables. Client and gateway deadline integration remains in progress.
 
 - Fixed: Rust, Python, and TypeScript SDK port publication discovers whether a saved environment runs an image, including managed sessions, and remembers the target for subsequent ports.

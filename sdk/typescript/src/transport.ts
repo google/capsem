@@ -1,4 +1,5 @@
 /** One authenticated fetch transport, with bounded requests and explicit cancellation. */
+import {checkedTimeout, requestDeadline} from './deadline.js';
 import {CredentialErrorCode} from './models/CredentialErrorCode.js';
 
 export enum Method {GET = 'GET', POST = 'POST', PUT = 'PUT', DELETE = 'DELETE'}
@@ -44,29 +45,6 @@ export class NetworkError extends Error {
   }
 }
 
-/**
- * `AbortSignal.any` where it exists; WKWebView before macOS 14.4 (the desktop
- * app supports 14.0) and older runtimes need the linking done by hand.
- */
-function checkedTimeout(timeout: number): number {
-  if (!Number.isInteger(timeout) || timeout <= 0 || timeout > 2 ** 31 - 1) {
-    throw new TypeError('Timeout must be a positive integer no larger than 2147483647 milliseconds');
-  }
-  return timeout;
-}
-
-function anySignal(signals: AbortSignal[]): AbortSignal {
-  if (typeof AbortSignal.any === 'function') return AbortSignal.any(signals);
-  const linked = new AbortController();
-  const unlink = (): void => {for (const signal of signals) signal.removeEventListener('abort', abort);};
-  function abort(this: AbortSignal): void {unlink(); linked.abort(this.reason);}
-  for (const signal of signals) {
-    if (signal.aborted) {linked.abort(signal.reason); return linked.signal;}
-  }
-  for (const signal of signals) signal.addEventListener('abort', abort, {once: true});
-  return linked.signal;
-}
-
 export class Transport {
   readonly #url: string;
   readonly #token: string;
@@ -106,9 +84,10 @@ export class Transport {
     const headers = new Headers({Authorization: `Bearer ${this.#token}`, Accept: options.accept ?? MediaType.JSON});
     if (options.body !== undefined) headers.set('Content-Type', options.contentType ?? MediaType.JSON);
     const deadline = options.timeoutMs === undefined ? this.#timeoutMs : checkedTimeout(options.timeoutMs);
-    const signals = [this.#closed.signal, AbortSignal.timeout(deadline)];
+    const signals = [this.#closed.signal];
     if (options.signal) signals.push(options.signal);
-    const signal = anySignal(signals);
+    const pending = requestDeadline(deadline, signals);
+    const signal = pending.signal;
     let response: Response;
     let payload: Uint8Array;
     try {
@@ -120,6 +99,8 @@ export class Transport {
     } catch (error) {
       if (signal.aborted) throw error;
       throw new NetworkError(error);
+    } finally {
+      pending.dispose();
     }
     if (!response.ok) throw new HttpError(response.status, new TextDecoder().decode(payload));
     return payload;
