@@ -3,6 +3,28 @@ use crate::transport::CallOptions;
 
 use crate::test_contract::Case;
 
+// Serde may populate omitted optional fields at any object depth. Verify every
+// supplied wire value, including complete arrays, without rejecting those defaults.
+fn assert_supplied_fields(actual: &serde_json::Value, expected: &serde_json::Value) {
+    match expected {
+        serde_json::Value::Object(fields) => {
+            assert!(actual.is_object());
+            for (key, value) in fields {
+                assert!(actual.get(key).is_some(), "missing response field {key}");
+                assert_supplied_fields(&actual[key], value);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            let actual = actual.as_array().expect("array response");
+            assert_eq!(actual.len(), values.len());
+            for (actual, expected) in actual.iter().zip(values) {
+                assert_supplied_fields(actual, expected);
+            }
+        }
+        value => assert_eq!(actual, value),
+    }
+}
+
 macro_rules! operation {
     ($name:ident, $id:literal $(, $params:ty)?) => {
         #[tokio::test]
@@ -24,9 +46,7 @@ macro_rules! operation {
                         let actual = serde_json::to_value(result.unwrap()).unwrap();
                         if case.binary { assert_eq!(actual, serde_json::json!([0, 255, 13, 10])); }
                         else if let Some(expected) = case.response.as_object() {
-                            for (key, value) in expected {
-                                assert_eq!(&actual[key], value, "response field {key}");
-                            }
+                            assert_supplied_fields(&actual, &serde_json::Value::Object(expected.clone()));
                         } else { assert_eq!(actual, case.response); }
                     }
                     case.assert_request(&mut server).await;
@@ -37,6 +57,9 @@ macro_rules! operation {
 }
 
 operation!(get_hypervisor_info, "getHypervisorInfo");
+operation!(get_environment_info, "getEnvironmentInfo", GetEnvironmentInfoParams);
+operation!(create_agent_access, "createAgentAccess", CreateAgentAccessParams);
+operation!(revoke_agent_access, "revokeAgentAccess", RevokeAgentAccessParams);
 operation!(get_hypervisor_logs, "getHypervisorLogs", GetHypervisorLogsParams);
 operation!(get_asset_status, "getAssetStatus");
 operation!(

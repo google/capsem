@@ -424,6 +424,48 @@
         }
       }
     },
+    "/environments/{id}/info": {
+      "get": {
+        "operationId": "getEnvironmentInfo",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentCurrentResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/host-logs/{name}": {
       "get": {
         "description": "Send Accept: application/json for the typed response. Without it the route returns plain text.",
@@ -5064,6 +5106,16 @@
           "memory"
         ]
       },
+      "DetectionLevel": {
+        "type": "string",
+        "enum": [
+          "informational",
+          "low",
+          "medium",
+          "high",
+          "critical"
+        ]
+      },
       "DisconnectResponse": {
         "type": "object",
         "required": [
@@ -5181,6 +5233,649 @@
           "owned_oauth_client",
           "native_consumer_sign_in"
         ]
+      },
+      "EnvironmentCapabilityDecision": {
+        "type": "string",
+        "enum": [
+          "allow",
+          "ask",
+          "block"
+        ]
+      },
+      "EnvironmentCatalogSelections_EnvironmentCatalogPin": {
+        "type": "object",
+        "properties": {
+          "selected": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "The registry owner verifies the OCI source and digest before constructing\na canonical revision. Format validation alone does not attest provenance.",
+              "required": [
+                "id",
+                "version",
+                "catalog_reference",
+                "resolved_digest"
+              ],
+              "properties": {
+                "catalog_reference": {
+                  "type": "string"
+                },
+                "id": {
+                  "type": "string"
+                },
+                "resolved_digest": {
+                  "type": "string"
+                },
+                "version": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentCurrentResponse": {
+        "type": "object",
+        "description": "Canonical current content verified against the committed host-ledger revision.\nEffective corporate policy is a separate view of this same revision.",
+        "required": [
+          "document",
+          "timestamp_unix_ms",
+          "actor",
+          "reason"
+        ],
+        "properties": {
+          "actor": {
+            "type": "string"
+          },
+          "document": {
+            "$ref": "#/components/schemas/EnvironmentDocument"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timestamp_unix_ms": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentDocument": {
+        "type": "object",
+        "description": "Binary history uses this typed envelope; the canonical TOML file is flat.",
+        "required": [
+          "identity",
+          "specification"
+        ],
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/EnvironmentIdentity"
+          },
+          "specification": {
+            "$ref": "#/components/schemas/EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentIdentity": {
+        "type": "object",
+        "required": [
+          "schema_version",
+          "id",
+          "revision_id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "parent_environment_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parent_revision_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "revision_id": {
+            "type": "string"
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentImageUpdatePolicy": {
+        "type": "string",
+        "enum": [
+          "manual",
+          "ask",
+          "auto"
+        ]
+      },
+      "EnvironmentMcpDefinition": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "url",
+              "kind"
+            ],
+            "properties": {
+              "binding_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "headers": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "propertyNames": {
+                  "type": "string"
+                }
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "remote"
+                ]
+              },
+              "url": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "executable",
+              "kind"
+            ],
+            "properties": {
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "executable": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "sandbox"
+                ]
+              },
+              "secrets": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/EnvironmentSecretBinding"
+                },
+                "propertyNames": {
+                  "type": "string"
+                }
+              },
+              "variables": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "propertyNames": {
+                  "type": "string"
+                }
+              },
+              "workdir": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "EnvironmentMcpPermissions": {
+        "type": "object",
+        "properties": {
+          "default": {
+            "$ref": "#/components/schemas/EnvironmentCapabilityDecision"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "tools": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/EnvironmentCapabilityDecision"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentMcps_EnvironmentCatalogPin": {
+        "type": "object",
+        "properties": {
+          "catalog": {
+            "$ref": "#/components/schemas/EnvironmentCatalogSelections_EnvironmentCatalogPin"
+          },
+          "permissions": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/EnvironmentMcpPermissions"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "servers": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/EnvironmentMcpDefinition"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentPackages": {
+        "type": "object",
+        "properties": {
+          "allows_package_manager": {
+            "type": "boolean"
+          },
+          "registries": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentPlugins": {
+        "type": "object",
+        "description": "Absent entries inherit built-in/corporate resolution; an explicit entry\nreplaces the whole plugin configuration, preserving existing precedence.",
+        "properties": {
+          "credential_broker": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PluginConfiguration_CredentialBrokerOptions"
+              }
+            ],
+            "default": null
+          },
+          "dummy_post_allow": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PluginConfiguration_DummyPostAllowOptions"
+              }
+            ],
+            "default": null
+          },
+          "dummy_pre_eicar": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PluginConfiguration_DummyPreEicarOptions"
+              }
+            ],
+            "default": null
+          },
+          "log_sanitizer": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PluginConfiguration_LogSanitizerOptions"
+              }
+            ],
+            "default": null
+          },
+          "pii_filter": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PiiFilterConfiguration"
+              }
+            ],
+            "default": null
+          },
+          "secret_exfiltration": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PluginConfiguration_SecretExfiltrationOptions"
+              }
+            ],
+            "default": null
+          },
+          "utf8_guard": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PluginConfiguration_Utf8GuardOptions"
+              }
+            ],
+            "default": null
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentRuleParameter": {
+        "oneOf": [
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "integer",
+            "format": "int64"
+          },
+          {
+            "type": "string"
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        ],
+        "description": "Parameter kinds supported by the initial rule catalogs. The registry's\ntyped descriptor additionally validates names, choices and numeric bounds."
+      },
+      "EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRule": {
+        "type": "object",
+        "properties": {
+          "catalog": {
+            "$ref": "#/components/schemas/EnvironmentCatalogSelections_EnvironmentCatalogPin"
+          },
+          "custom": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "required": [
+                "name",
+                "action",
+                "match"
+              ],
+              "properties": {
+                "action": {
+                  "$ref": "#/components/schemas/EnvironmentCapabilityDecision"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "match": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "priority": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
+                  "format": "int32"
+                }
+              },
+              "additionalProperties": false
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "parameters": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/components/schemas/EnvironmentRuleParameter"
+              },
+              "propertyNames": {
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentRules_EnvironmentCatalogPin_EnvironmentDetectionRule": {
+        "type": "object",
+        "properties": {
+          "catalog": {
+            "$ref": "#/components/schemas/EnvironmentCatalogSelections_EnvironmentCatalogPin"
+          },
+          "custom": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "required": [
+                "name",
+                "match",
+                "level"
+              ],
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "level": {
+                  "$ref": "#/components/schemas/DetectionLevel"
+                },
+                "match": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "parameters": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/components/schemas/EnvironmentRuleParameter"
+              },
+              "propertyNames": {
+                "type": "string"
+              }
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentSecretBinding": {
+        "type": "object",
+        "required": [
+          "binding_id"
+        ],
+        "properties": {
+          "binding_id": {
+            "type": "string"
+          },
+          "env_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin": {
+        "type": "object",
+        "description": "Editable content contains no service-assigned revision/history metadata.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "access": {
+            "$ref": "#/components/schemas/EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRule"
+          },
+          "description": {
+            "type": "string"
+          },
+          "detection": {
+            "$ref": "#/components/schemas/EnvironmentRules_EnvironmentCatalogPin_EnvironmentDetectionRule"
+          },
+          "image": {
+            "type": "object",
+            "required": [
+              "reference",
+              "resolved_digest"
+            ],
+            "properties": {
+              "reference": {
+                "type": "string"
+              },
+              "resolved_digest": {
+                "type": "string"
+              },
+              "update_policy": {
+                "$ref": "#/components/schemas/EnvironmentImageUpdatePolicy"
+              }
+            },
+            "additionalProperties": false
+          },
+          "mcps": {
+            "$ref": "#/components/schemas/EnvironmentMcps_EnvironmentCatalogPin"
+          },
+          "name": {
+            "type": "string"
+          },
+          "packages": {
+            "$ref": "#/components/schemas/EnvironmentPackages"
+          },
+          "plugins": {
+            "$ref": "#/components/schemas/EnvironmentPlugins"
+          },
+          "repositories": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "url",
+                "ref",
+                "resolved_commit",
+                "destination"
+              ],
+              "properties": {
+                "destination": {
+                  "type": "string"
+                },
+                "ref": {
+                  "type": "string"
+                },
+                "resolved_commit": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "secrets": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/EnvironmentSecretBinding"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "skills": {
+            "$ref": "#/components/schemas/EnvironmentCatalogSelections_EnvironmentCatalogPin"
+          },
+          "startup": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EnvironmentStartup"
+              }
+            ]
+          },
+          "variables": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentStartup": {
+        "type": "object",
+        "required": [
+          "script",
+          "timeout_seconds"
+        ],
+        "properties": {
+          "script": {
+            "type": "string"
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
       },
       "ErrorCode": {
         "type": "string",
@@ -7730,6 +8425,234 @@
             "type": "boolean"
           }
         }
+      },
+      "PiiFilterConfiguration": {
+        "type": "object",
+        "description": "Directions are relative to the sandbox. These options describe the HTTP\ninspection implemented today; they do not claim universal protocol support.",
+        "properties": {
+          "inbound": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PluginConfiguration_PiiFilterOptions"
+              }
+            ],
+            "default": {
+              "detection_level": "informational",
+              "mode": "disable",
+              "options": {
+                "card": true,
+                "email": true,
+                "phone": true,
+                "ssn": true
+              }
+            }
+          },
+          "outbound": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/PluginConfiguration_PiiFilterOptions"
+              }
+            ],
+            "default": {
+              "detection_level": "informational",
+              "mode": "disable",
+              "options": {
+                "card": true,
+                "email": true,
+                "phone": true,
+                "ssn": true
+              }
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "PluginConfiguration_CredentialBrokerOptions": {
+        "type": "object",
+        "properties": {
+          "detection_level": {
+            "$ref": "#/components/schemas/DetectionLevel"
+          },
+          "mode": {
+            "type": "string",
+            "default": "rewrite",
+            "enum": [
+              "rewrite"
+            ]
+          },
+          "options": {
+            "type": "object",
+            "properties": {
+              "capture_enabled": {
+                "type": "boolean",
+                "default": true
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "PluginConfiguration_DummyPostAllowOptions": {
+        "type": "object",
+        "properties": {
+          "detection_level": {
+            "$ref": "#/components/schemas/DetectionLevel"
+          },
+          "mode": {
+            "type": "string",
+            "default": "disable",
+            "enum": [
+              "disable",
+              "allow"
+            ]
+          },
+          "options": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "PluginConfiguration_DummyPreEicarOptions": {
+        "type": "object",
+        "properties": {
+          "detection_level": {
+            "$ref": "#/components/schemas/DetectionLevel"
+          },
+          "mode": {
+            "type": "string",
+            "default": "disable",
+            "enum": [
+              "disable",
+              "block"
+            ]
+          },
+          "options": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "PluginConfiguration_LogSanitizerOptions": {
+        "type": "object",
+        "properties": {
+          "detection_level": {
+            "$ref": "#/components/schemas/DetectionLevel"
+          },
+          "mode": {
+            "type": "string",
+            "default": "rewrite",
+            "enum": [
+              "rewrite"
+            ]
+          },
+          "options": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "PluginConfiguration_PiiFilterOptions": {
+        "type": "object",
+        "properties": {
+          "detection_level": {
+            "$ref": "#/components/schemas/DetectionLevel"
+          },
+          "mode": {
+            "type": "string",
+            "default": "disable",
+            "enum": [
+              "disable",
+              "allow",
+              "ask",
+              "block",
+              "rewrite"
+            ]
+          },
+          "options": {
+            "type": "object",
+            "properties": {
+              "card": {
+                "type": "boolean",
+                "default": true
+              },
+              "email": {
+                "type": "boolean",
+                "default": true
+              },
+              "phone": {
+                "type": "boolean",
+                "default": true
+              },
+              "ssn": {
+                "type": "boolean",
+                "default": true
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "PluginConfiguration_SecretExfiltrationOptions": {
+        "type": "object",
+        "properties": {
+          "detection_level": {
+            "$ref": "#/components/schemas/DetectionLevel"
+          },
+          "mode": {
+            "type": "string",
+            "default": "disable",
+            "enum": [
+              "disable",
+              "allow",
+              "ask",
+              "block",
+              "rewrite"
+            ]
+          },
+          "options": {
+            "type": "object",
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "PluginConfiguration_Utf8GuardOptions": {
+        "type": "object",
+        "properties": {
+          "detection_level": {
+            "$ref": "#/components/schemas/DetectionLevel"
+          },
+          "mode": {
+            "type": "string",
+            "default": "disable",
+            "enum": [
+              "disable",
+              "allow",
+              "ask",
+              "block"
+            ]
+          },
+          "options": {
+            "type": "object",
+            "properties": {
+              "inbound": {
+                "type": "boolean",
+                "default": true
+              },
+              "outbound": {
+                "type": "boolean",
+                "default": true
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
       },
       "PreviewSessionResponse": {
         "type": "object",

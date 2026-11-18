@@ -53,6 +53,8 @@ mod get_connection;
 pub use get_connection::{get_connection, GetConnectionParams};
 mod get_connection_authorization;
 pub use get_connection_authorization::{get_connection_authorization, GetConnectionAuthorizationParams};
+mod get_environment_info;
+pub use get_environment_info::{get_environment_info, GetEnvironmentInfoParams};
 mod get_hypervisor_info;
 pub use get_hypervisor_info::get_hypervisor_info;
 mod get_hypervisor_logs;

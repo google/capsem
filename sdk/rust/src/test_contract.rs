@@ -15,6 +15,14 @@ fn sample(schema: &Value, full: bool) -> Value {
         return json!({"nested": [true, null, {"number": 3}]});
     }
     if let Some(reference) = schema["$ref"].as_str() {
+        if reference == "#/components/schemas/AgentAccessScope" {
+            // Scope constructors enforce operation/target combinations beyond
+            // structural JSON Schema. Use a valid least-authority fixture.
+            return serde_json::to_value(
+                capsem_api::AgentAccessScope::new(vec![capsem_api::AgentOperation::Discover], vec![], vec![]).unwrap(),
+            )
+            .unwrap();
+        }
         return sample(CONTRACT.pointer(&reference[1..]).unwrap(), full);
     }
     if let Some(variants) = schema["oneOf"].as_array() {

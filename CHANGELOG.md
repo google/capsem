@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Typed current environment inspection operations and canonical environment models across the Rust, Python, and TypeScript SDKs.
+
 - Added: Authenticated current environment inspection returns verified canonical content and revision provenance. Delegated reads require a live Inspect grant for the exact environment.
 
 - Fixed: MCP response-limit errors retain correlation when a POST SSE stream resumes over GET; request completion also releases pending IDs after transport errors or cancellation.
