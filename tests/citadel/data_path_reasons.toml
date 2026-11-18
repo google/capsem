@@ -168,7 +168,7 @@ json = { count = 2, reason = "release" }
 hash = { count = 1, reason = "hash-asset" }
 
 [sources."crates/capsem-assets/src/asset_manager.rs"]
-json = { count = 49, reason = "release" }
+json = { count = 5, reason = "release" }
 hash = { count = 1, reason = "hash-asset" }
 
 [sources."crates/capsem-assets/src/manifest_compat.rs"]
@@ -948,3 +948,7 @@ json = { count = 1, reason = "http" }
 
 [sources."sdk/rust/src/operations/generated/create_environment.rs"]
 json = { count = 2, reason = "http" }
+
+[sources."crates/capsem-assets/src/asset_manager/release_graph.rs"]
+# Existing public release graph conversion moved intact from asset_manager.
+json = { count = 44, reason = "release" }

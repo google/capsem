@@ -1,5 +1,6 @@
 use super::*;
 
+mod catalog_sources;
 mod hydration;
 mod manifest_arch_keys;
 

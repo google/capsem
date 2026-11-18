@@ -154,6 +154,7 @@ async fn download_missing_assets_skips_direct_arch_dev_layout() {
     }
     let manifest = ManifestV2 {
         format: 2,
+        catalogs: None,
         refresh_policy: "24h".to_string(),
         asset_base: None,
         assets: AssetsSection {
@@ -501,6 +502,7 @@ fn declared_manifest(asset_base: String) -> ManifestV2 {
     }
     ManifestV2 {
         format: 2,
+        catalogs: None,
         refresh_policy: "24h".to_string(),
         asset_base: Some(asset_base),
         assets: AssetsSection {
