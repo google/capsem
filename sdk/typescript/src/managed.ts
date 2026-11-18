@@ -1,5 +1,6 @@
 import * as api from './operations/index.js';
 import * as models from './models/index.js';
+import {creationDeadlineMs} from './readiness.js';
 import {createDeadlineMs} from './execution.js';
 import {UUID_V4} from './identity.js';
 import {HttpError, Transport, type CallOptions} from './transport.js';
@@ -61,11 +62,12 @@ export class ManagedSession {
 
   /** @internal */
   static async open(transport: Transport, request: models.ProvisionRequest, options: CallOptions): Promise<ManagedSession> {
+    const timeoutMs = await creationDeadlineMs(transport, request, options);
     const scope = new ManagedSession(transport, request, options);
     if (options.signal?.aborted) throw options.signal.reason;
     options.signal?.addEventListener('abort', scope.#abort, {once: true});
     scope.#creation = api.createVm(transport, {body: request}, {
-      signal: scope.#requests.signal, timeoutMs: options.timeoutMs ?? createDeadlineMs(transport.timeoutMs),
+      signal: scope.#requests.signal, timeoutMs,
     }).finally(() => {scope.#creationDone = true;});
     scope.#renewal = scope.#maintain().catch((error: unknown) => {
       if (!scope.#closing) scope.#fail(error, models.ManagedSessionOutcome.FAILED);

@@ -43,6 +43,16 @@ pub fn reply(operation: &str) -> Value {
 pub async fn gateway() -> Server {
     Server::respond(|parts| {
         let path = parts.uri.path();
+        if path.starts_with("/environments/") && path.ends_with("/readiness") {
+            let segments: Vec<_> = path.split('/').collect();
+            return Response::new(Body::from(
+                json!({
+                    "environment": {"environment_id": segments[2], "revision_id": segments[4]},
+                    "startup_timeout_seconds": 600,
+                })
+                .to_string(),
+            ));
+        }
         let operation = match path {
             "/status" => "getHypervisorInfo",
             "/vms/list" => "listVms",

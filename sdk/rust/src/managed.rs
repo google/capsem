@@ -17,6 +17,7 @@ pub struct ManagedSession {
     token: Option<models::ManagedOwnershipToken>,
     ownership: Option<models::ManagedSessionOwnership>,
     vm_id: Option<String>,
+    create_options: crate::transport::CallOptions,
 }
 
 impl std::fmt::Debug for ManagedSession {
@@ -45,6 +46,7 @@ impl ManagedSession {
             })
             .collect();
         Ok(Self {
+            create_options: client.create_options(),
             client,
             request_id: random::uuid_v4().to_string(),
             token: Some(models::ManagedOwnershipToken::new(token).map_err(Error::Managed)?),
@@ -169,7 +171,7 @@ impl ManagedSession {
     async fn created(&mut self, body: models::ProvisionRequest, cancel: &CancellationToken) -> Result<VM> {
         let client = self.client.clone();
         let params = api::CreateVmParams { body };
-        let create = api::create_vm(&client.transport, &params, client.create_options());
+        let create = api::create_vm(&client.transport, &params, self.create_options);
         tokio::pin!(create);
         loop {
             tokio::select! {
@@ -225,7 +227,10 @@ impl Hypervisor {
             return Err(Error::InvalidInput("managed sessions must be unnamed"));
         }
         let mut body = Self::provision_request(options)?;
-        let mut session = ManagedSession::new(self.managed_client())?;
+        let client = self.managed_client();
+        let create_options = crate::create_call_options(&client.transport, &body, client.options).await?;
+        let mut session = ManagedSession::new(client)?;
+        session.create_options = create_options;
         body.managed = Some(models::ManagedSessionCreate {
             request_id: session.request_id.clone(),
             ownership_token: session.token.as_ref().expect("new owner").clone(),

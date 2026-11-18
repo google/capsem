@@ -18,12 +18,11 @@ from ._mcp import Mcp
 from ._networks import Networks
 from .errors import _create_vm_with_timeout, _exec_with_timeout
 from .execution import (
-    CREATE_READY_SECS,
-    GATEWAY_REQUEST_BUDGET_SECS,
     ExecResult,
     command_deadline,
 )
 from .managed import ManagedSession
+from .readiness import creation_timeout
 from .registry import Registry
 from .vm import VM
 
@@ -143,9 +142,8 @@ class Hypervisor(Client):
         """
         request = _provision_request(name=name, cpus=cpus, memory=memory, env=env, environment=environment, attach=attach, labels=labels,
                                      networks=networks, image=image, command=command, registry=registry)
-        # The service waits for detached readiness or attached staging. Keep
-        # the request's ordinary creation/readiness budget around that work.
-        request_timeout = max(self._transport.timeout, CREATE_READY_SECS + GATEWAY_REQUEST_BUDGET_SECS)
+        # Detached readiness includes the exact retained startup deadline.
+        request_timeout = await creation_timeout(self._transport, request)
         return await _create_vm_with_timeout(
             api.create_vm(self._transport, body=request, request_timeout=request_timeout),
             self._transport, bind_vm=VM._bind, name=name,

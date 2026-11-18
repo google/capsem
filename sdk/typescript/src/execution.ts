@@ -19,8 +19,11 @@ export const CREATE_READY_SECS = 110;
 export const MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024;
 
 /** Creation answers only after workload readiness, so allow its full window. */
-export function createDeadlineMs(fallbackMs: number): number {
-  return Math.max(fallbackMs, (CREATE_READY_SECS + GATEWAY_REQUEST_BUDGET_SECS) * 1000);
+export function createDeadlineMs(fallbackMs: number, startupSecs = 0): number {
+  if (!Number.isInteger(startupSecs) || startupSecs < 0 || startupSecs > 2 ** 32 - 1) {
+    throw new TypeError('Invalid approved startup timeout');
+  }
+  return Math.max(fallbackMs, (CREATE_READY_SECS + GATEWAY_REQUEST_BUDGET_SECS + startupSecs) * 1000);
 }
 
 /**

@@ -22,6 +22,7 @@ def test_environment_launch_preserves_revision_and_refuses_inline_overrides():
             assert vm.id == "created-id"
             assert json.loads(state.requests[-1][2])["environment"] == reference.model_dump()
             assert "attach" not in json.loads(state.requests[-1][2])
+            assert state.requests[0][1].endswith('/readiness')
             attached = await hv.create(environment=reference, attach=True)
             body = json.loads(state.requests[-1][2])
             assert body["environment"] == reference.model_dump() and body["attach"] is True

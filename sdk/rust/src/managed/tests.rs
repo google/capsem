@@ -12,6 +12,8 @@ const GENERATION: &str = "22222222-2222-4222-8222-222222222222";
 #[derive(Default)]
 struct Fixture {
     no_container: bool,
+    readiness_refused: bool,
+    readiness_changed: bool,
     managed: Mutex<Value>,
     requests: Mutex<Vec<(String, Value)>>,
     held_create: bool,
@@ -34,6 +36,16 @@ async fn respond(State(state): State<Arc<Fixture>>, request: Request<Body>) -> a
         serde_json::from_slice(&bytes).unwrap()
     };
     state.requests.lock().unwrap().push((path.clone(), body.clone()));
+    if path.ends_with("/readiness") {
+        if state.readiness_refused {
+            return (axum::http::StatusCode::FORBIDDEN, "inspection refused").into_response();
+        }
+        let segments: Vec<_> = path.split('/').collect();
+        return Json(json!({"environment": {"environment_id": segments[2],
+            "revision_id": if state.readiness_changed { "00000000-0000-4000-8000-000000000009" } else { segments[4] }},
+            "startup_timeout_seconds": 600}))
+        .into_response();
+    }
     if path.ends_with("/container") {
         return if state.no_container {
             (axum::http::StatusCode::NOT_FOUND, "no container").into_response()
@@ -493,6 +505,10 @@ async fn saved_environment_ports_discover_target_once_in_create_and_managed_sess
                 vm.ports().open(8081).await.unwrap();
             }
             let requests = gateway.state.requests.lock().unwrap().clone();
+            assert_eq!(
+                requests.iter().filter(|(path, _)| path.ends_with("/readiness")).count(),
+                usize::from(!attached && !inline)
+            );
             let probes = requests.iter().filter(|(path, _)| path.ends_with("/container")).count();
             assert_eq!(probes, usize::from(!attached && !inline));
             let exposures: Vec<_> = requests
@@ -504,5 +520,35 @@ async fn saved_environment_ports_discover_target_once_in_create_and_managed_sess
                 assert_eq!(body["target"], if no_container { "vm" } else { "container" });
             }
         }
+    }
+}
+
+#[tokio::test]
+async fn managed_metadata_refusal_never_creates_or_closes_an_unadmitted_session() {
+    for changed in [false, true] {
+        let gateway = Gateway::new(Fixture {
+            readiness_changed: changed,
+            readiness_refused: !changed,
+            ..Default::default()
+        })
+        .await;
+        let result = gateway
+            .hv
+            .with_managed(
+                CreateOptions {
+                    environment: Some(capsem_api::environments::EnvironmentRevisionReference {
+                        environment_id: "00000000-0000-4000-8000-000000000001".into(),
+                        revision_id: "00000000-0000-4000-8000-000000000002".into(),
+                    }),
+                    ..Default::default()
+                },
+                |_, _| async { Ok(()) },
+            )
+            .await;
+        assert!(result.is_err());
+        let requests = gateway.state.requests.lock().unwrap().clone();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].0.ends_with("/readiness"));
+        assert!(gateway.state.managed.lock().unwrap().is_null());
     }
 }

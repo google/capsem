@@ -49,6 +49,10 @@ async def gateway() -> AsyncIterator[tuple[str, GatewayState]]:
         assert request.headers["Authorization"] == "Bearer token"
         if request.path in state.delays:
             await asyncio.sleep(state.delays[request.path])
+        if request.path.endswith("/readiness"):
+            parts = request.path.split('/')
+            return web.json_response({'environment': {'environment_id': parts[2], 'revision_id': parts[4]},
+                                      'startup_timeout_seconds': 600})
         if request.path == "/vms/list":
             listed = [
                 response_model("SandboxInfo", id=vm_id, name=name, labels=state.sandbox_labels.get(vm_id))

@@ -118,3 +118,8 @@ it.each(['start', 'resume'] as const)('keeps explicit deadlines and cancellation
     } finally {vm.close();}
   });
 });
+
+it.each([0, 600, 2 ** 32 - 1])('creation includes the exact approved %i seconds without timer truncation', seconds => {
+  expect(createDeadlineMs(30_000, seconds)).toBe((230 + seconds) * 1000);
+  expect(createDeadlineMs(10_000_000_000_000, seconds)).toBe(10_000_000_000_000);
+});

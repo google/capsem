@@ -6,8 +6,9 @@ import {Environments} from './environments.js';
 import {Credentials} from './credentials.js';
 import {Connections} from './connections.js';
 import {ManagedSession} from './managed.js';
+import {creationDeadlineMs} from './readiness.js';
 import {registryAccess} from './registry.js';
-import {commandDeadlineMs, createDeadlineMs} from './execution.js';
+import {commandDeadlineMs} from './execution.js';
 import * as api from './operations/index.js';
 import * as models from './models/index.js';
 import type {CreateOptions, ManagedCreateOptions, HostLogOptions, RunOptions, VmSelector} from './options.js';
@@ -58,7 +59,8 @@ export class Hypervisor extends Client {
   }
   async create(options: CreateOptions = {}): Promise<VM> {
     const body = provisionRequest(options);
-    const response = await api.createVm(this.transport, {body}, {...options, timeoutMs: options.timeoutMs ?? createDeadlineMs(this.transport.timeoutMs)});
+    const timeoutMs = await creationDeadlineMs(this.transport, body, options);
+    const response = await api.createVm(this.transport, {body}, {...options, timeoutMs});
     return VM.bind(this.transport, response.id, response.name, body.attach === true || body.container != null ? true : body.environment != null ? undefined : false);
   }
   async managed(options: ManagedCreateOptions = {}): Promise<ManagedSession> {

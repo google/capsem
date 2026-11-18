@@ -3,6 +3,7 @@
 pub use capsem_api as models;
 pub mod browser;
 mod client;
+pub use client::create_call_options;
 mod connections;
 mod credentials;
 mod environments;

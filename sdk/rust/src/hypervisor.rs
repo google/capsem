@@ -165,12 +165,8 @@ impl Hypervisor {
     pub async fn create(&self, options: CreateOptions) -> Result<VM> {
         let body = Self::provision_request(options)?;
         let has_container = Self::provision_has_container(&body);
-        let result = api::create_vm(
-            &self.client.transport,
-            &api::CreateVmParams { body },
-            self.client.create_options(),
-        )
-        .await?;
+        let call_options = crate::create_call_options(&self.client.transport, &body, self.client.options).await?;
+        let result = api::create_vm(&self.client.transport, &api::CreateVmParams { body }, call_options).await?;
         VM::created(self.client.clone(), result.id, result.name, has_container)
     }
 

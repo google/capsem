@@ -12,6 +12,7 @@ from . import _operations as api
 from . import models
 from ._transport import HttpError, Transport
 from .execution import CREATE_READY_SECS, GATEWAY_REQUEST_BUDGET_SECS
+from .readiness import creation_timeout
 from .vm import VM
 
 
@@ -89,6 +90,11 @@ class ManagedSession:
         if self.__started or self.__finished:
             raise RuntimeError("managed ownership scope cannot be entered again")
         self.__started = True
+        try:
+            self.__timeout = await creation_timeout(self.__transport, self.__request)
+        except BaseException:
+            self.__finished = True
+            raise
         self.__caller = asyncio.current_task()
         self.__create = asyncio.create_task(api.create_vm(
             self.__transport, body=self.__request, request_timeout=self.__timeout))

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed: Rust, Python, and TypeScript SDK creation waits include the exact approved startup timeout. Detached saved environments read qualified timing before creation; refused, changed, or out-of-range metadata cannot allocate a managed session.
+
 - Added: Authenticated gateway clients can read exact-revision environment startup timing through the GET readiness route.
 
 - Added: The service exposes verified startup timing for an exact committed environment revision, with live inspection checks and no script or variable disclosure.

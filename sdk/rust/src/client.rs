@@ -3,6 +3,42 @@ use std::time::Duration;
 use crate::transport::{CallOptions, Transport};
 use crate::{Error, Result};
 
+/// Plan a creation wait from its exact approved revision before issuing the
+/// mutation. Timing metadata grants no permission to launch that revision.
+pub async fn create_call_options(
+    transport: &Transport,
+    request: &crate::models::ProvisionRequest,
+    options: CallOptions,
+) -> Result<CallOptions> {
+    request.validate_environment().map_err(Error::InvalidInput)?;
+    let startup = match request.environment.as_ref().filter(|_| !request.attach) {
+        Some(environment) => {
+            let response = crate::operations::get_environment_readiness(
+                transport,
+                &crate::operations::GetEnvironmentReadinessParams {
+                    id: environment.environment_id.clone(),
+                    revision_id: environment.revision_id.clone(),
+                },
+                options,
+            )
+            .await?;
+            if response.environment != *environment {
+                return Err(Error::InvalidResponse("environment readiness identity changed"));
+            }
+            u64::from(response.startup_timeout_seconds)
+        }
+        None => 0,
+    };
+    Ok(CallOptions {
+        timeout: Some(
+            options
+                .timeout
+                .unwrap_or_else(|| transport.timeout())
+                .max(Duration::from_secs(110 + 120 + startup)),
+        ),
+    })
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Client {
     pub transport: Transport,
