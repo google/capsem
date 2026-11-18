@@ -16,6 +16,20 @@ from capsem_builder.sdkgen.generation import (
 SPEC = Path(__file__).resolve().parents[3] / "sdk/specification/openapi.json"
 
 
+@pytest.mark.parametrize("language", ["python", "typescript", "validation"])
+def test_export_barrels_stay_bounded_as_the_contract_grows(language: str) -> None:
+    from capsem_builder.sdkgen.python import render_models as python_models
+    from capsem_builder.sdkgen.schema import Schema
+    from capsem_builder.sdkgen.typescript import render_models as typescript_models
+    from capsem_builder.sdkgen.typescript_validation import render_validators
+
+    schemas = {f"GeneratedModel{index:04}": Schema(type="string") for index in range(650)}
+    render = {"python": python_models, "typescript": typescript_models, "validation": render_validators}[language]
+    files = render(schemas)
+    assert max(len(source.splitlines()) for source in files.values()) <= 300
+    assert files == render(dict(reversed(list(schemas.items()))))
+
+
 @pytest.mark.parametrize("render", [python_sources, typescript_sources, rust_sources])
 def test_generation_is_deterministic_and_check_does_not_write(
     tmp_path: Path, render: Callable[[Path], dict[str, dict[str, str]]],

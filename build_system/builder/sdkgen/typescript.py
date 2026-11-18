@@ -56,6 +56,19 @@ def _body(name: str, schema: Schema) -> str:
     return f"export interface {name} {{\n" + "\n".join(fields) + "\n}\n"
 
 
+def render_exports(exports: list[str]) -> dict[str, str]:
+    if len(exports) <= 200:
+        return {"index.ts": HEADER + "\n".join(exports) + "\n"}
+    files = {}
+    groups = []
+    for index, start in enumerate(range(0, len(exports), 200)):
+        name = f"_exports_{index}"
+        files[name + ".ts"] = HEADER + "\n".join(exports[start:start + 200]) + "\n"
+        groups.append(f'export * from "./{name}.js";')
+    files["index.ts"] = HEADER + "\n".join(groups) + "\n"
+    return files
+
+
 def render_models(schemas: dict[str, Schema]) -> dict[str, str]:
     schema_order(schemas)
     files: dict[str, str] = {}
@@ -71,5 +84,5 @@ def render_models(schemas: dict[str, Schema]) -> dict[str, str]:
         files[name + ".ts"] = HEADER + "\n".join(imports) + "\n\n" + body
         qualifier = "" if schema.enum is not None else "type "
         exports.append(f'export {qualifier}{{ {name} }} from "./{name}.js";')
-    files["index.ts"] = HEADER + "\n".join(exports) + "\n"
+    files.update(render_exports(exports))
     return files

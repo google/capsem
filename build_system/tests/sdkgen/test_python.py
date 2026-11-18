@@ -137,12 +137,15 @@ def test_inventory_schema_preserves_base_model_method_and_wire_name(models: Modu
 def test_generation_is_deterministic_and_compact() -> None:
     first = render_models(SCHEMAS)
     assert first == render_models(dict(reversed(list(SCHEMAS.items()))))
-    # Individual model bodies stay compact. The public barrel explicitly
-    # reexports every reachable model for static type checkers; long generic
-    # names add import wrapping, so it uses the repository's 1000-line ceiling.
-    assert max(len(source.splitlines()) for name, source in first.items() if name != "__init__.py") <= 300
-    assert len(first["__init__.py"].splitlines()) <= 1000
+    assert max(len(source.splitlines()) for source in first.values()) <= 300
     assert len(first) == len(SCHEMAS) + 2 + (len(SCHEMAS) + 79) // 80
+
+
+def test_public_exports_preserve_every_model_and_no_private_names(models: ModuleType) -> None:
+    expected = {*SCHEMAS, "KeywordRecord"}
+    assert set(models.__all__) == expected
+    assert len(models.__all__) == len(expected)
+    assert all(getattr(models, name) is not None for name in expected)
 
 
 def test_ipv4_is_a_validated_address_value() -> None:

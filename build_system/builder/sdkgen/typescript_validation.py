@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from .schema import Schema, schema_order
-from .typescript import HEADER, render_models
+from .typescript import HEADER, render_exports, render_models
 
 
 def expression(schema: Schema) -> str:
@@ -70,5 +70,5 @@ def render_validators(schemas: dict[str, Schema]) -> dict[str, str]:
         body = f"z.enum({name})" if schema.enum is not None else expression(schema)
         files[name + ".ts"] = HEADER + "\n".join(imports) + f"\n\nexport const {name}Schema: z.ZodType<{name}> = {body};\n"
         exports.append(f'export {{{name}Schema}} from "./{name}.js";')
-    files["index.ts"] = HEADER + "\n".join(exports) + "\n"
+    files.update(render_exports(exports))
     return files

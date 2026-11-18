@@ -261,8 +261,9 @@ def render_models(schemas: dict[str, Schema]) -> dict[str, str]:
         if len(exported) > 88:
             exported = f"from .{module_name(name)} import (\n    {name},\n)"
         exports.append(exported)
-    # Keep both the imports and public barrel below the source ceiling as
-    # the API grows. Every re-export stays explicit for static SDK consumers.
+    # Bounded modules own explicit imports and __all__. The package facade
+    # forwards their public names, including static typing, without repeating
+    # the entire growing inventory in one source file.
     public = []
     names = sorted(schemas)
     for index, start in enumerate(range(0, len(exports), 80)):
@@ -273,10 +274,10 @@ def render_models(schemas: dict[str, Schema]) -> dict[str, str]:
         files[group + ".py"] = HEADER + "\n".join(sorted(exports[start:start + 80])) + "\n\n__all__ = [\n" + "\n".join(
             f"    {name!r}," for name in group_names
         ) + "\n]\n"
-        for name in sorted(group_names, key=str.casefold):
-            exported = f"from .{group} import {name} as {name}"
-            if len(exported) > 88:
-                exported = f"from .{group} import (\n    {name} as {name},\n)"
-            public.append(exported)
-    files["__init__.py"] = HEADER + "\n".join(public) + "\n"
+        public += [
+            f"from .{group} import *  # noqa: F403 - bounded explicit __all__",
+            f"from .{group} import __all__ as _names_{index}",
+        ]
+    names = [f"    *_names_{index}," for index in range((len(exports) + 79) // 80)]
+    files["__init__.py"] = HEADER + "\n".join(public) + "\n\n__all__ = [\n" + "\n".join(names) + "\n]\n"
     return files

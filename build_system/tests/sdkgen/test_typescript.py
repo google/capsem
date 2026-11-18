@@ -15,7 +15,7 @@ def test_every_schema_has_a_compact_deterministic_module() -> None:
     schemas = read_schemas(ROOT / "sdk/specification/openapi.json")
     files = render_models(schemas)
     assert files == render_models(dict(reversed(list(schemas.items()))))
-    assert set(files) == {"index.ts", *(name + ".ts" for name in schemas)}
+    assert {"index.ts", *(name + ".ts" for name in schemas)} <= set(files)
     assert max(len(source.splitlines()) for source in files.values()) <= 300
     for name, schema in schemas.items():
         assert "export " in files[name + ".ts"]
