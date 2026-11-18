@@ -17,6 +17,7 @@ from helpers.service import exec_output_text, vm_name
 from tests.fixtures.oci.registry import publish_catalog, registry
 from tests.ironbank.kingslanding.test_image_catalog import entry, use_catalog
 from tests.ironbank.kingslanding.test_run import service
+from tests.ironbank.kingslanding.test_workload_terminal import expect_output, terminal
 
 __all__ = ["service"]
 
@@ -38,7 +39,7 @@ IMAGE_CONFIG = {
     "Cmd": [
         'set -eu; test "$(cat /workspace/prepared-value)" = "$BOUND_REVISION"; '
         'cp /workspace/start-count /workspace/entrypoint-count; '
-        'printf started >> /workspace/entrypoint-runs; exec redis-server'
+        'printf started >> /workspace/entrypoint-runs; exec redis-server --loglevel warning'
     ],
 }
 
@@ -108,6 +109,11 @@ def test_saved_startup_precedes_entrypoint_on_create_cold_resume_and_fork(servic
             vm = future.result(timeout=5)
         assert saw_preparing, "startup must be observable before create becomes ready"
         first = observe(service, vm, reference, 1)
+        # A detached startup finishes before any viewer connects. Its output
+        # belongs to the held console, including a later reconnect's replay.
+        for _ in range(2):
+            with terminal(service, vm) as socket:
+                expect_output(socket, b"approved startup output")
         assert any(path.endswith(f'/manifests/{image.rsplit("@", 1)[1]}') for path in requests)
 
         changed = copy.deepcopy(specification)
