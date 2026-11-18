@@ -3,7 +3,20 @@
 use super::*;
 
 /// A running sandbox whose fake owner clones on `CloneState`, or refuses.
-fn running_fork_source(state: &Arc<ServiceState>, dir: &tempfile::TempDir, refusal: Option<&'static str>) {
+fn running_fork_source(
+    state: &Arc<ServiceState>,
+    dir: &tempfile::TempDir,
+    refusal: Option<&'static str>,
+) -> tokio::task::JoinHandle<Vec<ServiceToProcess>> {
+    running_fork_source_gated(state, dir, refusal, None)
+}
+
+fn running_fork_source_gated(
+    state: &Arc<ServiceState>,
+    dir: &tempfile::TempDir,
+    refusal: Option<&'static str>,
+    gate: Option<Arc<ForkGate>>,
+) -> tokio::task::JoinHandle<Vec<ServiceToProcess>> {
     let session_dir = state.run_dir.join("sessions/fork-src");
     std::fs::create_dir_all(session_dir.join("system")).unwrap();
     std::fs::create_dir_all(session_dir.join("guest/workspace")).unwrap();
@@ -25,7 +38,45 @@ fn running_fork_source(state: &Arc<ServiceState>, dir: &tempfile::TempDir, refus
             ..test_instance()
         },
     );
-    spawn_fake_fork_owner(&uds_path, session_dir, refusal);
+    match gate {
+        None => spawn_fake_fork_owner(&uds_path, session_dir, refusal),
+        Some(gate) => spawn_fake_fork_owner_gated(&uds_path, session_dir, refusal, Some(gate)),
+    }
+}
+
+#[tokio::test]
+async fn fork_stale_expectation_refuses_before_source_freeze_or_destination_allocation() {
+    let (state, directory) = make_test_state_with_tempdir();
+    install_test_runtime_assets(&state);
+    let owner = running_fork_source(&state, &directory, Some("source must not be frozen for a stale plan"));
+    let mut expected = state
+        .lifecycle_selection("fork-src", capsem_api::VmLifecycleIntent::Fork)
+        .unwrap();
+    expected.generation = Some("00000000-0000-4000-8000-000000000009".into());
+    let app = crate::build_service_router(state.clone());
+    let (status, body) = route_request(
+        app,
+        axum::http::Method::POST,
+        "/vms/fork-src/fork",
+        Some(json!({
+            "name":"blocked-fork", "expected": expected,
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(
+        !owner.is_finished(),
+        "stale selection must not ask the native source to freeze"
+    );
+    assert!(state.persistent_registry.lock().unwrap().get("blocked-fork").is_none());
+    assert_eq!(
+        std::fs::read_dir(state.run_dir.join("persistent"))
+            .map(|entries| entries.count())
+            .unwrap_or(0),
+        0
+    );
+    owner.abort();
+    let _ = owner.await;
 }
 
 #[tokio::test]
@@ -339,4 +390,350 @@ async fn handle_fork_refuses_a_profile_era_vm() {
         err.body.error
     );
     assert!(!state.persistent_registry.lock().unwrap().contains("blocked-fork"));
+}
+
+fn fork_reference(revision: u64) -> capsem_logger::events::EnvironmentRevisionParent {
+    capsem_logger::events::EnvironmentRevisionParent {
+        environment_id: "00000000-0000-4000-8000-000000000001".into(),
+        revision_id: format!("00000000-0000-4000-8000-{revision:012x}"),
+    }
+}
+
+#[tokio::test]
+async fn fork_target_running_generation_and_revision_expectations_are_literal_preconditions() {
+    let (state, directory) = make_test_state_with_tempdir();
+    install_test_runtime_assets(&state);
+    let owner = running_fork_source(&state, &directory, Some("stale selection must not freeze"));
+    state.instances.lock().unwrap().get_mut("fork-src").unwrap().environment = Some(
+        crate::environment_launch::EnvironmentBinding::starting(fork_reference(2), "pending".into()),
+    );
+    let original = state
+        .lifecycle_selection("fork-src", capsem_api::VmLifecycleIntent::Fork)
+        .unwrap();
+    let app = crate::build_service_router(state.clone());
+    for (case, expected_status) in [
+        ("target", StatusCode::BAD_REQUEST),
+        ("generation", StatusCode::CONFLICT),
+        ("running", StatusCode::CONFLICT),
+        ("revision", StatusCode::CONFLICT),
+        ("absence", StatusCode::CONFLICT),
+    ] {
+        let mut expected = original.clone();
+        match case {
+            "target" => expected.id = "other-vm".into(),
+            "generation" => expected.generation = Some(capsem_crypto::uuid_v4().to_string()),
+            "running" => expected.running = false,
+            "revision" => expected.environment.as_mut().unwrap().revision_id = fork_reference(3).revision_id,
+            "absence" => expected.environment = None,
+            _ => unreachable!(),
+        }
+        let (status, body) = route_request(
+            app.clone(),
+            axum::http::Method::POST,
+            "/vms/fork-src/fork",
+            Some(json!({"name":format!("blocked-{case}"), "expected":expected})),
+        )
+        .await;
+        assert_eq!(status, expected_status, "case={case} {body}");
+        assert!(!owner.is_finished());
+        assert!(state
+            .persistent_registry
+            .lock()
+            .unwrap()
+            .get(&format!("blocked-{case}"))
+            .is_none());
+    }
+    assert_eq!(
+        std::fs::read_dir(state.run_dir.join("persistent"))
+            .map(|entries| entries.count())
+            .unwrap_or(0),
+        0
+    );
+    owner.abort();
+    let _ = owner.await;
+}
+
+#[tokio::test]
+async fn qualified_fork_carries_desired_revision_but_never_source_spawn_authority() {
+    let (state, directory) = make_test_state_with_tempdir();
+    install_test_runtime_assets(&state);
+    let owner = running_fork_source(&state, &directory, None);
+    let (session, generation) = {
+        let mut instances = state.instances.lock().unwrap();
+        let instance = instances.get_mut("fork-src").unwrap();
+        let mut binding = crate::environment_launch::EnvironmentBinding::starting(fork_reference(2), "pending".into());
+        binding.desired = fork_reference(3);
+        instance.environment = Some(binding);
+        let captured = (instance.session_dir.clone(), instance.generation);
+        drop(instances);
+        captured
+    };
+    let root = capsem_foundation::unix::contained::ContainedDir::open_root(&session).unwrap();
+    capsem_core::session::write_spawn_identity(
+        &root,
+        &capsem_core::managed_sessions::VmBinding::new("fork-src".into(), generation).unwrap(),
+    )
+    .unwrap();
+    let expected = state
+        .lifecycle_selection("fork-src", capsem_api::VmLifecycleIntent::Fork)
+        .unwrap();
+    let app = crate::build_service_router(state.clone());
+    let (status, body) = route_request(
+        app,
+        axum::http::Method::POST,
+        "/vms/fork-src/fork",
+        Some(json!({"name":"qualified-fork", "expected":expected})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let entry = state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .get("qualified-fork")
+        .unwrap()
+        .clone();
+    assert_eq!(entry.environment, Some(fork_reference(3)));
+    assert!(!entry.suspended);
+    assert_eq!(
+        std::fs::read(entry.session_dir.join("guest/workspace/notes.txt")).unwrap(),
+        b"hello"
+    );
+    let root = capsem_foundation::unix::contained::ContainedDir::open_root(&entry.session_dir).unwrap();
+    assert!(capsem_core::session::read_spawn_identity(&root).unwrap().is_none());
+    assert_eq!(owner.await.unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn qualified_stopped_fork_uses_retained_generation_and_saved_revision() {
+    let (state, _directory) = make_test_state_with_tempdir();
+    install_test_runtime_assets(&state);
+    let session = state.run_dir.join("persistent/source");
+    std::fs::create_dir_all(session.join("system")).unwrap();
+    std::fs::write(session.join("system/rootfs.img"), b"source disk").unwrap();
+    let mut entry = test_persistent_entry("saved-source", session.clone());
+    entry.environment = Some(fork_reference(2));
+    let id = entry.id.clone();
+    state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .data
+        .vms
+        .insert(entry.name.clone(), entry);
+    let root = capsem_foundation::unix::contained::ContainedDir::open_root(&session).unwrap();
+    let generation = capsem_crypto::uuid_v4();
+    capsem_core::session::write_spawn_identity(
+        &root,
+        &capsem_core::managed_sessions::VmBinding::new(id.clone(), generation).unwrap(),
+    )
+    .unwrap();
+    let expected = state
+        .lifecycle_selection(&id, capsem_api::VmLifecycleIntent::Fork)
+        .unwrap();
+    assert_eq!(expected.generation.as_deref(), Some(generation.to_string().as_str()));
+    assert!(!expected.running);
+    let app = crate::build_service_router(state.clone());
+    let (status, body) = route_request(
+        app,
+        axum::http::Method::POST,
+        &format!("/vms/{id}/fork"),
+        Some(json!({"name":"stopped-fork", "expected":expected})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let entry = state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .get("stopped-fork")
+        .unwrap()
+        .clone();
+    assert_eq!(entry.environment, Some(fork_reference(2)));
+    assert_eq!(entry.forked_from.as_deref(), Some(id.as_str()));
+    assert!(!entry.session_dir.join("spawn-identity.json").exists());
+}
+
+#[tokio::test]
+async fn fork_compares_queued_expectation_after_acquiring_policy_exclusion() {
+    let (state, directory) = make_test_state_with_tempdir();
+    install_test_runtime_assets(&state);
+    let owner = running_fork_source(&state, &directory, Some("queued stale source must not freeze"));
+    let expected = state
+        .lifecycle_selection("fork-src", capsem_api::VmLifecycleIntent::Fork)
+        .unwrap();
+    let mutation = state.policy_mutation.begin().await;
+    let contended = state.policy_mutation.contended.notified();
+    let app = crate::build_service_router(state.clone());
+    let request = tokio::spawn(async move {
+        route_request(
+            app,
+            axum::http::Method::POST,
+            "/vms/fork-src/fork",
+            Some(json!({"name":"queued-fork", "expected":expected})),
+        )
+        .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(5), contended)
+        .await
+        .unwrap();
+    state.instances.lock().unwrap().get_mut("fork-src").unwrap().environment = Some(
+        crate::environment_launch::EnvironmentBinding::starting(fork_reference(2), "pending".into()),
+    );
+    drop(mutation);
+    let (status, body) = request.await.unwrap();
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(!owner.is_finished());
+    assert!(state.persistent_registry.lock().unwrap().get("queued-fork").is_none());
+    owner.abort();
+    let _ = owner.await;
+}
+
+#[tokio::test]
+async fn cancelled_fork_http_waiter_retains_owned_native_copy_until_registry_publication() {
+    let (state, directory) = make_test_state_with_tempdir();
+    install_test_runtime_assets(&state);
+    let gate = Arc::new(ForkGate::default());
+    let owner = running_fork_source_gated(&state, &directory, None, Some(gate.clone()));
+    let expected = state
+        .lifecycle_selection("fork-src", capsem_api::VmLifecycleIntent::Fork)
+        .unwrap();
+    let request_state = state.clone();
+    let request = tokio::spawn(async move {
+        handle_fork(
+            crate::tests::operator_actor(),
+            State(request_state),
+            Path("fork-src".into()),
+            Json(ForkRequest {
+                name: "retained-fork".into(),
+                expected: Some(expected),
+                description: None,
+                labels: None,
+            }),
+        )
+        .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(5), gate.frozen.notified())
+        .await
+        .unwrap();
+    request.abort();
+    assert!(request.await.unwrap_err().is_cancelled());
+    assert!(
+        state.lifecycle.vz.try_write().is_err(),
+        "native copy exclusion belongs to the service job"
+    );
+    gate.release.notify_one();
+    assert_eq!(
+        tokio::time::timeout(std::time::Duration::from_secs(5), owner)
+            .await
+            .unwrap()
+            .unwrap()
+            .len(),
+        2
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(5), state.lifecycle.wait_for_launches())
+        .await
+        .unwrap();
+    let entry = state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .get("retained-fork")
+        .unwrap()
+        .clone();
+    assert_eq!(
+        std::fs::read(entry.session_dir.join("guest/workspace/notes.txt")).unwrap(),
+        b"hello"
+    );
+    assert!(!entry.session_dir.join("spawn-identity.json").exists());
+    assert!(state.lifecycle.vz.try_write().is_ok());
+}
+
+#[tokio::test]
+async fn fork_persistence_failure_identifies_the_retained_copy_for_reconciliation() {
+    let (state, _directory) = make_test_state_with_tempdir();
+    install_test_runtime_assets(&state);
+    let session = state.run_dir.join("persistent/source");
+    std::fs::create_dir_all(session.join("system")).unwrap();
+    std::fs::write(session.join("system/rootfs.img"), b"source disk").unwrap();
+    let source = test_persistent_entry("source", session);
+    let id = source.id.clone();
+    state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .data
+        .vms
+        .insert(source.name.clone(), source);
+    std::fs::create_dir_all(state.run_dir.join("persistent_registry.json")).unwrap();
+    let app = crate::build_service_router(state.clone());
+    let (status, body) = route_request(
+        app,
+        axum::http::Method::POST,
+        &format!("/vms/{id}/fork"),
+        Some(json!({"name":"write-refused"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    let retained = state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .get("write-refused")
+        .unwrap()
+        .clone();
+    assert_eq!(
+        body["vm_id"], retained.id,
+        "a copied fork with unconfirmed persistence must remain identifiable"
+    );
+    assert_eq!(
+        std::fs::read(retained.session_dir.join("system/rootfs.img")).unwrap(),
+        b"source disk"
+    );
+}
+
+#[tokio::test]
+async fn fork_publication_name_race_removes_only_its_unregistered_destination() {
+    let (state, directory) = make_test_state_with_tempdir();
+    install_test_runtime_assets(&state);
+    let gate = Arc::new(ForkGate::default());
+    let owner = running_fork_source_gated(&state, &directory, None, Some(gate.clone()));
+    let request_state = state.clone();
+    let request = tokio::spawn(async move {
+        handle_fork(
+            crate::tests::operator_actor(),
+            State(request_state),
+            Path("fork-src".into()),
+            Json(ForkRequest {
+                name: "raced-fork".into(),
+                expected: None,
+                description: None,
+                labels: None,
+            }),
+        )
+        .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(5), gate.frozen.notified())
+        .await
+        .unwrap();
+    // Another registration path may claim the display name while the guest
+    // snapshot completes. Its distinct VM identity must not be overwritten.
+    let existing = test_persistent_entry("raced-fork", state.run_dir.join("persistent/other-source"));
+    let existing_id = existing.id.clone();
+    state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .data
+        .vms
+        .insert(existing.name.clone(), existing);
+    gate.release.notify_one();
+    let error = request.await.unwrap().unwrap_err();
+    assert_eq!(error.status, StatusCode::CONFLICT, "{}", error.body.error);
+    assert_eq!(
+        state.persistent_registry.lock().unwrap().get("raced-fork").unwrap().id,
+        existing_id
+    );
+    assert_eq!(std::fs::read_dir(state.run_dir.join("persistent")).unwrap().count(), 0);
+    assert_eq!(owner.await.unwrap().len(), 2);
 }

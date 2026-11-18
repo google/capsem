@@ -445,8 +445,23 @@ pub(crate) fn only_reloads(received: &[ServiceToProcess], count: usize) -> bool 
 /// A VM owner that freezes, lets the service clone, and then reports thaw.
 pub(crate) fn spawn_fake_fork_owner(
     uds_path: &StdPath,
+    source: PathBuf,
+    refusal: Option<&'static str>,
+) -> tokio::task::JoinHandle<Vec<ServiceToProcess>> {
+    spawn_fake_fork_owner_gated(uds_path, source, refusal, None)
+}
+
+#[derive(Default)]
+pub(crate) struct ForkGate {
+    pub(crate) frozen: tokio::sync::Notify,
+    pub(crate) release: tokio::sync::Notify,
+}
+
+pub(crate) fn spawn_fake_fork_owner_gated(
+    uds_path: &StdPath,
     _source: PathBuf,
     refusal: Option<&'static str>,
+    gate: Option<Arc<ForkGate>>,
 ) -> tokio::task::JoinHandle<Vec<ServiceToProcess>> {
     let _ = std::fs::remove_file(uds_path);
     let listener = tokio::net::UnixListener::bind(uds_path).unwrap();
@@ -482,6 +497,10 @@ pub(crate) fn spawn_fake_fork_owner(
             return messages;
         }
         tx.send(ProcessToService::CloneStateReady { id }).await.unwrap();
+        if let Some(gate) = gate {
+            gate.frozen.notify_one();
+            gate.release.notified().await;
+        }
         let completion = rx.recv().await.unwrap();
         let ServiceToProcess::CloneStateComplete {
             id: completed_id,

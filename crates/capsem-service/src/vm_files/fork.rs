@@ -3,18 +3,37 @@
 use super::*;
 
 pub(crate) async fn handle_fork(
-    _actor: crate::caller_auth::AuthenticatedActor,
+    actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
     Json(payload): Json<ForkRequest>,
+) -> Result<Json<ForkResponse>, AppError> {
+    actor.require_operator()?;
+    payload
+        .validate_expected(&id)
+        .map_err(|error| AppError::new(StatusCode::BAD_REQUEST, error.into()))?;
+    validate_vm_name(&payload.name).map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
+    validate_vm_labels(payload.labels.as_ref()).map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
+    // The service owns the native freeze/copy and its publication. A dropped
+    // HTTP waiter cannot abandon a blocking copy or release its exclusion.
+    tokio::spawn(fork_owned(state, id, payload))
+        .await
+        .map_err(|_| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, "fork job ended unexpectedly".into()))?
+}
+
+async fn fork_owned(
+    state: Arc<ServiceState>,
+    id: String,
+    payload: ForkRequest,
 ) -> Result<Json<ForkResponse>, AppError> {
     let _launch = state
         .lifecycle
         .admit()
         .map_err(|e| AppError::new(StatusCode::CONFLICT, e.to_string()))?;
+    let _native = state.lifecycle.vz.read().await;
+    let _host = acquire_vz_host_lock(startup::VzHostLockMode::Shared).await?;
+    let _selection = state.policy_mutation.begin().await;
     let name = &payload.name;
-    validate_vm_name(name).map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
-    validate_vm_labels(payload.labels.as_ref()).map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
 
     // Check name is not taken
     {
@@ -25,6 +44,17 @@ pub(crate) async fn handle_fork(
                 format!("sandbox '{}' already exists", name),
             ));
         }
+    }
+
+    let selection_id = id.clone();
+    let admitted = state
+        .off_worker(move |state| state.lifecycle_selection(&selection_id, capsem_api::VmLifecycleIntent::Fork))
+        .await??;
+    if payload.expected.as_ref().is_some_and(|expected| *expected != admitted) {
+        return Err(AppError::new(
+            StatusCode::CONFLICT,
+            "fork source selection changed; request a new readiness view".into(),
+        ));
     }
 
     // Find source: running instance or stopped persistent VM. A fork boots
@@ -67,6 +97,15 @@ pub(crate) async fn handle_fork(
         Some(labels) => non_empty_labels(Some(labels)),
         None => non_empty_labels(source_labels),
     };
+    // Snapshot fields and selection are observed separately. An original
+    // owner may retire during the intervening work, even under native shared
+    // exclusion; refuse that transition before allocating the destination.
+    let selection_id = id.clone();
+    state
+        .off_worker(move |state| {
+            state.verify_lifecycle_selection(&selection_id, capsem_api::VmLifecycleIntent::Fork, &admitted)
+        })
+        .await??;
 
     // Clone state into new persistent sandbox. The route/runtime id is
     // separate from the human display name.
@@ -95,7 +134,7 @@ pub(crate) async fn handle_fork(
                 .unwrap()
                 .as_secs()
         ),
-        session_dir: new_session_dir,
+        session_dir: new_session_dir.clone(),
         forked_from: Some(id.clone()),
         description: payload.description.clone(),
         suspended: false,
@@ -105,10 +144,51 @@ pub(crate) async fn handle_fork(
         env: None,
         labels,
     };
-    state
+    let publication = state
         .off_worker(move |state| state.persistent_registry.lock().unwrap().register(entry))
-        .await?
-        .map_err(|e| AppError::new(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .await
+        .map_err(|error| {
+            tracing::error!(vm_id = %vm_id, name, "fork publication worker ended; copied state retained");
+            error.with_vm_id(vm_id.clone())
+        })?;
+    if let Err(error) = publication {
+        // Registry publication changes memory before its durable write. A
+        // write failure must retain that known row/copy and identify it for
+        // reconciliation; deleting its files would corrupt the retained row.
+        let claimed = state
+            .persistent_registry
+            .lock()
+            .unwrap()
+            .get(name)
+            .map(|entry| entry.id.clone());
+        if claimed.as_deref() == Some(vm_id.as_str()) {
+            tracing::error!(vm_id = %vm_id, name, %error, "fork copied; registry persistence unconfirmed");
+            return Err(AppError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("fork copied but registry persistence could not be confirmed: {error}"),
+            )
+            .with_vm_id(vm_id));
+        }
+        // A concurrent claimant owns a different row. This operation owns
+        // only its freshly allocated UUID directory, after the copy joined.
+        if let Err(cleanup) = tokio::fs::remove_dir_all(&new_session_dir).await {
+            if cleanup.kind() != std::io::ErrorKind::NotFound {
+                tracing::error!(vm_id = %vm_id, name, %error, %cleanup, "fork rollback could not remove copied state");
+                return Err(AppError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("fork publication refused; copied state could not be removed: {cleanup}"),
+                )
+                .with_vm_id(vm_id));
+            }
+        }
+        let status = if claimed.is_some() {
+            StatusCode::CONFLICT
+        } else {
+            StatusCode::INTERNAL_SERVER_ERROR
+        };
+        return Err(AppError::new(status, format!("fork publication refused: {error}")));
+    }
+    tracing::info!(vm_id = %vm_id, name, source_id = %id, "fork snapshot registered");
 
     Ok(Json(ForkResponse {
         id: vm_id,
