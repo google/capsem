@@ -58,7 +58,17 @@ pub fn openapi() -> OpenApi {
     doc.post::<ProxyLeaseRequest, StopProxyResponse>("/proxies/{id}/stop", "stopProxy");
     doc.post::<PersistRequest, PersistResponse>("/vms/{id}/save", "persistVm");
     doc.get::<SandboxInfo>("/vms/{id}/info", "getVmInfo");
-    doc.get::<VmReadinessResponse>("/vms/{id}/readiness", "getVmReadiness");
+    let intent = doc.schema::<VmLifecycleIntent>();
+    let readiness = doc
+        .operation::<VmReadinessResponse>("/vms/{id}/readiness", "getVmReadiness")
+        .parameter(
+            ParameterBuilder::new()
+                .name("intent")
+                .parameter_in(ParameterIn::Query)
+                .required(Required::True)
+                .schema(Some(intent)),
+        );
+    doc.add("/vms/{id}/readiness", HttpMethod::Get, readiness);
     doc.get::<VmStatusResponse>("/vms/{id}/status", "getVmStatus");
     doc.post::<BrowserAcknowledgeRequest, BrowserAcknowledgeResponse>(
         "/vms/{id}/browser/acknowledge",

@@ -108,6 +108,7 @@ export { VmAction } from "./VmAction.js";
 export type { VmActionResponse } from "./VmActionResponse.js";
 export type { VmAiInfo } from "./VmAiInfo.js";
 export type { VmFilesInfo } from "./VmFilesInfo.js";
+export { VmLifecycleIntent } from "./VmLifecycleIntent.js";
 export type { VmLifecycleSelection } from "./VmLifecycleSelection.js";
 export { VmLifecycleState } from "./VmLifecycleState.js";
 export type { VmNetworkInfo } from "./VmNetworkInfo.js";

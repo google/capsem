@@ -3349,6 +3349,14 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "intent",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/VmLifecycleIntent"
+            }
           }
         ],
         "responses": {
@@ -11812,6 +11820,15 @@
             "minimum": 0
           }
         }
+      },
+      "VmLifecycleIntent": {
+        "type": "string",
+        "description": "Names which retained launch selection supplies a wait budget. This is\nmatching context only; the eventual mutation still requires admission.",
+        "enum": [
+          "start",
+          "fork",
+          "clone"
+        ]
       },
       "VmLifecycleSelection": {
         "type": "object",

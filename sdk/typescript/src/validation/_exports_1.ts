@@ -108,6 +108,7 @@ export {VmActionSchema} from "./VmAction.js";
 export {VmActionResponseSchema} from "./VmActionResponse.js";
 export {VmAiInfoSchema} from "./VmAiInfo.js";
 export {VmFilesInfoSchema} from "./VmFilesInfo.js";
+export {VmLifecycleIntentSchema} from "./VmLifecycleIntent.js";
 export {VmLifecycleSelectionSchema} from "./VmLifecycleSelection.js";
 export {VmLifecycleStateSchema} from "./VmLifecycleState.js";
 export {VmNetworkInfoSchema} from "./VmNetworkInfo.js";

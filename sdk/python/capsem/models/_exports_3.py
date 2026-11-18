@@ -68,6 +68,7 @@ from .vm_action import VmAction
 from .vm_action_response import VmActionResponse
 from .vm_ai_info import VmAiInfo
 from .vm_files_info import VmFilesInfo
+from .vm_lifecycle_intent import VmLifecycleIntent
 from .vm_lifecycle_selection import VmLifecycleSelection
 from .vm_lifecycle_state import VmLifecycleState
 from .vm_network_info import VmNetworkInfo
@@ -147,6 +148,7 @@ __all__ = [
     'VmActionResponse',
     'VmAiInfo',
     'VmFilesInfo',
+    'VmLifecycleIntent',
     'VmLifecycleSelection',
     'VmLifecycleState',
     'VmNetworkInfo',

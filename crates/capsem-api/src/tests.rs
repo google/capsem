@@ -664,6 +664,20 @@ fn environment_readiness_roundtrips_the_full_approved_timeout_without_executable
 #[test]
 fn lifecycle_readiness_contract_preserves_optional_original_selection_preconditions() {
     let doc = serde_json::to_value(openapi()).unwrap();
+    let intent = doc["paths"]["/vms/{id}/readiness"]["get"]["parameters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|parameter| parameter["name"] == "intent");
+    assert!(intent.is_some(), "readiness must name the impending lifecycle intent");
+    let intent = intent.unwrap();
+    assert_eq!(intent["in"], "query");
+    assert_eq!(intent["required"], true);
+    assert_eq!(intent["schema"]["$ref"], "#/components/schemas/VmLifecycleIntent");
+    assert_eq!(
+        doc["components"]["schemas"]["VmLifecycleIntent"]["enum"],
+        serde_json::json!(["start", "fork", "clone"])
+    );
     assert_eq!(
         doc["paths"]["/vms/{id}/readiness"]["get"]["operationId"],
         "getVmReadiness"
@@ -694,6 +708,25 @@ fn lifecycle_readiness_contract_preserves_optional_original_selection_preconditi
 
 #[test]
 fn lifecycle_selection_is_strict_matching_data_with_legacy_absence_only_when_stopped() {
+    for (intent, spelling) in [
+        (VmLifecycleIntent::Start, "start"),
+        (VmLifecycleIntent::Fork, "fork"),
+        (VmLifecycleIntent::Clone, "clone"),
+    ] {
+        assert_eq!(serde_json::to_value(intent).unwrap(), spelling);
+        assert_eq!(
+            serde_json::from_value::<VmLifecycleIntent>(serde_json::json!(spelling)).unwrap(),
+            intent
+        );
+    }
+    for value in [
+        serde_json::json!("resume"),
+        serde_json::json!("operator"),
+        serde_json::json!(true),
+        serde_json::Value::Null,
+    ] {
+        assert!(serde_json::from_value::<VmLifecycleIntent>(value).is_err());
+    }
     let selection = VmLifecycleSelection {
         id: "vm-1".into(),
         generation: Some("00000000-0000-4000-8000-000000000001".into()),

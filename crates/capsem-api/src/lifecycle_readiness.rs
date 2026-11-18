@@ -3,6 +3,19 @@ use crate::environments::EnvironmentRevisionReference;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+/// Names which retained launch selection supplies a wait budget. This is
+/// matching context only; the eventual mutation still requires admission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum VmLifecycleIntent {
+    /// Start or resume the VM; an active owner's current boot remains selected.
+    Start,
+    /// Fork the source into a new VM using its desired environment revision.
+    Fork,
+    /// Create from a persistent source using its saved environment revision.
+    Clone,
+}
+
 /// The exact host selection used to plan a lifecycle wait. The service must
 /// compare every field with its actual selection before admitting a mutation.
 /// A stopped legacy VM may have no prior spawn generation; an active owner may not.
