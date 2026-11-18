@@ -253,6 +253,8 @@ impl ManagedLifecycle {
                         labels: crate::non_empty_labels(request.labels),
                         from: request.from.map(|source| CloneFrom {
                             source,
+                            expected: request.expected_source,
+                            cancel: Some([caller_cancel, owned_cancel]),
                             replace_image: request.container.is_some(),
                         }),
                         description: None,

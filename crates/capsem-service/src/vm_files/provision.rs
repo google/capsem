@@ -20,10 +20,30 @@ pub(crate) async fn handle_provision(
             return error.into_response();
         }
     }
+    // Fail a stale public plan before allocating a managed ownership ticket.
+    // The producer compares it again under selection exclusion before effects.
+    if let (Some(source), Some(expected)) = (&payload.from, &payload.expected_source) {
+        let source = source.clone();
+        let expected = expected.clone();
+        match state
+            .off_worker(move |state| {
+                state.verify_lifecycle_selection(&source, capsem_api::VmLifecycleIntent::Clone, &expected)
+            })
+            .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) | Err(error) => return error.into_response(),
+        }
+    }
     if payload.managed.is_some() {
         return crate::managed_routes::create(state, payload).await.into_response();
     }
-    provision(state, payload).await.into_response()
+    match tokio::spawn(provision(state, payload)).await {
+        Ok(result) => result.into_response(),
+        Err(error) => {
+            AppError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("provision task: {error}")).into_response()
+        }
+    }
 }
 
 async fn provision(state: Arc<ServiceState>, payload: ProvisionRequest) -> Result<Json<ProvisionResponse>, AppError> {
@@ -90,6 +110,8 @@ async fn provision(state: Arc<ServiceState>, payload: ProvisionRequest) -> Resul
         let payload_labels = labels.clone();
         let payload_from = payload.from.clone().map(|source| crate::CloneFrom {
             source,
+            expected: payload.expected_source.clone(),
+            cancel: None,
             replace_image: payload.container.is_some(),
         });
         let payload_persistent = persistent;
@@ -278,6 +300,9 @@ async fn discard_failed_create(state: &Arc<ServiceState>, id: &str) {
 /// The caller's view of a failed provision: the whole cause chain, since the
 /// top context alone ("load the policy inputs") never says why.
 pub(crate) fn provision_failure(e: &anyhow::Error) -> AppError {
+    if let Some(refusal) = e.downcast_ref::<crate::lifecycle_readiness::SelectionRefusal>() {
+        return AppError::new(refusal.0.status, refusal.0.body.error.clone());
+    }
     let message = format!("{e:#}");
     let status = if message.contains("already exists") {
         StatusCode::CONFLICT

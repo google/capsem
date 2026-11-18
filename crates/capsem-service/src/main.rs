@@ -363,6 +363,9 @@ pub struct ProvisionOptions<'a> {
 /// The persistent session a new one is cloned from (`--from`).
 pub struct CloneFrom {
     pub source: String,
+    pub expected: Option<capsem_api::VmLifecycleSelection>,
+    /// Service-owned cancellation inputs for a managed producer waiting on selection.
+    pub cancel: Option<[tokio_util::sync::CancellationToken; 2]>,
     /// The new session names its own image: the source's staged image is
     /// not launched, while its workspace and image volumes carry over.
     pub replace_image: bool,
@@ -373,6 +376,8 @@ impl CloneFrom {
     pub fn keeping_image(source: impl Into<String>) -> Self {
         Self {
             source: source.into(),
+            expected: None,
+            cancel: None,
             replace_image: false,
         }
     }

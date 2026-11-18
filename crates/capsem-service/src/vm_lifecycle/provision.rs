@@ -1,5 +1,8 @@
 use super::*;
 
+#[cfg(test)]
+mod tests;
+
 impl ServiceState {
     pub(crate) fn provision_sandbox(self: &Arc<Self>, options: ProvisionOptions) -> Result<()> {
         self.provision_sandbox_generation(options, capsem_crypto::uuid_v4())
@@ -27,6 +30,22 @@ impl ServiceState {
             description,
         } = options;
         let labels = non_empty_labels(labels);
+        // The blocking producer owns this boundary, including while an HTTP
+        // waiter disappears. The expectation is matching data, never authority.
+        let _selection = from.as_ref().map(|_| self.policy_mutation.begin_blocking());
+        if let Some(clone) = &from {
+            anyhow::ensure!(
+                !clone
+                    .cancel
+                    .as_ref()
+                    .is_some_and(|tokens| tokens.iter().any(|token| token.is_cancelled())),
+                "managed creation cancelled before source selection"
+            );
+            if let Some(expected) = &clone.expected {
+                self.verify_lifecycle_selection(&clone.source, capsem_api::VmLifecycleIntent::Clone, expected)
+                    .map_err(crate::lifecycle_readiness::SelectionRefusal)?;
+            }
+        }
 
         let vm_settings = capsem_core::net::policy_config::load_merged_vm_settings();
         let max_concurrent_vms = vm_settings.max_concurrent_vms.unwrap_or(10) as usize;
@@ -78,13 +97,30 @@ impl ServiceState {
         }
 
         // Validate source sandbox if --from provided
+        let mut source_socket = None;
         let source_entry = if let Some(ref clone) = from {
+            let admitted = self
+                .lifecycle_selection(&clone.source, capsem_api::VmLifecycleIntent::Clone)
+                .map_err(crate::lifecycle_readiness::SelectionRefusal)?;
+            if let Some(expected) = &clone.expected {
+                self.verify_lifecycle_selection(&clone.source, capsem_api::VmLifecycleIntent::Clone, expected)
+                    .map_err(crate::lifecycle_readiness::SelectionRefusal)?;
+            }
             let registry = self.persistent_registry.lock().unwrap();
             let entry = registry
-                .get(&clone.source)
+                .list()
+                .find(|entry| super::persistent_entry_vm_id(entry) == admitted.id)
                 .ok_or_else(|| anyhow!("source sandbox '{}' not found", clone.source))?
                 .clone();
             drop(registry);
+            source_socket = self
+                .instances
+                .lock()
+                .unwrap()
+                .get(&admitted.id)
+                .map(|instance| instance.uds_path.clone());
+            self.verify_lifecycle_selection(&clone.source, capsem_api::VmLifecycleIntent::Clone, &admitted)
+                .map_err(crate::lifecycle_readiness::SelectionRefusal)?;
             // A VM in the old shape is refused, never laundered into a clone.
             self.validate_persistent_entry(&entry)?;
             Some(entry)
@@ -135,17 +171,11 @@ impl ServiceState {
             info!(from = entry.name, session_dir = %session_dir.display(), "cloning session from source sandbox");
             // A running source is cloned by its own process, frozen for the
             // copy; provision runs on the blocking pool, so wait for it here.
-            let running = self
-                .instances
-                .lock()
-                .unwrap()
-                .get(&super::persistent_entry_vm_id(entry))
-                .map(|instance| instance.uds_path.clone());
             tokio::runtime::Handle::current()
                 .block_on(crate::vm_files::clone_session_state(
                     self,
                     &super::persistent_entry_vm_id(entry),
-                    running.as_deref(),
+                    source_socket.as_deref(),
                     entry.session_dir.clone(),
                     session_dir.clone(),
                 ))
