@@ -60,7 +60,7 @@ class RuntimeConsole:
         self.pid = None
         self.returncode = None
 
-    def start(self, argv, container, path, pid_file, timeout):
+    def start(self, argv, container, path, pid_file, timeout, *, spawn=None):
         become_subreaper()
         deadline = time.monotonic() + timeout
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
@@ -68,7 +68,7 @@ class RuntimeConsole:
             path.chmod(0o600)
             listener.listen(1)
             listener.settimeout(min(0.05, timeout))
-            runtime = subprocess.Popen(
+            runtime = (spawn or subprocess.Popen)(
                 [*argv, "--detach", "--console-socket", str(path), container], stdin=subprocess.DEVNULL
             )
             try:
@@ -130,8 +130,12 @@ class RuntimeConsole:
 
 
 class Console:
-    def __init__(self, master, listener, *, replay_limit):
+    def __init__(self, master, listener, *, replay_limit, preparation=None):
         self._master, self._listener = master, listener
+        self._preparation = preparation
+        if preparation is not None:
+            preparation.remember = self._broadcast
+            preparation.can_output = lambda: all(output.size < FRAME_LIMIT for _, output in self._clients.values())
         self._replay = collections.deque()
         self._replay_size, self._limit = 0, replay_limit
         self._clients = {}
@@ -158,6 +162,12 @@ class Console:
                     self._replay[0] = head[excess:]
                     self._replay_size -= excess
 
+    def _broadcast(self, data):
+        self._remember(data)
+        encoded = encode_output(data)
+        for _, output in self._clients.values():
+            output.append(encoded)
+
     def _drop(self, selector, client):
         with contextlib.suppress(KeyError, OSError):
             selector.unregister(client)
@@ -167,8 +177,13 @@ class Console:
     def serve(self):
         selector = selectors.DefaultSelector()
         live = True
+        if self._preparation is not None:
+            self._preparation.watch(selector)
         try:
             while live or any(output for _, output in self._clients.values()):
+                if self._preparation is not None:
+                    self._preparation.check_deadline()
+                    self._preparation.watch(selector)
                 # Admission stops at the existing data/frame budgets. Only
                 # the current bounded record may overshoot; readiness resumes
                 # it. Backpressure never discards an accepted byte suffix.
@@ -179,7 +194,11 @@ class Console:
                 for client, (_, output) in self._clients.items():
                     watch(selector, client, (selectors.EVENT_READ if live and self._input.size < DATA_LIMIT else 0)
                           | (selectors.EVENT_WRITE if output else 0), client)
-                for key, mask in selector.select():
+                delay = self._preparation.delay() if self._preparation is not None else None
+                for key, mask in selector.select(delay):
+                    if self._preparation is not None and key.data is self._preparation:
+                        self._preparation.step()
+                        continue
                     if key.data == "master":
                         if mask & selectors.EVENT_WRITE:
                             try:
@@ -196,10 +215,7 @@ class Console:
                             if not data:
                                 live = False
                                 continue
-                            self._remember(data)
-                            encoded = encode_output(data)
-                            for _, output in self._clients.values():
-                                output.append(encoded)
+                            self._broadcast(data)
                     elif key.data == "listener" and live:
                         try:
                             client, _ = self._listener.accept()
@@ -235,6 +251,9 @@ class Console:
                         except (OSError, ValueError):
                             self._drop(selector, client)
         finally:
+            if self._preparation is not None:
+                for _ in range(4):
+                    self._preparation.step()
             for client in list(self._clients):
                 self._drop(selector, client)
             selector.close()

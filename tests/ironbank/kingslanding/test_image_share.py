@@ -24,7 +24,7 @@ pytestmark = pytest.mark.integration
 
 #: Trusted control inventory, separate from image blobs and runtime markers.
 CONTROL_FILES = {
-    "options.json", "launch.py", "runtime_console.py", "runtime_pty.py",
+    "options.json", "launch.py", "runtime_limits.py", "runtime_preparation.py", "runtime_console.py", "runtime_pty.py",
     "runtime_terminal.py", "runtime_userns.py", "runtime_workspace.py", "runtime_home.py",
 }
 MARKERS = {"ready", "running", "failed", "exited"}

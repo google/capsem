@@ -92,6 +92,14 @@ pub const LAUNCHER: &[u8] = include_bytes!("../../../guest/artifacts/container/l
 /// before its modules. Staging and saved-session refresh share this inventory.
 pub const LAUNCHER_FILES: &[(&str, &[u8])] = &[
     (
+        "runtime_limits.py",
+        include_bytes!("../../../guest/artifacts/container/runtime_limits.py"),
+    ),
+    (
+        "runtime_preparation.py",
+        include_bytes!("../../../guest/artifacts/container/runtime_preparation.py"),
+    ),
+    (
         "runtime_console.py",
         include_bytes!("../../../guest/artifacts/container/runtime_console.py"),
     ),

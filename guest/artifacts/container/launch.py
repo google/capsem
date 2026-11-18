@@ -36,6 +36,9 @@ _terminal = runpy.run_path(str(Path(__file__).with_name("runtime_terminal.py")))
 Relay, relay = (_terminal[name] for name in ("Relay", "relay"))
 _workspace = runpy.run_path(str(Path(__file__).with_name("runtime_workspace.py")))
 _home = runpy.run_path(str(Path(__file__).with_name("runtime_home.py")))
+_limits = runpy.run_path(str(Path(__file__).with_name("runtime_limits.py")))
+checked_id_map, shm_bytes, checked_resources = (_limits[name] for name in ("checked_id_map", "shm_bytes", "checked_resources"))
+_preparation = runpy.run_path(str(Path(__file__).with_name("runtime_preparation.py")))
 _safe_mount_point = _workspace["safe_mount_point"]
 
 RUNTIME = Path("/var/tmp/capsem-container")
@@ -76,7 +79,6 @@ ROOTFS_LIMIT = 4 * 1024**3
 PUBLISHED_ID_MAP = {"containerID": 0, "hostID": 100000, "size": 65536}
 # Every id the workload maps lies at or above this, clear of the VM's own
 # system and user ids, so container root is no uid the VM trusts.
-LOWEST_MAPPED_ID = 65536
 # An image declares the memory it cannot run without, in MiB.
 MEMORY_LABEL = "org.capsem.memory.min"
 CPU_PERIOD = 100000
@@ -340,7 +342,7 @@ def configure(unpacked, image, options, detached=False):
             ("/run/capsem-browser", "/run/capsem-browser", ["noexec"]),
         )
     )
-    return {
+    configured = {
         "ociVersion": "1.0.2",
         # The image under the session's layer (mount_layer): writable like a
         # container, and the image itself is never written.
@@ -380,6 +382,7 @@ def configure(unpacked, image, options, detached=False):
             "seccomp": options["seccomp"],
         },
     }
+    return _preparation["configure"](configured, options.get("startup"))
 
 
 def _launcher_hook(argument):
@@ -408,7 +411,7 @@ def workload_started(stage):
 
 def clear_launch_markers(stage):
     """A launch starts from nothing the last one of a named session left."""
-    for marker in (RUNNING, FAILED, EXITED):
+    for marker in (RUNNING, FAILED, EXITED, "preparing"):
         (stage / marker).unlink(missing_ok=True)
 
 
@@ -419,23 +422,8 @@ def launch_ended(stage, code):
     calling it running."""
     if (stage / RUNNING).exists():
         (stage / EXITED).write_text(f"{code}\n")
-    else:
+    elif not (stage / FAILED).exists():
         (stage / FAILED).write_text("1\n")
-
-
-def checked_id_map(id_map):
-    """The host's map, refused unless container root and every id after it
-    land at or above LOWEST_MAPPED_ID."""
-    if (
-        not isinstance(id_map, dict)
-        or set(id_map) != {"containerID", "hostID", "size"}
-        or not all(type(value) is int for value in id_map.values())
-        or id_map["containerID"] != 0
-        or id_map["hostID"] < LOWEST_MAPPED_ID
-        or not 0 < id_map["size"] <= 65536
-    ):
-        raise ValueError(f"refusing id map {id_map!r}: container root must map above the VM's own ids")
-    return id_map
 
 
 def volume_dir(path):
@@ -465,25 +453,6 @@ def prepare_volumes(volumes, rootfs, id_map):
             staging.mkdir(mode=0o755)
             os.chown(staging, id_map["hostID"], id_map["hostID"])
         staging.rename(target)
-
-
-def shm_bytes(resources):
-    """POSIX shared memory for the workload: a quarter of its memory, at
-    least 64 MiB and at most 1 GiB. Chromium renders into it and draws blank
-    windows below about 256 MiB. Its pages are charged to the workload's
-    cgroup like any other memory, so the size widens no limit."""
-    return max(64 * 1024**2, min(1024**3, resources["memory_bytes"] // 4))
-
-
-def checked_resources(resources):
-    """The host's sizing, refused unless every limit is a positive integer."""
-    if (
-        not isinstance(resources, dict)
-        or set(resources) != {"memory_bytes", "cpu_millis", "pids"}
-        or not all(type(value) is int and value > 0 for value in resources.values())
-    ):
-        raise ValueError(f"refusing workload resources {resources!r}")
-    return resources
 
 
 def _syscall_check(result):
@@ -1055,9 +1024,15 @@ def run(stage, detached=False):
         (stage / "ready").write_text("1\n")
         pid_file = RUNTIME / "workload.pid"
         argv = [*RUNC, "run", "--no-new-keyring", "--pid-file", str(pid_file), "--bundle", str(bundle)]
+        preparation = None
+        if options.get("startup") is not None:
+            preparation = roots.enter_context(_preparation["Bridge"](
+                stage, options["startup"], lambda: command(*RUNC, "kill", "--all", CONTAINER, "KILL", check=False, timeout=5)
+            ))
+            argv += ["--preserve-fds", "2"]
         if not detached:
-            process = subprocess.Popen([*argv, CONTAINER])
-            code = process.wait()
+            process = (preparation.spawn if preparation else subprocess.Popen)([*argv, CONTAINER])
+            code = preparation.wait(process) if preparation else process.wait()
             return code
         # Detached: nothing is attached, so the workload runs on a terminal
         # this launcher holds for as long as it runs.
@@ -1068,8 +1043,10 @@ def run(stage, detached=False):
             CONSOLE.chmod(0o600)
             listener.listen()
             process = RuntimeConsole()
-            master = process.start(argv, CONTAINER, RUNTIME / "runc-console.sock", pid_file, COMMAND_TIMEOUT)
-            Console(master, listener, replay_limit=REPLAY_LIMIT).serve()
+            start_options = {"spawn": preparation.spawn} if preparation else {}
+            master = process.start(argv, CONTAINER, RUNTIME / "runc-console.sock", pid_file, COMMAND_TIMEOUT, **start_options)
+            console_options = {"preparation": preparation} if preparation else {}
+            Console(master, listener, replay_limit=REPLAY_LIMIT, **console_options).serve()
         code = process.wait()
         return code
     finally:

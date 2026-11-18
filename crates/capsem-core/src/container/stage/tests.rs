@@ -15,6 +15,7 @@ fn launch_options_keep_environment_and_actual_owner_identity_outside_policy_byte
         manifest: MANIFEST,
         rootfs: None,
         environment: Some(&context),
+        startup: None,
     };
     let resources = super::super::workload_resources(2048, 2).unwrap();
     let files = stage_plan(image, &[], &BTreeMap::new(), resources, DeclaredSurface::Terminal).unwrap();
@@ -28,7 +29,8 @@ fn launch_options_keep_environment_and_actual_owner_identity_outside_policy_byte
         StageImage {
             manifest: MANIFEST,
             rootfs: None,
-            environment: Some(&invalid)
+            environment: Some(&invalid),
+            startup: None,
         },
         &[],
         &BTreeMap::new(),
@@ -49,6 +51,7 @@ fn published_root_stage_metadata_is_typed_and_keeps_the_single_stage_path() {
         manifest: MANIFEST,
         rootfs: Some(rootfs),
         environment: None,
+        startup: None,
     };
     let resources = super::super::workload_resources(2048, 2).unwrap();
     let plan = stage_plan(image, &[], &BTreeMap::new(), resources, DeclaredSurface::Terminal).unwrap();
@@ -56,6 +59,8 @@ fn published_root_stage_metadata_is_typed_and_keeps_the_single_stage_path() {
         plan.iter().map(|file| file.name.as_str()).collect::<Vec<_>>(),
         [
             "options.json",
+            "runtime_limits.py",
+            "runtime_preparation.py",
             "runtime_console.py",
             "runtime_pty.py",
             "runtime_terminal.py",
@@ -101,6 +106,7 @@ fn published_root_stage_metadata_rejects_bad_digests_and_out_of_bound_sizes() {
                 size,
             }),
             environment: None,
+            startup: None,
         };
         assert!(stage_plan(image, &[], &BTreeMap::new(), resources, DeclaredSurface::Terminal).is_err());
     }
@@ -126,6 +132,8 @@ fn stage_plan_writes_only_options_and_launcher_modules() {
         names,
         [
             "options.json",
+            "runtime_limits.py",
+            "runtime_preparation.py",
             "runtime_console.py",
             "runtime_pty.py",
             "runtime_terminal.py",
@@ -161,15 +169,15 @@ fn stage_plan_writes_only_options_and_launcher_modules() {
     assert_eq!(super::super::CONTAINER_WORKSPACE, "/workspace");
     assert_eq!(plan.last().unwrap().bytes, LAUNCHER);
     assert_eq!(
-        plan[1].bytes,
+        plan[3].bytes,
         include_bytes!("../../../../../guest/artifacts/container/runtime_console.py")
     );
     assert_eq!(
-        plan[2].bytes,
+        plan[4].bytes,
         include_bytes!("../../../../../guest/artifacts/container/runtime_pty.py")
     );
     assert_eq!(
-        plan[3].bytes,
+        plan[5].bytes,
         include_bytes!("../../../../../guest/artifacts/container/runtime_terminal.py")
     );
     let resources = super::super::workload_resources(2048, 2).unwrap();
@@ -319,4 +327,56 @@ fn a_surface_port_that_is_not_exactly_one_port_refuses_the_image() {
     );
     let unknown = labels(&[(SURFACE_LABEL, "vnc".into()), (SURFACE_PORT_LABEL, "5900".into())]);
     assert!(DeclaredSurface::from_labels(&unknown).is_err());
+}
+
+#[test]
+fn approved_startup_is_staged_only_with_a_qualified_environment_context() {
+    let context = EnvironmentLaunchContext {
+        session_id: uuid::Uuid::from_u128(1),
+        owner_generation: uuid::Uuid::from_u128(2),
+        environment_id: uuid::Uuid::from_u128(3),
+        revision_id: uuid::Uuid::from_u128(4),
+    };
+    let startup = capsem_config::environment::EnvironmentStartup {
+        script: "printf '%s' \"$APPROVED_VARIABLE\"".into(),
+        timeout_seconds: 121,
+    };
+    let resources = super::super::workload_resources(2048, 2).unwrap();
+    let image = StageImage {
+        manifest: MANIFEST,
+        rootfs: None,
+        environment: Some(&context),
+        startup: Some(&startup),
+    };
+    let files = stage_plan(image, &[], &BTreeMap::new(), resources, DeclaredSurface::Terminal).unwrap();
+    let options: serde_json::Value = serde_json::from_slice(&files[0].bytes).unwrap();
+    assert_eq!(options["startup"]["script"], startup.script);
+    assert_eq!(options["startup"]["timeout_seconds"], 121);
+    assert!(files.iter().any(|file| file.name == "runtime_preparation.py"));
+    assert!(stage_plan(
+        StageImage {
+            environment: None,
+            ..image
+        },
+        &[],
+        &BTreeMap::new(),
+        resources,
+        DeclaredSurface::Terminal
+    )
+    .is_err());
+    let invalid = capsem_config::environment::EnvironmentStartup {
+        timeout_seconds: 0,
+        script: String::new(),
+    };
+    assert!(stage_plan(
+        StageImage {
+            startup: Some(&invalid),
+            ..image
+        },
+        &[],
+        &BTreeMap::new(),
+        resources,
+        DeclaredSurface::Terminal
+    )
+    .is_err());
 }

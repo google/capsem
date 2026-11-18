@@ -39,6 +39,7 @@ pub struct StageImage<'a> {
     pub manifest: &'a str,
     pub rootfs: Option<RootfsFile<'a>>,
     pub environment: Option<&'a EnvironmentLaunchContext>,
+    pub startup: Option<&'a capsem_config::environment::EnvironmentStartup>,
 }
 
 /// Host-assigned bookkeeping in the persisted launch options. These identities
@@ -81,6 +82,7 @@ impl<'a> From<&'a str> for StageImage<'a> {
             manifest,
             rootfs: None,
             environment: None,
+            startup: None,
         }
     }
 }
@@ -168,6 +170,14 @@ pub fn stage_plan<'a>(
     }
     if let Some(context) = image.environment {
         options["environment"] = environment_value(context)?;
+    }
+    if let Some(startup) = image.startup {
+        anyhow::ensure!(
+            image.environment.is_some(),
+            "startup requires a qualified environment context"
+        );
+        startup.validate().map_err(anyhow::Error::msg)?;
+        options["startup"] = serde_json::to_value(startup)?;
     }
     if let Some(rootfs) = image.rootfs {
         digest_hex(rootfs.digest)?;
