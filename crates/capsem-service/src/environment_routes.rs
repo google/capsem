@@ -91,6 +91,38 @@ pub(crate) async fn info(
     }))
 }
 
+/// Exact historical timing is data, not launch permission. Never consult the
+/// current shared file: another owner may have advanced its head since approval.
+pub(crate) async fn readiness(
+    actor: AuthenticatedActor,
+    State(state): State<Arc<ServiceState>>,
+    Path((environment_id, revision_id)): Path<(String, String)>,
+) -> Result<Json<capsem_api::EnvironmentReadinessResponse>, AppError> {
+    authorize(&actor, &environment_id)?;
+    let environment = capsem_api::environments::EnvironmentRevisionReference {
+        environment_id,
+        revision_id,
+    };
+    environment
+        .validate()
+        .map_err(|error| AppError::new(StatusCode::BAD_REQUEST, error.into()))?;
+    let observed = state
+        .environments
+        .load_revision(&environment.environment_id, &environment.revision_id)
+        .await;
+    authorize(&actor, &environment.environment_id)?;
+    let snapshot = observed.map_err(unavailable)?;
+    let startup_timeout_seconds = snapshot
+        .specification
+        .startup
+        .as_ref()
+        .map_or(0, |startup| startup.timeout_seconds);
+    Ok(Json(capsem_api::EnvironmentReadinessResponse {
+        environment,
+        startup_timeout_seconds,
+    }))
+}
+
 /// Operator creation commits a new blueprint; it does not mutate running VMs.
 pub(crate) async fn create(
     actor: AuthenticatedActor,

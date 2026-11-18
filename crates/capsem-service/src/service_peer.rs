@@ -101,12 +101,17 @@ pub(crate) async fn restrict_owner_routes(
                 && request
                     .extensions()
                     .get::<axum::extract::MatchedPath>()
-                    .is_some_and(|path| path.as_str() == "/environments/{id}/info")
+                    .is_some_and(|path| {
+                        matches!(
+                            path.as_str(),
+                            "/environments/{id}/info" | "/environments/{id}/revisions/{revision_id}/readiness"
+                        )
+                    })
                 && request
                     .uri()
                     .path()
-                    .strip_prefix("/environments/")
-                    .and_then(|path| path.strip_suffix("/info"))
+                    .split('/')
+                    .nth(2)
                     .is_some_and(|id| crate::environment_routes::permits_inspect(&actor, id));
             if !admitted && !environment_inspect {
                 return refuse(&state, request, Reason::ScopeRequired, Some(actor.evidence().clone())).await;

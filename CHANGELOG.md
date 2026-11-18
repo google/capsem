@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: The service exposes verified startup timing for an exact committed environment revision, with live inspection checks and no script or variable disclosure.
+
 - Fixed: TypeScript requests accept long approved deadlines without native timer overflow, and release their timers and cancellation listeners after completion.
 
 - Added: The API contract describes exact-revision startup wait metadata, without exposing scripts or variables. Client and gateway deadline integration remains in progress.
