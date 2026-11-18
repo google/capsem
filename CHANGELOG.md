@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Container status exposes approved startup as `preparing`; generated Python and TypeScript models accept the pending state.
+
 - Added: Saved-image environments launch their retained digest and ordinary variables after policy acknowledgement. Resume and fork re-admit the recorded image against current policy and rebind trusted controls to the new owner. Other workload preparation fields remain incomplete.
 
 - Security: Persisted workload launch options identify their exact environment revision and actual VM owner. Cold rebind preserves approved variables and refuses a different revision.

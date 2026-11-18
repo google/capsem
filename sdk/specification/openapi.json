@@ -4754,6 +4754,7 @@
           "staging",
           "staged",
           "starting",
+          "preparing",
           "running",
           "exited",
           "failed"

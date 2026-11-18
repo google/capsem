@@ -78,6 +78,8 @@ pub enum ContainerState {
     Staged,
     /// The guest launcher has been started and the workload is not yet up.
     Starting,
+    /// Approved startup is running inside the container; entrypoint readiness is pending.
+    Preparing,
     /// The guest reports the workload running.
     Running,
     /// The workload ended; `exit_code` says how.
