@@ -86,11 +86,12 @@ approved = [
 ]
 
 [http]
-count = 119
+count = 120
 approved = [
   # Environment creation and inspection approved by milestone #406.
   "POST /environments/create",
   "GET /environments/{id}/info",
+  "POST /environments/{id}/changes",
   # Operator-issued delegated access, explicitly approved by milestone #407.
   "POST /agent-access",
   "DELETE /agent-access/{id}",
