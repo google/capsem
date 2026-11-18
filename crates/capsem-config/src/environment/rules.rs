@@ -169,3 +169,19 @@ impl EnvironmentDetectionRule {
             .map_err(|_| "invalid environment detection rule condition".into())
     }
 }
+
+impl EnvironmentAccessRules {
+    /// Validate a selected canonical section without requiring an unrelated
+    /// workload specification. This does not verify catalog provenance.
+    pub fn validate(&self) -> Result<(), String> {
+        self.catalog.validate()?;
+        access(self, self.catalog.selected.iter().map(|entry| entry.id.as_str()))
+    }
+}
+impl EnvironmentDetectionRules {
+    /// The same canonical limits and pin validation used by a full revision.
+    pub fn validate(&self) -> Result<(), String> {
+        self.catalog.validate()?;
+        detection(self, self.catalog.selected.iter().map(|entry| entry.id.as_str()))
+    }
+}

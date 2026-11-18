@@ -187,3 +187,23 @@ fn environment_detection_compilation_reports_severity_without_an_access_action()
         .unwrap_err()
         .contains("condition-value-canary"));
 }
+
+#[test]
+fn standalone_selected_rule_sections_use_the_canonical_pin_and_parameter_validators() {
+    let document = EnvironmentDocument::from_toml(&format!("{BASE}{RULES}")).unwrap();
+    document.specification.access.validate().unwrap();
+    document.specification.detection.validate().unwrap();
+    let mut access = document.specification.access;
+    access.catalog.selected.push(EnvironmentCatalogPin {
+        id: "preset".into(),
+        version: "1.0.0".into(),
+        catalog_reference: "ghcr.io/google/capsem/rules:stable".into(),
+        resolved_digest: format!("sha256:{}", "a".repeat(64)),
+    });
+    access.validate().unwrap();
+    access.catalog.selected[0].resolved_digest = "invalid".into();
+    assert!(access.validate().is_err());
+    access.catalog.selected.clear();
+    access.parameters.insert("missing".into(), Default::default());
+    assert!(access.validate().is_err());
+}

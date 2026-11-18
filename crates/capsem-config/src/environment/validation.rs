@@ -168,16 +168,8 @@ impl EnvironmentSpecification {
             self.mcps.catalog.selected.iter().map(|entry| entry.id.as_str()),
             self.image.is_some(),
         )?;
-        self.access.catalog.validate()?;
-        self.detection.catalog.validate()?;
-        rules::access(
-            &self.access,
-            self.access.catalog.selected.iter().map(|entry| entry.id.as_str()),
-        )?;
-        rules::detection(
-            &self.detection,
-            self.detection.catalog.selected.iter().map(|entry| entry.id.as_str()),
-        )?;
+        self.access.validate()?;
+        self.detection.validate()?;
         if let Some(image) = &self.image {
             validate_image_reference(&image.reference)?;
             require(
