@@ -56,7 +56,7 @@ fn handler() -> BuiltinHandler {
     BuiltinHandler {
         http_client: BuiltinHttpClient::new(HTTP_REQUEST_TIMEOUT, HTTP_CONNECT_TIMEOUT),
         security_rules: Arc::new(SecurityRuleSet::new(Vec::new())),
-        plugin_policy: Arc::new(BTreeMap::new()),
+        plugin_policy: SecurityPluginPolicy::default(),
     }
 }
 

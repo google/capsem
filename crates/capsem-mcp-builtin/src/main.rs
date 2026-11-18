@@ -11,7 +11,6 @@
 //! ledger, so what these tools do that only this process can see -- the HTTP
 //! requests it makes -- goes back to it as records on each tool result (see `capsem_proto::mcp_contracts::builtin_ledger`).
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
@@ -24,7 +23,8 @@ use tracing::info;
 
 use capsem_core::mcp::builtin_tools;
 use capsem_core::mcp::builtin_tools::BuiltinHttpClient;
-use capsem_core::net::policy_config::{SecurityPluginConfig, SecurityRuleSet};
+use capsem_core::net::policy_config::SecurityRuleSet;
+use capsem_core::security_engine::SecurityPluginPolicy;
 use capsem_mcp_transport::native_worker::PreparedMcpWorker;
 use capsem_proto::mcp_contracts::builtin_ledger::{self, BuiltinLedgerRecord, BUILTIN_LEDGER_META_KEY};
 use capsem_proto::mcp_contracts::JsonRpcResponse;
@@ -90,7 +90,7 @@ struct HttpHeadersParams {
 struct BuiltinHandler {
     http_client: BuiltinHttpClient,
     security_rules: Arc<SecurityRuleSet>,
-    plugin_policy: Arc<BTreeMap<String, SecurityPluginConfig>>,
+    plugin_policy: SecurityPluginPolicy,
 }
 
 impl ServerHandler for BuiltinHandler {
@@ -278,7 +278,7 @@ async fn run(vm_id: String, trace_id: String) -> Result<()> {
         // Brokered requests use only the coordinator's receipt; local policy
         // collections are unused by this mode and never grant permission.
         security_rules: Arc::new(SecurityRuleSet::new(Vec::new())),
-        plugin_policy: Arc::new(BTreeMap::new()),
+        plugin_policy: SecurityPluginPolicy::default(),
     };
 
     let tools = BuiltinHandler::tool_router();
