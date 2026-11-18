@@ -426,7 +426,7 @@
     },
     "/environments/create": {
       "post": {
-        "description": "Create an operator blueprint. Reconcile the same request ID explicitly after interruption; never infer completed application from an accepted decision. Repository and catalog resolution are unavailable pending integration.",
+        "description": "Create an operator blueprint. Reconcile the same request ID explicitly after interruption; never infer completed application from an accepted decision. Skills and rules resolve from configured catalogs. Repository resolution and MCP catalog verification are unavailable.",
         "operationId": "createEnvironment",
         "requestBody": {
           "content": {

@@ -25,7 +25,7 @@ pub fn openapi() -> OpenApi {
     doc.get::<environments::EnvironmentCurrentResponse>("/environments/{id}/info", "getEnvironmentInfo");
     let request = doc.schema::<EnvironmentCreateRequest>();
     let create = doc.operation::<EnvironmentMutationResponse>("/environments/create", "createEnvironment")
-        .description(Some("Create an operator blueprint. Reconcile the same request ID explicitly after interruption; never infer completed application from an accepted decision. Repository and catalog resolution are unavailable pending integration."))
+        .description(Some("Create an operator blueprint. Reconcile the same request ID explicitly after interruption; never infer completed application from an accepted decision. Skills and rules resolve from configured catalogs. Repository resolution and MCP catalog verification are unavailable."))
         .request_body(Some(RequestBodyBuilder::new().required(Some(Required::True))
             .content("application/json", Content::new(Some(request))).build()))
         .extensions(Some([("x-capsem-request-timeout-ms", IMAGE_PULL_REQUEST_TIMEOUT_MS)].into_iter().collect()));
