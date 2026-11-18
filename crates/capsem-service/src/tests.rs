@@ -298,6 +298,7 @@ pub(super) fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
 /// The fields every fake instance shares; a test names only what it varies.
 pub(crate) fn test_instance() -> InstanceInfo {
     InstanceInfo {
+        environment: None,
         terminal: None,
         browser_request: None,
         browser_revision: 0,
@@ -527,6 +528,7 @@ pub(crate) fn insert_fake_instance_with_session_dir(state: &ServiceState, id: &s
     state.instances.lock().unwrap().insert(
         id.to_string(),
         InstanceInfo {
+            environment: None,
             terminal: None,
             browser_request: None,
             browser_revision: 0,
@@ -633,6 +635,7 @@ pub(crate) fn install_test_runtime_assets(state: &ServiceState) {
 
 pub(crate) fn test_persistent_entry(name: &str, session_dir: PathBuf) -> PersistentVmEntry {
     PersistentVmEntry {
+        environment: None,
         id: new_persistent_vm_id(),
         name: name.into(),
         legacy_profile_id: None,
@@ -655,6 +658,7 @@ pub(crate) fn test_persistent_entry(name: &str, session_dir: PathBuf) -> Persist
 
 pub(crate) fn test_provision_options<'a>(id: &'a str, name: &'a str) -> ProvisionOptions<'a> {
     ProvisionOptions {
+        environment: None,
         id,
         name,
         ram_mb: 2048,

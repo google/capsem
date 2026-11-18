@@ -18,6 +18,9 @@ use serde::{Deserialize, Serialize};
 /// registry files, and refusing them would strand every persistent VM.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PersistentVmEntry {
+    /// Exact approved selection, retained across cold starts and shared edits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<capsem_logger::events::EnvironmentRevisionParent>,
     #[serde(default)]
     pub id: String,
     pub name: String,

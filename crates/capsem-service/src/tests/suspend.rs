@@ -9,6 +9,7 @@ async fn warm_restore_disabled_without_consuming_saved_state() {
     let checkpoint = session.join("checkpoint.vzsave");
     std::fs::write(&checkpoint, b"existing checkpoint").unwrap();
     let entry = PersistentVmEntry {
+        environment: None,
         id: id.clone(),
         suspended: true,
         checkpoint_path: Some("checkpoint.vzsave".into()),

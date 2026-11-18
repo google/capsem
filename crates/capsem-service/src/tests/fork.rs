@@ -13,6 +13,7 @@ fn running_fork_source(state: &Arc<ServiceState>, dir: &tempfile::TempDir, refus
     state.instances.lock().unwrap().insert(
         "fork-src".into(),
         InstanceInfo {
+            environment: None,
             terminal: None,
             browser_request: None,
             browser_revision: 0,
@@ -131,6 +132,7 @@ async fn handle_fork_duplicate_returns_conflict() {
     state.instances.lock().unwrap().insert(
         "dup-src".into(),
         InstanceInfo {
+            environment: None,
             terminal: None,
             browser_request: None,
             browser_revision: 0,
@@ -186,6 +188,7 @@ async fn handle_fork_from_persistent_registry() {
         reg.data.vms.insert(
             "pers-vm".into(),
             PersistentVmEntry {
+                environment: None,
                 id: vm_id.clone(),
                 created_at: "2026-01-01T00:00:00Z".into(),
                 labels: Some(HashMap::from([("suite".into(), "eval".into())])),
@@ -294,6 +297,7 @@ async fn handle_fork_refuses_a_profile_era_vm() {
     let session_dir = state.run_dir.join("persistent/profile-era");
     std::fs::create_dir_all(session_dir.join("workspace")).unwrap();
     let entry = PersistentVmEntry {
+        environment: None,
         legacy_profile_id: Some("code".into()),
         ..test_persistent_entry("profile-era", session_dir)
     };

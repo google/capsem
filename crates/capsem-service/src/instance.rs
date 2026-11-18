@@ -43,6 +43,7 @@ impl WorkerGrant {
 }
 
 pub(crate) struct InstanceInfo {
+    pub(crate) environment: Option<crate::environment_launch::EnvironmentBinding>,
     pub(crate) browser_request: Option<capsem_api::BrowserRequest>,
     /// Includes cleared requests, so an older observer cannot resurrect a URL.
     pub(crate) browser_revision: u64,

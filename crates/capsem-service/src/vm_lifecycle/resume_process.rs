@@ -105,7 +105,17 @@ impl ServiceState {
         service_runtime::remove_instance_sentinels(&uds_path);
 
         self.validate_persistent_entry(&entry)?;
-        let active_policy = self.materialize_active_policy(&entry.session_dir)?;
+        let (active_policy, variables) = self.prepare_environment_policy(
+            &entry.session_dir,
+            entry.environment.as_ref(),
+            entry.environment.as_ref(),
+        )?;
+        if let Some(variables) = variables {
+            entry.env = Some(variables);
+        }
+        let environment_binding = entry.environment.as_ref().map(|reference| {
+            crate::environment_launch::EnvironmentBinding::starting(reference.clone(), active_policy.digest.clone())
+        });
         let active_policy_path = active_policy.path.clone();
         let (upstream_broker, owner_upstream_policy) = crate::upstream_broker::PendingBroker::pair_for_session(
             active_policy.broker_policy(),
@@ -279,6 +289,7 @@ impl ServiceState {
         instances.insert(
             vm_id.clone(),
             InstanceInfo {
+                environment: environment_binding,
                 terminal: None,
                 browser_request: None,
                 browser_revision: 0,

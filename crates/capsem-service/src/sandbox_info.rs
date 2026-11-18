@@ -4,6 +4,22 @@ use super::*;
 /// The list/info row of a running VM, from its in-memory record alone.
 pub(super) fn running_sandbox_info(i: &InstanceInfo) -> SandboxInfo {
     let mut info = SandboxInfo::new(i.id.clone(), i.pid, VmLifecycleState::Running, i.persistent);
+    info.environment = i.environment.as_ref().map(|binding| {
+        let reference = |reference: &capsem_logger::events::EnvironmentRevisionParent| {
+            capsem_api::environments::EnvironmentRevisionReference {
+                environment_id: reference.environment_id.clone(),
+                revision_id: reference.revision_id.clone(),
+            }
+        };
+        capsem_api::SandboxEnvironment {
+            boot: binding.acknowledged.then(|| reference(&binding.boot)),
+            live_policy: binding.acknowledged.then(|| reference(&binding.live_policy)),
+            desired: reference(&binding.desired),
+            owner_generation: Some(i.generation.to_string()),
+            policy_digest: binding.acknowledged.then(|| binding.policy_digest.clone()),
+            pending_restart: (binding.acknowledged && binding.boot == binding.desired).then_some(false),
+        }
+    });
     info.name = Some(i.name.clone());
     info.terminal = i.terminal.clone();
     info.browser_request = i.browser_request.clone();
@@ -29,6 +45,20 @@ pub(super) fn inactive_sandbox_info(
     blocked_reason: Option<String>,
 ) -> SandboxInfo {
     let mut info = SandboxInfo::new(vm_id, 0, status, true);
+    info.environment = entry
+        .environment
+        .as_ref()
+        .map(|reference| capsem_api::SandboxEnvironment {
+            boot: None,
+            live_policy: None,
+            desired: capsem_api::environments::EnvironmentRevisionReference {
+                environment_id: reference.environment_id.clone(),
+                revision_id: reference.revision_id.clone(),
+            },
+            owner_generation: None,
+            policy_digest: None,
+            pending_restart: None,
+        });
     info.name = Some(entry.name.clone());
     info.ram_mb = Some(entry.ram_mb);
     info.cpus = Some(entry.cpus);

@@ -53,6 +53,7 @@ mod policy_mutation;
 use policy_mutation::{apply_policy_mutation, MutationRoute, PolicyMutation};
 mod connection_routes;
 mod credential_routes;
+mod environment_launch;
 mod environment_routes;
 mod ledger_worker;
 mod mcp_routes;
@@ -344,6 +345,7 @@ struct AssetReconcileState {
 }
 
 pub struct ProvisionOptions<'a> {
+    pub environment: Option<capsem_logger::events::EnvironmentRevisionParent>,
     pub id: &'a str,
     pub name: &'a str,
     pub ram_mb: u64,

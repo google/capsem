@@ -170,6 +170,7 @@ fn nil_selected_generation_refuses_provision_before_any_session_side_effect() {
     let state = make_test_state();
     let result = state.provision_sandbox_generation(
         ProvisionOptions {
+            environment: None,
             id: "never-started",
             name: "never-started",
             ram_mb: 2048,

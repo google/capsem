@@ -115,6 +115,33 @@ impl EnvironmentRevisions {
         let _guard = lock.lock().await;
         self.files.load_current(&self.ledger, id).await
     }
+    /// Load a committed immutable revision, including a historical binding whose
+    /// shared environment has since advanced. This is data, not launch authority.
+    pub async fn load_revision(
+        &self,
+        id: &str,
+        revision: &str,
+    ) -> Result<EnvironmentRevisionSnapshot, EnvironmentFileError> {
+        validate_id(id)?;
+        validate_id(revision)?;
+        let snapshot = self.snapshot(id, revision).await?;
+        if snapshot.record.environment_id != id || snapshot.record.revision_id != revision {
+            return Err(EnvironmentFileError::Unverified);
+        }
+        match snapshot.record.state {
+            EnvironmentRevisionState::Committing => return Err(EnvironmentFileError::RecoveryRequired),
+            EnvironmentRevisionState::RecoveredUnapplied => return Err(EnvironmentFileError::Unverified),
+            EnvironmentRevisionState::Committed => {}
+        }
+        if !snapshot.record.replayable {
+            return Err(EnvironmentFileError::Unverified);
+        }
+        snapshot
+            .specification
+            .validate()
+            .map_err(|_| EnvironmentFileError::InvalidDocument)?;
+        Ok(snapshot)
+    }
     fn lock_for(&self, id: &str) -> Result<Arc<tokio::sync::Mutex<()>>, EnvironmentFileError> {
         let mut locks = self.locks.lock().map_err(|_| EnvironmentFileError::WorkerFailed)?;
         locks.retain(|_, lock| lock.strong_count() > 0);

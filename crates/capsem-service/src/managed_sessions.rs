@@ -67,6 +67,7 @@ impl ManagedLifecycle {
             request.name.is_none() && !request.persistent,
             "managed sessions must be unnamed and ephemeral"
         );
+        request.validate_environment().map_err(anyhow::Error::msg)?;
         crate::validate_vm_labels(request.labels.as_ref())?;
         let binding = VmBinding::new(new_persistent_vm_id(), capsem_crypto::uuid_v4())?;
         let work = Arc::new(Work {
@@ -234,6 +235,12 @@ impl ManagedLifecycle {
                 let resources = resolve_vm_resources(request.ram_mb, request.cpus);
                 state.provision_sandbox_generation(
                     ProvisionOptions {
+                        environment: request.environment.map(|reference| {
+                            capsem_logger::events::EnvironmentRevisionParent {
+                                environment_id: reference.environment_id,
+                                revision_id: reference.revision_id,
+                            }
+                        }),
                         id: binding.id(),
                         name: binding.id(),
                         ram_mb: resources.ram_mb,

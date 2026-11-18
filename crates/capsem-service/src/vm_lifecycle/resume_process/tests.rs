@@ -15,6 +15,7 @@ fn suspended_resume_preserves_its_staged_controller_across_retries() {
     std::fs::write(stage.join("options.json"), b"{}").unwrap();
     std::fs::write(stage.join(capsem_core::container::STAGE_RUNNING), b"running").unwrap();
     let entry = PersistentVmEntry {
+        environment: None,
         suspended: true,
         checkpoint_path: Some("checkpoint.vzsave".into()),
         ..crate::tests::test_persistent_entry("resume-owner", session.path().to_path_buf())
@@ -59,6 +60,7 @@ fn incomplete_suspended_checkpoints_refuse_implicit_cold_boot() {
             std::fs::write(&complete, b"ok\n").unwrap();
         }
         let entry = PersistentVmEntry {
+            environment: None,
             suspended: true,
             checkpoint_path: named.then(|| "checkpoint.vzsave".into()),
             ..crate::tests::test_persistent_entry("resume-owner", session.path().to_path_buf())

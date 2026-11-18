@@ -707,7 +707,7 @@ pub(super) async fn handle_persist(
     validate_vm_name(name).map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
 
     // Find the running ephemeral instance
-    let (live_session_dir, asset_pins, ram_mb, cpus, base_version, forked_from, env, generation, labels) = {
+    let (live_session_dir, asset_pins, ram_mb, cpus, base_version, forked_from, env, generation, labels, environment) = {
         let instances = state.instances.lock().unwrap();
         let i = instances.get(&id).ok_or_else(|| AppError::vm_not_found(&id))?;
         if i.persistent {
@@ -726,6 +726,7 @@ pub(super) async fn handle_persist(
             i.env.clone(),
             i.generation,
             i.labels.clone(),
+            i.environment.as_ref().map(|binding| binding.desired.clone()),
         );
         drop(instances);
         result
@@ -752,6 +753,7 @@ pub(super) async fn handle_persist(
     // moves under persistent/ once the process has exited (see
     // `settle_persistent_session_dir`); a running process holds it by path.
     let entry = PersistentVmEntry {
+        environment,
         id: id.clone(),
         name: name.clone(),
         legacy_profile_id: None,

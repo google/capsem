@@ -3,6 +3,7 @@ use tempfile::TempDir;
 
 fn make_entry(name: &str, session_dir: PathBuf) -> PersistentVmEntry {
     PersistentVmEntry {
+        environment: None,
         id: new_persistent_vm_id(),
         name: name.into(),
         legacy_profile_id: None,

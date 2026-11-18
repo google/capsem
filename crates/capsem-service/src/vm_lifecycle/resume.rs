@@ -49,6 +49,10 @@ pub(crate) async fn handle_resume(
                     format!("resume failed; inspect session logs before retrying: {e}"),
                 ));
             }
+            if let Err(error) = crate::environment_launch::initialize(&state, &resumed_id).await {
+                stop_failed_resume_process_under_lock(&state, &resumed_id).await?;
+                return Err(AppError::new(StatusCode::SERVICE_UNAVAILABLE, error));
+            }
             let cleared_id = resumed_id.clone();
             state
                 .off_worker(move |state| state.clear_resume_checkpoint(&cleared_id))

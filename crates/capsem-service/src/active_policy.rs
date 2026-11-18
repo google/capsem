@@ -6,6 +6,8 @@
 use super::*;
 
 use capsem_core::net::policy_config::ActivePolicyFile;
+mod apply;
+pub(crate) use apply::apply_to_owner;
 
 /// One active policy as written: where, and the digest of its exact bytes,
 /// which capsem-process echoes back when it applies it.
@@ -41,13 +43,17 @@ impl ServiceState {
         // Copied out first: the instances lock is not held across file writes.
         let mut targets = Vec::new();
         for (id, info) in self.instances.lock().unwrap().iter() {
-            targets.push((id.clone(), info.session_dir.clone()));
+            targets.push((id.clone(), info.session_dir.clone(), info.environment.clone()));
         }
         targets
             .into_iter()
-            .map(|(id, session_dir)| {
+            .map(|(id, session_dir, environment)| {
                 let published = self
-                    .materialize_active_policy(&session_dir)
+                    .materialize_environment_policy(
+                        &session_dir,
+                        environment.as_ref().map(|binding| &binding.boot),
+                        environment.as_ref().map(|binding| &binding.live_policy),
+                    )
                     .map_err(|error| format!("{error:#}"));
                 (id, published)
             })
@@ -113,62 +119,20 @@ pub(crate) async fn push_policy_to_running_instances(
             .collect::<Vec<_>>()
     };
 
-    let results = futures::future::join_all(targets.iter().map(|(id, generation, uds_path, published)| async move {
-        let expected = &published.digest;
-        let request = ServiceToProcess::ReloadConfig {
-            id: state.next_job_id(),
-            active_policy: published.bytes.clone(),
+    let results = futures::future::join_all(targets.iter().map(|(id, generation, _uds_path, published)| async move {
+        let owner = {
+            let instances = state.instances.lock().unwrap();
+            instances
+                .get(id)
+                .filter(|instance| instance.generation == *generation)
+                .ok_or_else(|| "policy owner changed".to_string())
+                .and_then(crate::owner_connection::OwnerConnection::capture)
         };
-        match send_ipc_command(state, uds_path, request, Some(5)).await {
-            Ok(ProcessToService::ConfigReloadResult {
-                active_policy_digest: Some(applied),
-                error: None,
-                ..
-            }) if &applied == expected => {
-                let publisher = {
-                    let instances = state.instances.lock().unwrap();
-                    match instances.get(id) {
-                        Some(instance) if instance.generation == *generation => Some(instance.upstream_policy.clone()),
-                        Some(_) => return Some(format!("{id}: owner changed before broker policy publication")),
-                        None => None,
-                    }
-                };
-                match publisher {
-                    Some(publisher) => {
-                        let proxy = match state.proxy_worker(id, *generation) {
-                            Ok(proxy) => proxy,
-                            Err(error) => return Some(format!("{id}: {error}")),
-                        };
-                        match proxy.apply_policy(published.bytes.clone()).await {
-                            Ok(applied) if applied == *expected => {
-                                if let Err(error) = publisher.publish(published.broker_policy()).await {
-                                    return Some(format!("{id}: {error}"));
-                                }
-                                connection_routes::policy::acknowledge(state, id, *generation, expected)
-                                    .await
-                                    .err()
-                                    .map(|_| format!("{id}: applied credential policy ownership unavailable"))
-                            }
-                            Ok(applied) => Some(format!(
-                                "{id}: proxy applied active policy {applied}, expected {expected}"
-                            )),
-                            Err(error) => Some(format!("{id}: proxy reload refused: {error:#}")),
-                        }
-                    }
-                    None => None,
-                }
-            }
-            Ok(ProcessToService::ConfigReloadResult {
-                active_policy_digest: Some(applied),
-                error: None,
-                ..
-            }) => Some(format!("{id}: applied active policy {applied}, expected {expected}")),
-            Ok(ProcessToService::ConfigReloadResult { error: Some(error), .. }) => {
-                Some(format!("{id}: reload refused: {error}"))
-            }
-            Ok(_) => Some(format!("{id}: unexpected response")),
-            Err(e) => Some(format!("{id}: {e}")),
-        }
+        let result = match owner {
+            Ok(owner) => apply_to_owner(state, &owner, published, _mutation).await,
+            Err(error) => Err(error),
+        };
+        result.err().map(|error| format!("{id}: {error}"))
     }))
     .await;
     failures.extend(results.into_iter().flatten());

@@ -296,3 +296,20 @@ async fn environment_revision_jobs_survive_response_cancellation_and_serialize_p
         .join("environment.toml")
         .is_file());
 }
+
+#[tokio::test]
+async fn launch_revision_load_keeps_the_bound_history_after_shared_environment_edits() {
+    let f = Fixture::new();
+    f.owner.commit(revision(1, 2, None), 10).wait().await.unwrap();
+    f.owner.commit(revision(1, 3, Some(2)), 11).wait().await.unwrap();
+    let pinned = f.owner.load_revision(&id(1), &id(2)).await.unwrap();
+    assert_eq!(pinned.record.revision_id, id(2));
+    assert_eq!(pinned.specification.variables["VALUE"], "revision-2");
+    assert_eq!(f.owner.load_current(&id(1)).await.unwrap().revision.revision_id, id(3));
+    assert!(f.owner.load_revision(&id(8), &id(2)).await.is_err());
+    f.prepare(revision(1, 4, Some(3))).await;
+    assert!(matches!(
+        f.owner.load_revision(&id(1), &id(4)).await,
+        Err(EnvironmentFileError::RecoveryRequired)
+    ));
+}

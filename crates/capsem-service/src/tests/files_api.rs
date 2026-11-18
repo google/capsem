@@ -84,6 +84,7 @@ pub(super) fn setup_vm_with_workspace_and_uds(
     state.instances.lock().unwrap().insert(
         vm_id.into(),
         InstanceInfo {
+            environment: None,
             terminal: None,
             browser_request: None,
             browser_revision: 0,

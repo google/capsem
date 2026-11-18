@@ -13,6 +13,7 @@ impl ServiceState {
         anyhow::ensure!(!generation.is_nil(), "VM spawn generation is nil");
         let _launch = self.lifecycle.admit()?;
         let ProvisionOptions {
+            environment,
             id,
             name,
             ram_mb,
@@ -20,7 +21,7 @@ impl ServiceState {
             scratch_disk_size_gb,
             version_override,
             persistent,
-            env,
+            mut env,
             labels,
             from,
             description,
@@ -157,7 +158,17 @@ impl ServiceState {
             }
         }
 
-        let active_policy = self.materialize_active_policy(&session_dir)?;
+        let environment = environment.or_else(|| source_entry.as_ref().and_then(|entry| entry.environment.clone()));
+        anyhow::ensure!(
+            environment.is_none() || env.is_none(),
+            "saved environment cannot include inline guest variables"
+        );
+        let (active_policy, variables) =
+            self.prepare_environment_policy(&session_dir, environment.as_ref(), environment.as_ref())?;
+        env = variables.or(env);
+        let environment_binding = environment.as_ref().map(|reference| {
+            crate::environment_launch::EnvironmentBinding::starting(reference.clone(), active_policy.digest.clone())
+        });
         let active_policy_path = active_policy.path.clone();
         let (upstream_broker, owner_upstream_policy) = crate::upstream_broker::PendingBroker::pair_for_session(
             active_policy.broker_policy(),
@@ -339,6 +350,7 @@ impl ServiceState {
 
         if persistent {
             let registration = self.persistent_registry.lock().unwrap().register(PersistentVmEntry {
+                environment,
                 id: id.to_string(),
                 name: name.to_string(),
                 legacy_profile_id: None,
@@ -376,6 +388,7 @@ impl ServiceState {
         instances.insert(
             id.to_string(),
             InstanceInfo {
+                environment: environment_binding,
                 terminal: None,
                 browser_request: None,
                 browser_revision: 0,

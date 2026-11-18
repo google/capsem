@@ -1,5 +1,5 @@
 mod boot_assets;
-mod readiness;
+pub(crate) mod readiness;
 pub(super) use readiness::{vm_ready_poll_opts, wait_for_vm_ready};
 mod provision;
 use super::*;
@@ -688,6 +688,7 @@ pub(super) async fn provision_attempt(
     env: Option<std::collections::HashMap<String, String>>,
     labels: Option<std::collections::HashMap<String, String>>,
     from: Option<crate::CloneFrom>,
+    environment: Option<capsem_logger::events::EnvironmentRevisionParent>,
 ) -> ProvisionAttemptOutcome {
     // Creating/starting a VM is an Apple VZ lifecycle operation too. Cold
     // starts take the shared rail so independent boots can overlap, but they
@@ -709,6 +710,7 @@ pub(super) async fn provision_attempt(
     let version = state.current_version.clone();
     let provision_result = match tokio::task::spawn_blocking(move || {
         state_clone.provision_sandbox(ProvisionOptions {
+            environment,
             id: &id_owned,
             name: &name_owned,
             ram_mb,

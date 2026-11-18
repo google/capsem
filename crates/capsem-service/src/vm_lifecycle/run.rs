@@ -42,6 +42,7 @@ pub(crate) async fn handle_run(
         let _vz_host_guard = acquire_vz_host_lock(startup::VzHostLockMode::Shared).await?;
         let provision_result = tokio::task::spawn_blocking(move || {
             state_clone.provision_sandbox(ProvisionOptions {
+                environment: None,
                 id: &id_clone,
                 name: &id_clone,
                 ram_mb,

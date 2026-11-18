@@ -29,7 +29,7 @@ pub(crate) async fn handle_fork(
 
     // Find source: running instance or stopped persistent VM. A fork boots
     // the source's own images, so it inherits the source's asset pins.
-    let (session_dir, asset_pins, ram_mb, cpus, base_version, source_labels, uds_path) = {
+    let (session_dir, asset_pins, ram_mb, cpus, base_version, source_labels, uds_path, environment) = {
         let instances = state.instances.lock().unwrap();
         if let Some(i) = instances.get(&id) {
             (
@@ -40,6 +40,7 @@ pub(crate) async fn handle_fork(
                 i.base_version.clone(),
                 i.labels.clone(),
                 Some(i.uds_path.clone()),
+                i.environment.as_ref().map(|binding| binding.desired.clone()),
             )
         } else {
             drop(instances);
@@ -58,6 +59,7 @@ pub(crate) async fn handle_fork(
                 p.base_version,
                 p.labels,
                 None,
+                p.environment,
             )
         }
     };
@@ -78,6 +80,7 @@ pub(crate) async fn handle_fork(
 
     // Register as persistent VM; the registry saves to disk, so off the worker.
     let entry = PersistentVmEntry {
+        environment,
         id: vm_id.clone(),
         name: name.clone(),
         legacy_profile_id: None,

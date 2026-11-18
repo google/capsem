@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: VM creation binds a saved policy and ordinary variables to an exact committed environment revision. Cold resume, fork, persistence and corporate refresh preserve that selection; applied metadata requires acknowledgements from the original VM generation. Workload preparation and implicit environments remain incomplete.
+
 - Added: The VM API accepts exact environment revision selections and distinguishes desired references from acknowledged boot/live policy and owner generation.
 
 - Fixed: Legacy policy publication refuses typed corporate plugin overrides it cannot enforce, rather than silently discarding their options.

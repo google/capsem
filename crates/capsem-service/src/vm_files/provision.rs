@@ -1,7 +1,7 @@
 use super::*;
 
 pub(crate) async fn handle_provision(
-    _actor: crate::caller_auth::AuthenticatedActor,
+    actor: crate::caller_auth::AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     payload: Result<Json<ProvisionRequest>, axum::extract::rejection::JsonRejection>,
 ) -> axum::response::Response {
@@ -9,6 +9,17 @@ pub(crate) async fn handle_provision(
         Ok(payload) => payload,
         Err(_) => return crate::managed_routes::ManagedError::invalid().into_response(),
     };
+    if let Err(error) = payload.validate_environment() {
+        return AppError::new(StatusCode::BAD_REQUEST, error.into()).into_response();
+    }
+    if let Some(reference) = &payload.environment {
+        if let Err(error) = actor.require_operator() {
+            return error.into_response();
+        }
+        if let Err(error) = crate::environment_launch::validate_selection(&state, reference).await {
+            return error.into_response();
+        }
+    }
     if payload.managed.is_some() {
         return crate::managed_routes::create(state, payload).await.into_response();
     }
@@ -68,6 +79,14 @@ async fn provision(state: Arc<ServiceState>, payload: ProvisionRequest) -> Resul
         let id = id_for_loop.clone();
         let name = name.clone();
         let payload_env = capsem_core::container::session_env(payload.env.clone(), payload.container.is_some());
+        let environment =
+            payload
+                .environment
+                .clone()
+                .map(|reference| capsem_logger::events::EnvironmentRevisionParent {
+                    environment_id: reference.environment_id,
+                    revision_id: reference.revision_id,
+                });
         let payload_labels = labels.clone();
         let payload_from = payload.from.clone().map(|source| crate::CloneFrom {
             source,
@@ -115,6 +134,7 @@ async fn provision(state: Arc<ServiceState>, payload: ProvisionRequest) -> Resul
                 payload_env,
                 payload_labels,
                 payload_from,
+                environment,
             )
             .await;
             // Log structured context BEFORE losing the outcome to classify_*.
@@ -196,6 +216,9 @@ pub(crate) async fn complete_create(
     networks: &[uuid::Uuid],
     container: Option<api::ContainerSpec>,
 ) -> Result<ProvisionResponse, AppError> {
+    crate::environment_launch::initialize(state, id)
+        .await
+        .map_err(|error| AppError::new(StatusCode::SERVICE_UNAVAILABLE, error))?;
     let response = provision_response_for_running(state, id.to_owned())?;
     let socket = state
         .instances

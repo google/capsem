@@ -206,6 +206,7 @@ async fn aborted_reaper_never_reports_generation_retired() {
 fn provision_persistent_validates_name() {
     let state = make_test_state();
     let result = state.provision_sandbox(ProvisionOptions {
+        environment: None,
         id: "../evil",
         name: "../evil",
         ram_mb: 2048,
@@ -238,6 +239,7 @@ fn accepted_restart_refuses_both_launch_paths_before_any_session_mutation() {
         .begin_restart(|| !state.instances.lock().unwrap().is_empty())
         .unwrap();
     let provision = state.provision_sandbox(ProvisionOptions {
+        environment: None,
         id: "never-started",
         name: "never-started",
         ram_mb: 2048,
@@ -607,6 +609,7 @@ async fn failed_resume_teardown_clears_running_instance() {
     state.instances.lock().unwrap().insert(
         vm_id.clone(),
         InstanceInfo {
+            environment: None,
             terminal: None,
             browser_request: None,
             browser_revision: 0,

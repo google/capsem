@@ -164,6 +164,7 @@ fn resolve_rejects_symlink_escape() {
     state.instances.lock().unwrap().insert(
         "test-vm".into(),
         InstanceInfo {
+            environment: None,
             terminal: None,
             browser_request: None,
             browser_revision: 0,
@@ -203,6 +204,7 @@ fn resolve_valid_path_inside_workspace() {
     state.instances.lock().unwrap().insert(
         "test-vm".into(),
         InstanceInfo {
+            environment: None,
             terminal: None,
             browser_request: None,
             browser_revision: 0,
