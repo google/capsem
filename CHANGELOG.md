@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Typed TypeScript SDK environment creation with validated draft selectors and mutation outcomes.
+
 - Added: Typed Python SDK environment creation, selector-only drafts and distinct decision/application outcomes.
 
 - Added: Typed Rust SDK environment creation with explicit request-ID reconciliation and the image-resolution deadline.

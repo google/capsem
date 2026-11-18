@@ -9,6 +9,7 @@ export {checkHypervisorUpdate} from "./checkHypervisorUpdate.js";
 export {claimManagedSession} from "./claimManagedSession.js";
 export {closeManagedSession} from "./closeManagedSession.js";
 export {createAgentAccess} from "./createAgentAccess.js";
+export {createEnvironment} from "./createEnvironment.js";
 export {createNetwork} from "./createNetwork.js";
 export {createProxy} from "./createProxy.js";
 export {createSessionCredentialGrant} from "./createSessionCredentialGrant.js";
