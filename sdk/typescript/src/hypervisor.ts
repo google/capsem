@@ -59,7 +59,7 @@ export class Hypervisor extends Client {
   async create(options: CreateOptions = {}): Promise<VM> {
     const body = provisionRequest(options);
     const response = await api.createVm(this.transport, {body}, {...options, timeoutMs: options.timeoutMs ?? createDeadlineMs(this.transport.timeoutMs)});
-    return VM.bind(this.transport, response.id, response.name, body.container !== undefined);
+    return VM.bind(this.transport, response.id, response.name, body.attach === true || body.container !== undefined);
   }
   async managed(options: ManagedCreateOptions = {}): Promise<ManagedSession> {
     if (options.name !== undefined) throw new TypeError('Managed sessions must be unnamed');
@@ -90,6 +90,8 @@ export class Hypervisor extends Client {
 }
 
 function provisionRequest(options: CreateOptions): models.ProvisionRequest {
+  if (options.attach !== undefined && typeof options.attach !== 'boolean') throw new TypeError('attach must be a boolean');
+  if (options.attach && options.environment === undefined) throw new TypeError('Attached execution requires a saved environment');
   if (options.environment !== undefined && (options.env !== undefined || options.image !== undefined)) {
     throw new TypeError('A saved environment cannot include inline variables or image overrides');
   }
@@ -113,6 +115,7 @@ function provisionRequest(options: CreateOptions): models.ProvisionRequest {
   };
   return {
     ...(options.environment === undefined ? {} : {environment: options.environment}),
+    ...(options.attach === true ? {attach: true} : {}),
     name: options.name || null, persistent: Boolean(options.name),
     cpus: options.cpus ?? null, ram_mb,
     env: container === undefined ? options.env ?? null : null,

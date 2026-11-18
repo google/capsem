@@ -41,9 +41,14 @@ def _memory_mb(memory: int | None) -> int | None:
 def _provision_request(*, name: str = "", cpus: int | None = None,
                        memory: int | None = None, env: dict[str, str] | None = None,
                        environment: models.EnvironmentRevisionReference | None = None,
+                       attach: bool = False,
                        labels: dict[str, str] | None = None,
                        networks: Sequence[models.NetworkInfo] = (), image: str | None = None,
                        command: Sequence[str] = (), registry: Registry | None = None) -> models.ProvisionRequest:
+    if not isinstance(attach, bool):
+        raise TypeError("attach must be a boolean")
+    if attach and environment is None:
+        raise ValueError("attached execution requires a saved environment")
     if environment is not None:
         if not isinstance(environment, models.EnvironmentRevisionReference):
             raise TypeError("environment must be an EnvironmentRevisionReference")
@@ -76,6 +81,8 @@ def _provision_request(*, name: str = "", cpus: int | None = None,
     )
     if environment is not None:
         request.environment = environment
+    if attach:
+        request.attach = True
     if wire is not None:
         request.container = wire
     return request
@@ -115,6 +122,7 @@ class Hypervisor(Client):
     async def create(self, *, name: str = "", cpus: int | None = None,
                      memory: int | None = None, env: dict[str, str] | None = None,
                      environment: models.EnvironmentRevisionReference | None = None,
+                     attach: bool = False,
                      labels: dict[str, str] | None = None,
                      networks: Sequence[models.NetworkInfo] = (), image: str | None = None,
                      command: Sequence[str] = (), registry: Registry | None = None) -> VM:
@@ -126,31 +134,33 @@ class Hypervisor(Client):
             memory: Optional RAM size in GiB.
             env: Optional environment variables for the VM or container workload.
             environment: Exact approved environment revision; excludes inline workload overrides.
+            attach: Stage the saved environment's image for an attached container stream.
             labels: Optional string labels attached at creation.
             networks: Private networks to attach to the VM at creation.
             image: Optional OCI image reference to run as a container workload.
             command: Optional command argv override for the container workload.
             registry: Optional custom OCI registry configuration for pulling ``image``.
         """
-        request = _provision_request(name=name, cpus=cpus, memory=memory, env=env, environment=environment, labels=labels,
+        request = _provision_request(name=name, cpus=cpus, memory=memory, env=env, environment=environment, attach=attach, labels=labels,
                                      networks=networks, image=image, command=command, registry=registry)
-        # The service answers only once a container workload is ready, so
-        # wait at least as long as it does before giving up on the create.
+        # The service waits for detached readiness or attached staging. Keep
+        # the request's ordinary creation/readiness budget around that work.
         request_timeout = max(self._transport.timeout, CREATE_READY_SECS + GATEWAY_REQUEST_BUDGET_SECS)
         return await _create_vm_with_timeout(
             api.create_vm(self._transport, body=request, request_timeout=request_timeout),
             self._transport, bind_vm=VM._bind, name=name,
-            container=image is not None, request_timeout=request_timeout,
+            container=attach or image is not None, request_timeout=request_timeout,
         )
 
     def managed(self, *, cpus: int | None = None, memory: int | None = None,
                 env: dict[str, str] | None = None, labels: dict[str, str] | None = None,
                 environment: models.EnvironmentRevisionReference | None = None,
+                attach: bool = False,
                 networks: Sequence[models.NetworkInfo] = (),
                 image: str | None = None, command: Sequence[str] = (), registry: Registry | None = None) -> ManagedSession:
         """An ephemeral ownership scope: renew while entered, await cleanup on exit."""
         return ManagedSession(self._transport, _provision_request(
-            cpus=cpus, memory=memory, env=env, environment=environment, labels=labels, networks=networks, image=image, command=command, registry=registry))
+            cpus=cpus, memory=memory, env=env, environment=environment, attach=attach, labels=labels, networks=networks, image=image, command=command, registry=registry))
 
     async def log(self, source: models.HostLogSource = models.HostLogSource.SERVICE, *,
                   grep: str | None = None, tail: int | None = None,

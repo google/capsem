@@ -97,6 +97,9 @@ impl Hypervisor {
     }
 
     pub(crate) fn provision_request(options: CreateOptions) -> Result<models::ProvisionRequest> {
+        if options.attach && options.environment.is_none() {
+            return Err(Error::InvalidInput("attached execution requires a saved environment"));
+        }
         if options.cpus == Some(0) {
             return Err(Error::InvalidInput("cpus must be positive"));
         }
@@ -131,6 +134,7 @@ impl Hypervisor {
         let ram_mb = Self::memory_mb(options.memory)?;
         Ok(models::ProvisionRequest {
             environment: options.environment,
+            attach: options.attach,
             persistent: name.is_some(),
             name,
             cpus: options.cpus,
@@ -148,7 +152,7 @@ impl Hypervisor {
     }
 
     pub async fn create(&self, options: CreateOptions) -> Result<VM> {
-        let has_container = options.image.is_some();
+        let has_container = options.attach || options.image.is_some();
         let body = Self::provision_request(options)?;
         let result = api::create_vm(
             &self.client.transport,

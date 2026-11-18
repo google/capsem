@@ -45,6 +45,8 @@ pub enum VmSelector {
 #[derive(Debug, Clone, Default)]
 pub struct CreateOptions {
     pub environment: Option<capsem_api::environments::EnvironmentRevisionReference>,
+    /// Stage the saved image for an attached stream without revising its content.
+    pub attach: bool,
     pub name: Option<String>,
     pub cpus: Option<u32>,
     /// Guest memory in GiB.

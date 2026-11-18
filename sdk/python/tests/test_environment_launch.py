@@ -21,12 +21,20 @@ def test_environment_launch_preserves_revision_and_refuses_inline_overrides():
             vm = await hv.create(environment=reference)
             assert vm.id == "created-id"
             assert json.loads(state.requests[-1][2])["environment"] == reference.model_dump()
+            assert "attach" not in json.loads(state.requests[-1][2])
+            attached = await hv.create(environment=reference, attach=True)
+            body = json.loads(state.requests[-1][2])
+            assert body["environment"] == reference.model_dump() and body["attach"] is True
+            assert "container" not in body and body.get("env") is None
             count = len(state.requests)
+            with pytest.raises(ValueError):
+                await hv.create(attach=True)
             with pytest.raises(ValueError):
                 await hv.create(environment=reference, env={})
             with pytest.raises(ValueError):
                 await hv.create(environment=reference, image="busybox")
             assert len(state.requests) == count
             await vm.close()
+            await attached.close()
 
     asyncio.run(run())

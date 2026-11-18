@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Rust, Python, and TypeScript SDK creation and managed sessions can stage a saved environment for attachment while preserving its approved revision and rejecting inline workload overrides.
+
 - Security: Attached saved workloads re-admit the retained image and check the original owner's current policy acknowledgement before dispatch. Streams release the policy mutation lock after dispatch; startup failures retain their exit code and bounded diagnostics, and clones can wait for attachment without starting their entrypoint.
 
 - Added: VM creation accepts an independent `attach` choice for a saved environment's image, preserving its approved workload and variables. The default remains detached execution.

@@ -104,7 +104,7 @@ class ManagedSession:
             self.__session(response)
             self.__active = True
             self.__vm = VM._bind(self.__transport, id=response.id, name=response.name,
-                                 container=self.__request.container is not None)
+                                 container=self.__request.attach is True or self.__request.container is not None)
             return self.__vm
         except BaseException as error:
             outcome = models.ManagedSessionOutcome.CANCELLED if isinstance(error, asyncio.CancelledError) else models.ManagedSessionOutcome.FAILED
