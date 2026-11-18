@@ -59,7 +59,7 @@ capsem create                          # unnamed session
 capsem create -n mybox                 # named retained session
 capsem create -n mybox --ram 8 --cpu 4 # custom resources
 capsem create --from template          # clone from existing session
-capsem create -e API_KEY=sk-...        # with environment variables
+capsem create -e APP_MODE=test         # with ordinary environment variables
 capsem create -n cache -p 0:6379 --image docker://redis:7-alpine
                                        # an OCI image's workload, detached
 capsem create -n work --image codex-cli # a catalog image, by name
@@ -81,7 +81,8 @@ setup deletes the VM.
 | `--from <NAME>` | -- | Clone state from an existing retained session/template |
 | `--network <NAME>` | -- | Join a named network (repeatable) |
 | `--image <IMAGE>` | -- | OCI image to run: a catalog name (see `images`), `docker://IMAGE` or `registry/repository:tag` |
-| `-p, --publish <HOST:GUEST>` | -- | With `--image`: publish a loopback TCP port (host `0` picks one) |
+| `--environment <ENVIRONMENT_ID@REVISION_ID>` | -- | Exact approved saved revision; excludes inline workload overrides |
+| `-p, --publish <HOST:GUEST>` | -- | With an image or saved image: publish a loopback TCP port (host `0` picks one) |
 | `--registry-ca <PEM>` | -- | With `--image`: extra CA trusted for this pull |
 | `--registry-user <USER>` | -- | With `--image`: registry user; token from `CAPSEM_REGISTRY_PASSWORD` |
 
@@ -91,6 +92,19 @@ records the `repository@digest` and never follows a moved tag. A catalog name
 is looked up before anything is parsed as a reference, so `--image redis` is
 the catalog's `redis` or an error, never Docker Hub's: Docker Hub is always
 `docker://IMAGE`, and the default image policy refuses it.
+
+Use the environment and revision IDs returned by environment creation or
+inspection to launch an approved saved revision:
+
+```sh
+capsem create -n work --environment "$ENVIRONMENT_ID@$REVISION_ID"
+```
+
+The selected revision supplies policy and ordinary variables, plus its retained
+image and original command when it has an image. Image preparation finishes
+before a detached workload reports readiness.
+Inline `--env`, `--image` and registry overrides are refused with this selector.
+The revision stays selected across cold resume and fork.
 
 ### shell
 
@@ -177,9 +191,16 @@ the VM is destroyed however the run ends (exit, timeout, or Ctrl-C).
 ```sh
 capsem run "python3 -c 'print(1+1)'"
 capsem run "npm test" --timeout 120
-capsem run "pytest" -e API_KEY=sk-...
+capsem run "pytest" -e APP_MODE=test
 capsem run --image docker://alpine:3 sh -c 'uname -a'
+capsem run --environment "$ENVIRONMENT_ID@$REVISION_ID"
 ```
+
+`--environment` runs the saved image's approved startup and command. Workload
+stdout remains separate from startup output; startup failure details go to
+stderr. The session is destroyed after exit, timeout or interruption. Change
+the saved definition to change its workload; inline overrides and an appended
+command are refused.
 
 | Arg/Flag | Default | Description |
 |----------|---------|-------------|
@@ -188,7 +209,9 @@ capsem run --image docker://alpine:3 sh -c 'uname -a'
 | `-e, --env <KEY=VALUE>` | -- | Environment variables (repeatable); the container's with `--image` |
 | `--ram <GB>` / `--cpu <CORES>` | 12 / 4 | VM resources |
 | `--image <IMAGE>` | -- | OCI image to run (see `create`) |
-| `-p`, `--network`, `--registry-ca`, `--registry-user` | -- | With `--image`, as for `create` |
+| `--environment <ENVIRONMENT_ID@REVISION_ID>` | -- | Exact approved saved image revision |
+| `-p`, `--network` | -- | With an image or saved image, as for `create` |
+| `--registry-ca`, `--registry-user` | -- | With `--image`, as for `create` |
 
 ### list
 
