@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Saved environments run their approved `/bin/sh` startup before the OCI entrypoint. Readiness and surface waits include the retained startup timeout; failures retain bounded diagnostics, and cold restarts clear stale preparation state.
+
 - Added: Container status exposes approved startup as `preparing`; generated Python and TypeScript models accept the pending state.
 
 - Added: Saved-image environments launch their retained digest and ordinary variables after policy acknowledgement. Resume and fork re-admit the recorded image against current policy and rebind trusted controls to the new owner. Other workload preparation fields remain incomplete.

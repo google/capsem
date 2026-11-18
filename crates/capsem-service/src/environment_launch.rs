@@ -7,7 +7,7 @@ use capsem_core::environment::EnvironmentPolicyInputs;
 use capsem_logger::events::EnvironmentRevisionParent;
 use std::{collections::HashMap, path::Path};
 mod image;
-pub(crate) use image::{prepare_image, SelectedImage};
+pub(crate) use image::{preparation_timeout, prepare_image, SelectedImage};
 
 #[derive(Clone, Debug)]
 pub(crate) struct EnvironmentBinding {
@@ -33,8 +33,8 @@ impl EnvironmentBinding {
 /// connected. Never launch a valid-looking environment with fields discarded.
 pub(crate) fn validate_preparation(specification: &EnvironmentSpecification) -> Result<()> {
     ensure!(
-        specification.startup.is_none() && specification.repositories.is_empty(),
-        "environment startup and repositories require trusted workload preparation"
+        specification.repositories.is_empty(),
+        "environment repositories require trusted workload preparation"
     );
     ensure!(
         specification.secrets.is_empty(),

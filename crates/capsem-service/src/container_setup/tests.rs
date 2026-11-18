@@ -965,3 +965,5 @@ async fn container_helpers_propagate_missing_vm_and_boundary_errors() {
     .await
     .is_err());
 }
+
+mod startup;

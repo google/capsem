@@ -328,7 +328,17 @@ pub(crate) async fn grant_surface(state: &Arc<ServiceState>, id: &str, generatio
     if surface.exposure_id.is_some() {
         return;
     }
-    let options = capsem_foundation::poll::PollOpts::new("container-surface-running", SURFACE_READY_TIMEOUT);
+    let preparation = match crate::environment_launch::preparation_timeout(state, id).await {
+        Ok(timeout) => timeout,
+        Err(error) => {
+            warn!(vm_id = id, %error, "container preparation owner unavailable");
+            return;
+        }
+    };
+    let options = capsem_foundation::poll::PollOpts::new(
+        "container-surface-running",
+        SURFACE_READY_TIMEOUT.saturating_add(preparation),
+    );
     let observed = tokio::select! {
         observed = wait_observed(state, id, options) => observed,
         () = lease.cancelled() => return,
@@ -468,27 +478,26 @@ fn read_launch_record(session_dir: &std::path::Path) -> Option<LaunchRecord> {
 /// live record, which stays `starting` for a detached workload. The shared
 /// poll primitive provides the deadline and backoff; callers never retry the
 /// mutation that created the VM.
-pub(crate) async fn wait_for_create(
-    state: &Arc<ServiceState>,
-    id: &str,
-) -> Result<ContainerStatusResponse, capsem_proto::poll::TimedOut> {
+pub(crate) async fn wait_for_create(state: &Arc<ServiceState>, id: &str) -> Result<ContainerStatusResponse, AppError> {
+    let preparation = crate::environment_launch::preparation_timeout(state, id)
+        .await
+        .map_err(|error| AppError::new(StatusCode::SERVICE_UNAVAILABLE, error))?;
     wait_observed(
         state,
         id,
         capsem_foundation::poll::PollOpts {
             label: "container-create-ready",
-            ..vm_ready_poll_opts(CREATE_READY_TIMEOUT.as_secs())
+            ..vm_ready_poll_opts(CREATE_READY_TIMEOUT.saturating_add(preparation).as_secs())
         },
     )
     .await
+    .map_err(|timed_out| AppError::create_timeout(id, timed_out.attempts))
 }
 
 /// Create, resume and carried-image clones share the same workload barrier.
 /// A timeout leaves setup with its service owner; terminal failures are errors.
 pub(crate) async fn require_ready(state: &Arc<ServiceState>, id: &str) -> Result<(), AppError> {
-    let status = wait_for_create(state, id)
-        .await
-        .map_err(|t| AppError::create_timeout(id, t.attempts))?;
+    let status = wait_for_create(state, id).await?;
     match status.state {
         ContainerState::Running | ContainerState::Staged => Ok(()),
         ContainerState::Exited | ContainerState::Failed => Err(AppError::new(
@@ -502,7 +511,7 @@ pub(crate) async fn require_ready(state: &Arc<ServiceState>, id: &str) -> Result
                     .unwrap_or_else(|| "no failure detail".into()))
             ),
         )),
-        ContainerState::Pulling | ContainerState::Staging | ContainerState::Starting => {
+        ContainerState::Pulling | ContainerState::Staging | ContainerState::Starting | ContainerState::Preparing => {
             unreachable!("container readiness returned a pending state")
         }
     }
@@ -522,7 +531,7 @@ async fn wait_observed(
         };
         (!matches!(
             status.state,
-            ContainerState::Pulling | ContainerState::Staging | ContainerState::Starting
+            ContainerState::Pulling | ContainerState::Staging | ContainerState::Starting | ContainerState::Preparing
         ))
         .then_some(status)
     })
@@ -586,20 +595,47 @@ fn observe(
     let Some(mut status) = live.or_else(|| read_launch_record(&session_dir).map(LaunchRecord::starting)) else {
         return Ok(None);
     };
-    if matches!(status.state, ContainerState::Starting | ContainerState::Running) {
+    if matches!(
+        status.state,
+        ContainerState::Starting | ContainerState::Preparing | ContainerState::Running
+    ) {
         if let Some(exited) = exited_marker(state, id) {
             status.state = ContainerState::Exited;
             status.exit_code = exited.code;
-        } else if status.state == ContainerState::Starting {
+        } else if matches!(status.state, ContainerState::Starting | ContainerState::Preparing) {
             if staged_marker(state, id, capsem_core::container::STAGE_RUNNING) {
                 status.state = ContainerState::Running;
             } else if staged_marker(state, id, capsem_core::container::STAGE_FAILED) {
                 status.state = ContainerState::Failed;
-                status.error = Some("the workload did not start; `capsem logs` shows why".into());
+                status.error = Some(
+                    failed_marker(state, id)
+                        .unwrap_or_else(|| "the workload did not start; `capsem logs` shows why".into()),
+                );
+            } else if staged_marker(state, id, capsem_core::container::STAGE_PREPARING) {
+                status.state = ContainerState::Preparing;
             }
         }
     }
     Ok(Some(status))
+}
+
+/// Read only a bounded regular marker. Generic legacy markers retain their
+/// existing message; sanitized startup diagnostics are already controller-owned.
+fn failed_marker(state: &ServiceState, id: &str) -> Option<String> {
+    use std::io::Read as _;
+    let path = format!(
+        "{}/{}",
+        capsem_core::container::STAGE,
+        capsem_core::container::STAGE_FAILED
+    );
+    let (parent, name) = resolve_workspace_target(state, id, &path, false).ok()?;
+    let file = parent.open_file(&name, ContainedOpenOptions::read_only()).ok()?;
+    if file.metadata().ok()?.len() > 64 * 1024 {
+        return None;
+    }
+    let mut message = String::new();
+    file.take(64 * 1024).read_to_string(&mut message).ok()?;
+    message.starts_with("startup ").then_some(message)
 }
 
 /// A workload that ran and ended, as its stage records it.

@@ -39,7 +39,7 @@ pub(crate) fn carry_launch_record(source: &std::path::Path, destination: &std::p
 /// to a workload that is not there. The stage is guest-written, so it is
 /// reached and cleared without following links. Never call on a booted VM.
 pub(crate) fn forget_previous_run(session_dir: &std::path::Path) -> Result<(), String> {
-    use capsem_core::container::{STAGE, STAGE_EXITED, STAGE_FAILED, STAGE_RUNNING};
+    use capsem_core::container::{STAGE, STAGE_EXITED, STAGE_FAILED, STAGE_PREPARING, STAGE_RUNNING};
     use std::ffi::OsStr;
     refresh_staged_workspace_owner(session_dir)?;
     let absent = |e: &std::io::Error| e.kind() == std::io::ErrorKind::NotFound;
@@ -53,7 +53,7 @@ pub(crate) fn forget_previous_run(session_dir: &std::path::Path) -> Result<(), S
         Err(e) if absent(&e) => return Ok(()),
         Err(e) => return Err(format!("open the workload stage of {}: {e}", session_dir.display())),
     };
-    for marker in [STAGE_RUNNING, STAGE_FAILED, STAGE_EXITED] {
+    for marker in [STAGE_RUNNING, STAGE_FAILED, STAGE_EXITED, STAGE_PREPARING] {
         match stage.remove_non_directory(OsStr::new(marker)) {
             Err(e) if !absent(&e) => return Err(format!("clear the {marker} marker: {e}")),
             _ => {}

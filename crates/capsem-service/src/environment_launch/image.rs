@@ -114,3 +114,13 @@ async fn selected_image(
         specification.variables,
     )))
 }
+
+/// Read the exact acknowledged boot revision once for a lifecycle wait. No
+/// polled route fetches a registry or retains another specification cache.
+pub(crate) async fn preparation_timeout(state: &Arc<ServiceState>, id: &str) -> Result<std::time::Duration, String> {
+    let selected = selected_image(state, id).await?;
+    let seconds = selected
+        .and_then(|(selected, _variables)| selected.startup)
+        .map_or(0, |startup| startup.timeout_seconds);
+    Ok(std::time::Duration::from_secs(u64::from(seconds)))
+}

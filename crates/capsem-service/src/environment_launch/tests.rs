@@ -274,3 +274,51 @@ async fn preparation_refreshes_current_corporate_policy_and_requires_exact_owner
         peer.await.unwrap();
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn startup_deadline_uses_acknowledged_boot_history_without_shared_head_retargeting() {
+    let _lock = SETTINGS_ENV_LOCK.lock().await;
+    let directory = tempfile::tempdir().unwrap();
+    let (_paths, _, _) = install_empty_settings_env(&directory);
+    let state = make_test_state();
+    for (number, previous, seconds) in [(2, None, 121), (3, Some(2), 1)] {
+        let mut saved = revision(number, previous, "block");
+        saved.specification.image = Some(capsem_config::environment::EnvironmentImage {
+            reference: "registry.example/app:1".into(),
+            resolved_digest: format!("sha256:{}", "a".repeat(64)),
+            update_policy: Default::default(),
+        });
+        saved.specification.startup = Some(capsem_config::environment::EnvironmentStartup {
+            script: ":".into(),
+            timeout_seconds: seconds,
+        });
+        state.environments.commit(saved, number as i64).wait().await.unwrap();
+    }
+    let vm = id(150);
+    let session = directory.path().join(&vm);
+    std::fs::create_dir_all(&session).unwrap();
+    insert_fake_instance_with_session_dir(&state, &vm, std::process::id(), session);
+    let mut binding = EnvironmentBinding::starting(reference(2), String::new());
+    binding.acknowledged = true;
+    state.instances.lock().unwrap().get_mut(&vm).unwrap().environment = Some(binding);
+    assert_eq!(preparation_timeout(&state, &vm).await.unwrap().as_secs(), 121);
+    state
+        .instances
+        .lock()
+        .unwrap()
+        .get_mut(&vm)
+        .unwrap()
+        .environment
+        .as_mut()
+        .unwrap()
+        .acknowledged = false;
+    assert!(preparation_timeout(&state, &vm)
+        .await
+        .unwrap_err()
+        .contains("has not been acknowledged"));
+    state.instances.lock().unwrap().get_mut(&vm).unwrap().environment = None;
+    assert_eq!(
+        preparation_timeout(&state, &vm).await.unwrap(),
+        std::time::Duration::ZERO
+    );
+}
