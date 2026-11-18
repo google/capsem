@@ -4,7 +4,6 @@ use crate::{active_policy::PublishedActivePolicy, ServiceState};
 use anyhow::{ensure, Context, Result};
 use capsem_config::environment::EnvironmentSpecification;
 use capsem_core::environment::EnvironmentPolicyInputs;
-use capsem_core::net::policy_config::ActivePolicyFile;
 use capsem_logger::events::EnvironmentRevisionParent;
 use std::{collections::HashMap, path::Path};
 
@@ -106,7 +105,9 @@ impl ServiceState {
             .map_err(anyhow::Error::msg)
             .context("load current corporate environment policy")?;
         let inputs = EnvironmentPolicyInputs::new(&boot.specification, &live.specification, &corporate);
-        let policy = ActivePolicyFile::from_environment(&inputs, None).map_err(anyhow::Error::msg)?;
+        let policy = runtime
+            .block_on(crate::environment_routes::launch_policy(self, &inputs))
+            .context("admit and compile selected environment rule catalogs")?;
         Ok((
             crate::active_policy::publish_active_policy(session_dir, &policy)?,
             Some(

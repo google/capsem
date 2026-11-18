@@ -17,6 +17,72 @@ use std::{
 mod registry;
 use registry::Registry;
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn launch_policy_uses_pinned_rule_content_and_current_catalog_admission() {
+    let _lock = crate::tests::SETTINGS_ENV_LOCK.lock().await;
+    let directory = tempfile::tempdir().unwrap();
+    let (_paths, _, _) = crate::tests::install_empty_settings_env(&directory);
+    let fx = Fixture::new().await;
+    let kind = CatalogKind::Rules;
+    let original = fx.registry.publish(kind, document(kind, false));
+    let app = crate::router_runtime::build_service_router(fx.state.clone());
+    let intent = json!({"request_id":id(401),"reason":"pinned runtime rule","specification":{"name":"runtime-rules","access":{"catalog":{"selected":[{"id":"review","version":"1.0.0"}]}}}});
+    let (status, body) = route_request(app, Method::POST, "/environments/create", Some(intent)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let response: capsem_api::EnvironmentMutationResponse = serde_json::from_value(body).unwrap();
+    let reference = response.result.unwrap();
+    let reference = capsem_logger::events::EnvironmentRevisionParent {
+        environment_id: reference.environment_id,
+        revision_id: reference.revision_id,
+    };
+    let mut changed = document(kind, false);
+    changed["entries"][0]["definition"]["rule"]["action"] = "block".into();
+    assert_ne!(fx.registry.publish(kind, changed), original);
+    let compile = || {
+        let reference = reference.clone();
+        let session = directory.path().join("launch");
+        fx.state
+            .off_worker(move |state| state.materialize_environment_policy(&session, Some(&reference), Some(&reference)))
+    };
+    let published = compile().await.unwrap().unwrap();
+    let rule = published
+        .runtime
+        .security_rules
+        .rules()
+        .iter()
+        .find(|rule| rule.rule_id == "environment.access.catalog.review")
+        .unwrap();
+    assert_eq!(
+        rule.action,
+        capsem_config::SecurityRuleAction::Allow,
+        "moving the catalog tag cannot replace the selected definition"
+    );
+    fx.registry.publish(kind, document(kind, true));
+    assert!(
+        compile().await.unwrap().is_err(),
+        "current revocation must refuse publication"
+    );
+    fx.registry.publish(kind, document(kind, false));
+    assert!(
+        compile().await.unwrap().is_err(),
+        "known revocation survives catalog rollback"
+    );
+    fx.corporate.lock().unwrap().catalogs = Some(CatalogSources {
+        rules: Some(descriptor(format!("{}/team/private:stable", fx.registry.address))),
+        ..Default::default()
+    });
+    let calls = fx.registry.requests.lock().unwrap().len();
+    assert!(
+        compile().await.unwrap().is_err(),
+        "corporate source replacement invalidates the pin"
+    );
+    assert_eq!(
+        fx.registry.requests.lock().unwrap().len(),
+        calls,
+        "a rejected source cannot fetch either the old source or a replacement"
+    );
+}
+
 struct Source {
     ca_pem: String,
     corporate: Arc<Mutex<SettingsFile>>,

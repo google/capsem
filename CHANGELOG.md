@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Environment launch and corporate refresh compile catalog rules from their exact retained definitions, with current source admission and durable revocation checks. Moving catalog tags cannot replace selected rule bodies.
+
 - Added: TypeScript SDK creation and managed sessions accept exact environment revisions, reject inline workload overrides and expose applied environment metadata.
 
 - Added: Python SDK creation and managed sessions accept exact environment revisions, reject inline workload overrides and expose applied environment metadata.

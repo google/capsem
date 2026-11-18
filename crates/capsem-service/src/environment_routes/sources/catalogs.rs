@@ -11,6 +11,8 @@ use capsem_logger::{
 use std::time::{SystemTime, UNIX_EPOCH};
 
 type Error = EnvironmentResolutionError;
+mod runtime;
+pub(crate) use runtime::launch_policy;
 
 async fn source(state: &ServiceState, kind: CatalogKind) -> Result<ValidatedCatalogSource, Error> {
     let corporate = state

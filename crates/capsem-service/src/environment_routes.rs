@@ -18,6 +18,7 @@ mod sources;
 use capsem_core::managed_sessions::LeaseClock;
 use capsem_logger::db::EnvironmentReferenceQuery;
 use capsem_service::environment_files::EnvironmentFileError;
+pub(crate) use sources::catalogs::launch_policy;
 use std::sync::Arc;
 
 pub(crate) fn permits_inspect(actor: &AuthenticatedActor, id: &str) -> bool {

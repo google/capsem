@@ -9,7 +9,7 @@ use capsem_config::{
 use capsem_core::environment::{EnvironmentPinResolver, EnvironmentResolutionError};
 use std::sync::Arc;
 
-mod catalogs;
+pub(crate) mod catalogs;
 mod repositories;
 
 pub(super) struct Sources(pub(super) Arc<ServiceState>);
