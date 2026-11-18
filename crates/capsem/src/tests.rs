@@ -914,6 +914,17 @@ fn parse_update_check_rejects_mutating_options() {
 }
 
 #[test]
+fn parse_update_corp_requires_authenticated_transport() {
+    assert!(Cli::try_parse_from(["capsem", "update", "--corp", "http://corp.example/capsem/corp.toml",]).is_err());
+    for source in ["https://corp.example/capsem/corp.toml", "file:///etc/capsem/corp.toml"] {
+        assert!(
+            Cli::try_parse_from(["capsem", "update", "--corp", source]).is_ok(),
+            "{source}"
+        );
+    }
+}
+
+#[test]
 fn parse_hidden_install_manifest_stdin_requires_the_exact_asset_handoff_shape() {
     let cli = Cli::parse_from([
         "capsem",

@@ -723,6 +723,20 @@ fn update_source_url_flags_are_url_only() {
 }
 
 #[test]
+fn corporate_config_source_requires_https_or_an_absolute_file_url() {
+    for source in ["https://corp.example/capsem/corp.toml", "file:///etc/capsem/corp.toml"] {
+        assert_eq!(validate_corp_source_url_arg(source), Ok(source.to_string()));
+    }
+    for source in [
+        "http://corp.example/capsem/corp.toml",
+        "https://user:secret@corp.example/capsem/corp.toml",
+    ] {
+        let error = validate_corp_source_url_arg(source).expect_err("unauthenticated corp source must be rejected");
+        assert!(error.contains("--corp"), "{error}");
+    }
+}
+
+#[test]
 fn release_graph_update_check_selects_linux_deb_package() {
     let package_name = format!("Capsem_2.0.0_{}.deb", deb_arch());
     let other_package_architecture = match package_architecture() {

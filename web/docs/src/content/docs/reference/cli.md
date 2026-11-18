@@ -115,7 +115,8 @@ OpenAI/Ollama example.
 | `capsem update --assets [--manifest URL]` | Diagnostic runtime-asset repair or corporate asset selection. |
 | `capsem uninstall` | Remove service, binaries, and data; requires confirmation unless `--yes`. |
 
-Manifest/corp inputs are URLs. Local files require `file:///absolute/path`.
+Manifest/corp inputs are URLs. Remote corporate configuration requires HTTPS
+across redirects; local corporate files require `file:///absolute/path`.
 Corporate channel selection is locked; see [Manifest reference](/reference/manifests/).
 
 ## Diagnostics

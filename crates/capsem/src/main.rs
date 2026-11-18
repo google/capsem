@@ -338,7 +338,7 @@ enum MiscCommands {
             hide = true
         )]
         install_manifest_stdin: bool,
-        /// Fetch and install corporate policy config from this URL.
+        /// Fetch and install corporate policy config from an HTTPS or absolute file URL.
         #[arg(long, value_name = "URL", value_parser = validate_update_corp_url, conflicts_with = "assets")]
         corp: Option<String>,
     },
@@ -417,7 +417,7 @@ fn validate_update_channel(value: &str) -> std::result::Result<String, String> {
 }
 
 fn validate_update_corp_url(value: &str) -> std::result::Result<String, String> {
-    update::validate_source_url_arg("--corp", value)
+    update::validate_corp_source_url_arg(value)
 }
 
 fn print_asset_status(status: &AssetStatus) {

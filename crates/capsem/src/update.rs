@@ -447,6 +447,20 @@ pub fn validate_manifest_source_url_arg(value: &str) -> std::result::Result<Stri
     Ok(value)
 }
 
+pub fn validate_corp_source_url_arg(value: &str) -> std::result::Result<String, String> {
+    let value = validate_source_url_arg("--corp", value)?;
+    let parsed = reqwest::Url::parse(&value).expect("source URL was validated");
+    if parsed.scheme() == "http" {
+        return Err("--corp remote authority requires HTTPS; use file:///absolute/path for local config".to_string());
+    }
+    if parsed.scheme() == "https"
+        && (!parsed.username().is_empty() || parsed.password().is_some() || !parsed.has_host())
+    {
+        return Err("--corp requires an HTTPS origin without URL credentials".to_string());
+    }
+    Ok(value)
+}
+
 fn has_scheme_authority_prefix(value: &str, scheme: &str) -> bool {
     let prefix = format!("{scheme}://");
     value

@@ -62,7 +62,9 @@ capsem status
 
 Replace the example endpoint with yours. Provision referenced rule files at
 the paths the corporate file resolves; pointing at a remote TOML file does not
-by itself place arbitrary local rule files on the host.
+by itself place arbitrary local rule files on the host. Remote corporate
+configuration authorities must use HTTPS across every redirect. For a file
+already installed on the Capsem host, use an absolute `file://` URL instead.
 
 Create a pilot VM. Confirm a permitted request succeeds, a corporate block
 is refused, a user rule cannot override it, and the expected records appear.
