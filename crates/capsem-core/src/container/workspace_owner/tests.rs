@@ -59,7 +59,7 @@ fn cold_rebind_preserves_options_and_refuses_another_environment_revision() {
     rebind_environment(&session, &next).unwrap();
     let bound: serde_json::Value = serde_json::from_slice(&std::fs::read(stage.join("options.json")).unwrap()).unwrap();
     assert_eq!(bound["env"], options["env"]);
-    assert_eq!(bound["environment"], serde_json::to_value(&next).unwrap());
+    assert_eq!(bound["environment"], serde_json::to_value(next).unwrap());
     let changed = EnvironmentLaunchContext {
         revision_id: uuid::Uuid::from_u128(7),
         ..next

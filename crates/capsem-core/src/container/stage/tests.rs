@@ -19,7 +19,7 @@ fn launch_options_keep_environment_and_actual_owner_identity_outside_policy_byte
     let resources = super::super::workload_resources(2048, 2).unwrap();
     let files = stage_plan(image, &[], &BTreeMap::new(), resources, DeclaredSurface::Terminal).unwrap();
     let value: serde_json::Value = serde_json::from_slice(&files[0].bytes).unwrap();
-    assert_eq!(value["environment"], serde_json::to_value(&context).unwrap());
+    assert_eq!(value["environment"], serde_json::to_value(context).unwrap());
     let invalid = EnvironmentLaunchContext {
         owner_generation: uuid::Uuid::nil(),
         ..context
