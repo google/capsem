@@ -10,6 +10,7 @@ use capsem_core::environment::{EnvironmentPinResolver, EnvironmentResolutionErro
 use std::sync::Arc;
 
 mod catalogs;
+mod repositories;
 
 pub(super) struct Sources(pub(super) Arc<ServiceState>);
 impl EnvironmentPinResolver for Sources {
@@ -26,8 +27,8 @@ impl EnvironmentPinResolver for Sources {
         Ok(admitted.resolved.digest().to_string())
     }
 
-    async fn repository(&self, _: &str, _: &str) -> Result<String, EnvironmentResolutionError> {
-        Err(EnvironmentResolutionError::Unavailable)
+    async fn repository(&self, repository: &str, reference: &str) -> Result<String, EnvironmentResolutionError> {
+        repositories::resolve(&self.0, repository, reference).await
     }
 
     async fn catalog(
