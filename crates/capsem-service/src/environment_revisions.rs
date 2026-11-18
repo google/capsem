@@ -15,7 +15,9 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 use tokio::sync::oneshot;
+mod creates;
 mod receipts;
+pub use creates::{EnvironmentCreateCoordinator, EnvironmentCreateError, EnvironmentCreateJob};
 mod startup;
 pub use startup::RecoverySummary;
 
