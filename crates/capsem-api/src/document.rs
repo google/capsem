@@ -23,6 +23,10 @@ pub fn openapi() -> OpenApi {
     let revoke = doc.operation::<VmActionResponse>("/agent-access/{id}", "revokeAgentAccess");
     doc.add("/agent-access/{id}", HttpMethod::Delete, revoke);
     doc.get::<environments::EnvironmentCurrentResponse>("/environments/{id}/info", "getEnvironmentInfo");
+    doc.get::<environments::EnvironmentReadinessResponse>(
+        "/environments/{id}/revisions/{revision_id}/readiness",
+        "getEnvironmentReadiness",
+    );
     let request = doc.schema::<EnvironmentCreateRequest>();
     let create = doc.operation::<EnvironmentMutationResponse>("/environments/create", "createEnvironment")
         .description(Some("Create an operator blueprint. Reconcile the same request ID explicitly after interruption; never infer completed application from an accepted decision. Skills and rules resolve from configured catalogs. Anonymous public HTTPS Git references resolve under current corporate policy; this does not prepare a sandbox checkout. MCP catalog verification is unavailable."))

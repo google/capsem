@@ -30,6 +30,7 @@ export {getAssetStatus} from "./getAssetStatus.js";
 export {getConnection} from "./getConnection.js";
 export {getConnectionAuthorization} from "./getConnectionAuthorization.js";
 export {getEnvironmentInfo} from "./getEnvironmentInfo.js";
+export {getEnvironmentReadiness} from "./getEnvironmentReadiness.js";
 export {getHypervisorInfo} from "./getHypervisorInfo.js";
 export {getHypervisorLogs} from "./getHypervisorLogs.js";
 export {getImageInventory} from "./getImageInventory.js";

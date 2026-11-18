@@ -616,3 +616,47 @@ fn attached_environment_invocation_keeps_transport_separate_from_workload_conten
     let missing: ProvisionRequest = serde_json::from_value(json!({"attach": true})).unwrap();
     assert!(missing.validate_environment().is_err());
 }
+
+#[test]
+fn environment_readiness_contract_uses_an_exact_revision_and_only_wait_metadata() {
+    let doc = serde_json::to_value(openapi()).unwrap();
+    let operation = &doc["paths"]["/environments/{id}/revisions/{revision_id}/readiness"]["get"];
+    assert_eq!(operation["operationId"], "getEnvironmentReadiness");
+    let params = operation["parameters"].as_array().unwrap();
+    assert!(params.iter().any(|p| p["name"] == "id" && p["required"] == true));
+    assert!(params
+        .iter()
+        .any(|p| p["name"] == "revision_id" && p["required"] == true));
+    let schema = &doc["components"]["schemas"]["EnvironmentReadinessResponse"];
+    let properties = schema["properties"].as_object().unwrap();
+    assert_eq!(properties.len(), 2, "no executable or secret-bearing content");
+    assert!(properties.contains_key("environment"));
+    assert!(properties.contains_key("startup_timeout_seconds"));
+    assert_eq!(schema["additionalProperties"], false);
+}
+
+#[test]
+fn environment_readiness_roundtrips_the_full_approved_timeout_without_executable_content() {
+    use environments::{EnvironmentReadinessResponse, EnvironmentRevisionReference};
+    let environment = EnvironmentRevisionReference {
+        environment_id: "00000000-0000-4000-8000-000000000001".into(),
+        revision_id: "00000000-0000-4000-8000-000000000002".into(),
+    };
+    for seconds in [0, 1, 600, u32::MAX] {
+        let response = EnvironmentReadinessResponse {
+            environment: environment.clone(),
+            startup_timeout_seconds: seconds,
+        };
+        let mut wire = serde_json::to_value(&response).unwrap();
+        assert_eq!(
+            serde_json::from_value::<EnvironmentReadinessResponse>(wire.clone()).unwrap(),
+            response
+        );
+        assert_eq!(wire.as_object().unwrap().len(), 2);
+        wire["startup_timeout_seconds"] = serde_json::json!(u64::from(u32::MAX) + 1);
+        assert!(serde_json::from_value::<EnvironmentReadinessResponse>(wire).is_err());
+    }
+    let mut wire = serde_json::json!({"environment": environment, "startup_timeout_seconds": 600});
+    wire["script"] = serde_json::json!("hidden");
+    assert!(serde_json::from_value::<EnvironmentReadinessResponse>(wire).is_err());
+}

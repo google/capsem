@@ -75,6 +75,16 @@ pub struct EnvironmentRevisionReference {
     #[schema(format = "uuid")]
     pub revision_id: String,
 }
+
+/// Immutable timing metadata for a selected revision. This grants no launch
+/// authority; current admission still applies when the workload is dispatched.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentReadinessResponse {
+    pub environment: EnvironmentRevisionReference,
+    /// Approved startup deadline, or zero when the revision has no image startup.
+    pub startup_timeout_seconds: u32,
+}
 impl EnvironmentRevisionReference {
     pub fn validate(&self) -> Result<(), &'static str> {
         if !crate::identity::canonical_uuid(&self.environment_id) || !crate::identity::canonical_uuid(&self.revision_id)

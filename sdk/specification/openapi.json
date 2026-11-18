@@ -564,6 +564,56 @@
         }
       }
     },
+    "/environments/{id}/revisions/{revision_id}/readiness": {
+      "get": {
+        "operationId": "getEnvironmentReadiness",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "revision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentReadinessResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/host-logs/{name}": {
       "get": {
         "description": "Send Accept: application/json for the typed response. Without it the route returns plain text.",
@@ -5859,6 +5909,26 @@
               }
             ],
             "default": null
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentReadinessResponse": {
+        "type": "object",
+        "description": "Immutable timing metadata for a selected revision. This grants no launch\nauthority; current admission still applies when the workload is dispatched.",
+        "required": [
+          "environment",
+          "startup_timeout_seconds"
+        ],
+        "properties": {
+          "environment": {
+            "$ref": "#/components/schemas/EnvironmentRevisionReference"
+          },
+          "startup_timeout_seconds": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Approved startup deadline, or zero when the revision has no image startup.",
+            "minimum": 0
           }
         },
         "additionalProperties": false

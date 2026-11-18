@@ -1,5 +1,6 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+export {PluginConfiguration_CredentialBrokerOptionsOptionsSchema} from "./PluginConfiguration_CredentialBrokerOptionsOptions.js";
 export {PluginConfiguration_DummyPostAllowOptionsSchema} from "./PluginConfiguration_DummyPostAllowOptions.js";
 export {PluginConfiguration_DummyPostAllowOptionsModeSchema} from "./PluginConfiguration_DummyPostAllowOptionsMode.js";
 export {PluginConfiguration_DummyPostAllowOptionsOptionsSchema} from "./PluginConfiguration_DummyPostAllowOptionsOptions.js";

@@ -1,5 +1,6 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+export type { PluginConfiguration_CredentialBrokerOptionsOptions } from "./PluginConfiguration_CredentialBrokerOptionsOptions.js";
 export type { PluginConfiguration_DummyPostAllowOptions } from "./PluginConfiguration_DummyPostAllowOptions.js";
 export { PluginConfiguration_DummyPostAllowOptionsMode } from "./PluginConfiguration_DummyPostAllowOptionsMode.js";
 export type { PluginConfiguration_DummyPostAllowOptionsOptions } from "./PluginConfiguration_DummyPostAllowOptionsOptions.js";
