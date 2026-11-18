@@ -56,6 +56,22 @@ def test_private_status_waits_for_exec_eof_and_output_uses_a_separate_pipe(prepa
         assert not (tmp_path / "preparing").exists()
 
 
+@pytest.mark.parametrize(("failure", "expected"), [
+    ({"kind": "exit", "code": 17}, 17), ({"kind": "signal", "signal": 15}, 143),
+    ({"kind": "timed_out"}, 124), ({"kind": "shell_unavailable"}, 126),
+    ({"kind": "entrypoint_exec"}, 126), ({"kind": "spawn"}, 126),
+    ({"kind": "wait"}, 126), ({"kind": "invalid_input"}, 126),
+])
+def test_private_preparation_failure_is_authoritative_over_runner_success(preparation, tmp_path, failure, expected):
+    events = frame({"type": "preparing"}) + frame({"type": "failed", "failure": failure})
+    with preparation["Bridge"](tmp_path, {"script": ":", "timeout_seconds": 5}, lambda: None) as bridge:
+        process = bridge.spawn([sys.executable, "-c", f"import os; os.write(4, {events!r})"])
+        assert bridge.wait(process) == expected
+        assert process.returncode == 0, "the private status, not runner success, determines preparation failure"
+        assert not (tmp_path / "running").exists()
+        assert not (tmp_path / "preparing").exists()
+
+
 def test_external_deadline_stops_a_wrapper_that_cannot_run_its_own_timer(preparation, tmp_path):
     startup = {"script": ":", "timeout_seconds": 1}
     events = frame({"type": "preparing"})
@@ -64,7 +80,8 @@ def test_external_deadline_stops_a_wrapper_that_cannot_run_its_own_timer(prepara
         process = bridge.spawn([sys.executable, "-c",
             f"import os,signal; os.write(4, {events!r}); os.kill(os.getpid(), signal.SIGSTOP)"])
         processes.append(process)
-        assert bridge.wait(process) < 0
+        assert bridge.wait(process) == 124
+        assert process.returncode is not None and process.returncode < 0, "external deadline must kill and reap the stopped child"
         assert (tmp_path / "failed").read_text().startswith("startup timed_out\n")
         assert not (tmp_path / "running").exists()
 
@@ -77,7 +94,8 @@ def test_failure_tail_is_bounded_sanitized_and_cannot_follow_a_marker_symlink(pr
     with preparation["Bridge"](tmp_path, {"script": ":", "timeout_seconds": 5}, lambda: None) as bridge:
         process = bridge.spawn([sys.executable, "-c",
             f"import os; os.write(3, b'\\x1b[31m' + b'x'*70000); os.write(4, {events!r})"])
-        bridge.wait(process)
+        assert bridge.wait(process) == 17, "a private preparation failure cannot become a successful runner exit"
+        assert process.returncode == 0, "the fixture deliberately contradicts the private failure with runner success"
         failed = (tmp_path / "failed").read_bytes()
         captured = capfdbinary.readouterr()
         assert captured.out == b""

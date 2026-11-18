@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed: A validated startup failure determines the attached controller's exit status even if its runner exits successfully. External preparation deadlines report timeout while still killing and reaping the stopped child.
+
 - Fixed: Attached startup failures report their bounded, sanitized stage and output on stderr before session teardown, preserving workload stdout and exit status.
 
 - Added: `capsem create --environment ENVIRONMENT_ID@REVISION_ID` launches the selected saved environment, and `capsem run --environment` attaches to its approved image. Inline workload overrides are refused; run preserves workload stdout, exit status, and timeout cleanup.

@@ -252,11 +252,18 @@ class Bridge:
                     self.step()
             for _ in range(4):
                 self.step()
+        code = process.wait()
         if self.diagnostic:
             sys.stderr.buffer.write(self.diagnostic)
             sys.stderr.buffer.write(b"\n")
             sys.stderr.buffer.flush()
-        return process.wait()
+        if self.failure:
+            if self.failure["kind"] == "exit":
+                return self.failure["code"]
+            if self.failure["kind"] == "signal":
+                return 128 + self.failure["signal"]
+            return 124 if self.failure["kind"] == "timed_out" else 126
+        return code
 
     def close(self):
         for name in ("output", "status", "output_write", "status_write"):
