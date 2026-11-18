@@ -587,3 +587,57 @@ async fn gateway_does_not_forward_retired_mcp_policy_route() {
         assert_eq!(resp.status(), http::StatusCode::NOT_FOUND, "{method} {uri}");
     }
 }
+
+#[tokio::test]
+async fn readiness_route_forwards_exact_qualified_path_only_after_authentication() {
+    let root = tempfile::tempdir().unwrap();
+    let socket = root.path().join("readiness.sock");
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let path =
+        "/environments/00000000-0000-4000-8000-000000000001/revisions/00000000-0000-4000-8000-000000000002/readiness";
+    let (sent, mut received) = tokio::sync::mpsc::unbounded_channel();
+    let service = axum::Router::new().fallback(move |request: http::Request<Body>| {
+        let sent = sent.clone();
+        async move {
+            sent.send((request.uri().to_string(), request.headers()["authorization"].clone()))
+                .unwrap();
+            axum::Json(serde_json::json!({"startup_timeout_seconds": 600}))
+        }
+    });
+    let server = tokio::spawn(async move { axum::serve(listener, service).await.unwrap() });
+    let (_, state) = health_app(socket.to_str().unwrap());
+    let app = service_proxy_routes()
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth::auth_middleware,
+        ))
+        .with_state(state);
+    for (method, bearer, status) in [
+        ("GET", None, http::StatusCode::UNAUTHORIZED),
+        ("GET", Some("Bearer wrong"), http::StatusCode::UNAUTHORIZED),
+        ("POST", Some("Bearer test"), http::StatusCode::METHOD_NOT_ALLOWED),
+        ("GET", Some("Bearer test"), http::StatusCode::OK),
+    ] {
+        let mut request = http::Request::builder().method(method).uri(path);
+        if let Some(bearer) = bearer {
+            request = request.header("authorization", bearer);
+        }
+        let response = app.clone().oneshot(request.body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(response.status(), status);
+        if status == http::StatusCode::OK {
+            let body = axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&body).unwrap()["startup_timeout_seconds"],
+                600
+            );
+        } else {
+            assert!(received.try_recv().is_err());
+        }
+    }
+    let (forwarded, authorization) = received.try_recv().unwrap();
+    assert_eq!(forwarded, path);
+    assert_eq!(authorization, "Bearer test");
+    assert!(received.try_recv().is_err());
+    server.abort();
+    let _ = server.await;
+}

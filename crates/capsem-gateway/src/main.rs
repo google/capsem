@@ -338,6 +338,10 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/agent-access", post(proxy::handle_proxy))
         .route("/agent-access/{id}", delete(proxy::handle_proxy))
         .route("/environments/{id}/info", get(proxy::handle_proxy))
+        .route(
+            "/environments/{id}/revisions/{revision_id}/readiness",
+            get(proxy::handle_proxy),
+        )
         .route("/environments/create", post(proxy::handle_proxy))
         .route("/environments/{id}/changes", post(proxy::handle_proxy))
         .route("/vms/create", post(proxy::handle_proxy))

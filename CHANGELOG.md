@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Authenticated gateway clients can read exact-revision environment startup timing through the GET readiness route.
+
 - Added: The service exposes verified startup timing for an exact committed environment revision, with live inspection checks and no script or variable disclosure.
 
 - Fixed: TypeScript requests accept long approved deadlines without native timer overflow, and release their timers and cancellation listeners after completion.
