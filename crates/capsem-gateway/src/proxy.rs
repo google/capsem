@@ -13,6 +13,7 @@ use http_body_util::{BodyExt, Limited};
 use tracing::Instrument;
 
 use crate::AppState;
+mod readiness;
 
 /// Maximum request body size. Prevents OOM from malicious oversized payloads.
 const MAX_BODY_SIZE: usize = capsem_api::MAX_REQUEST_BODY_BYTES;
@@ -148,7 +149,8 @@ fn gateway_request_id() -> GatewayRequestId {
 }
 
 async fn forward(state: &AppState, mut req: Request) -> anyhow::Result<Response> {
-    let deadline = upstream_deadline(req.uri().path());
+    let plans_create = req.method() == Method::POST && req.uri().path() == "/vms/create";
+    let mut deadline = upstream_deadline(req.uri().path());
     let should_buffer_json = req.method() == Method::GET && {
         let path = req.uri().path();
         !path.contains("/logs") && !path.starts_with("/host-logs/") && path != "/service-logs"
@@ -175,18 +177,23 @@ async fn forward(state: &AppState, mut req: Request) -> anyhow::Result<Response>
 
     let (parts, body) = req.into_parts();
 
-    // A body that declared its length was checked against MAX_BODY_SIZE
-    // before we got here and streams straight through, still capped in case
-    // the declaration lied. A chunked body has no length to check up front:
-    // it is collected here, under the cap, so an oversized upload answers
-    // 413. It used to fail mid-stream on the upstream connection instead and
-    // surface as a 502 "service unavailable", so the client never learned
-    // the body was the problem.
-    let body = if parts.headers.contains_key(http::header::CONTENT_LENGTH) {
+    // Creation needs bounded timing planning before mutation. Other sized
+    // uploads stream through under the same cap; unsized uploads are collected
+    // here so excess bytes produce413 before any upstream operation starts.
+    let body = if !plans_create && parts.headers.contains_key(http::header::CONTENT_LENGTH) {
         axum::body::Body::new(Limited::new(body, MAX_BODY_SIZE))
     } else {
         match tokio::time::timeout(REQUEST_TIMEOUT, Limited::new(body, MAX_BODY_SIZE).collect()).await {
-            Ok(Ok(collected)) => axum::body::Body::from(collected.to_bytes()),
+            Ok(Ok(collected)) => {
+                let bytes = collected.to_bytes();
+                if plans_create {
+                    deadline = match readiness::creation_deadline(state, &parts.headers, &bytes, deadline).await {
+                        Ok(deadline) => deadline,
+                        Err(response) => return Ok(response),
+                    };
+                }
+                axum::body::Body::from(bytes)
+            }
             Ok(Err(error)) if error.is::<http_body_util::LengthLimitError>() => {
                 return Ok((
                     StatusCode::PAYLOAD_TOO_LARGE,
