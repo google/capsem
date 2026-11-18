@@ -149,7 +149,8 @@ class Hypervisor(Client):
         return await _create_vm_with_timeout(
             api.create_vm(self._transport, body=request, request_timeout=request_timeout),
             self._transport, bind_vm=VM._bind, name=name,
-            container=attach or image is not None, request_timeout=request_timeout,
+            container=(True if attach or image is not None else None if environment is not None else False),
+            request_timeout=request_timeout,
         )
 
     def managed(self, *, cpus: int | None = None, memory: int | None = None,

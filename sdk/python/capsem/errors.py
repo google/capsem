@@ -118,7 +118,7 @@ def _map_http_error(
 
 async def _create_vm_with_timeout(
     op: Awaitable[models.ProvisionResponse], transport: Transport, *,
-    bind_vm: Callable[..., VM], name: str, container: bool, request_timeout: float,
+    bind_vm: Callable[..., VM], name: str, container: bool | None, request_timeout: float,
 ) -> VM:
     vm_name = name or None
 

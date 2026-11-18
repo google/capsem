@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed: Rust, Python, and TypeScript SDK port publication discovers whether a saved environment runs an image, including managed sessions, and remembers the target for subsequent ports.
+
 - Fixed: A validated startup failure determines the attached controller's exit status even if its runner exits successfully. External preparation deadlines report timeout while still killing and reaping the stopped child.
 
 - Fixed: Attached startup failures report their bounded, sanitized stage and output on stderr before session teardown, preserving workload stdout and exit status.

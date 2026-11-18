@@ -179,7 +179,7 @@ impl ManagedSession {
                     let response = result?;
                     self.validate(response.ownership.clone().ok_or(Error::Managed("create omitted ownership"))?)?;
                     self.validate_vm(&response)?;
-                    return VM::created(client.clone(), response.id, response.name, Some(params.body.attach || params.body.container.is_some()));
+                    return VM::created(client.clone(), response.id, response.name, Hypervisor::provision_has_container(&params.body));
                 },
                 result = self.next_claim() => match result {
                     Err(Error::Http { status:404, .. }) if self.ownership.is_none() => {},

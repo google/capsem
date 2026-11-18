@@ -11,6 +11,7 @@ const GENERATION: &str = "22222222-2222-4222-8222-222222222222";
 
 #[derive(Default)]
 struct Fixture {
+    no_container: bool,
     managed: Mutex<Value>,
     requests: Mutex<Vec<(String, Value)>>,
     held_create: bool,
@@ -26,8 +27,23 @@ struct Fixture {
 
 async fn respond(State(state): State<Arc<Fixture>>, request: Request<Body>) -> axum::response::Response {
     let path = request.uri().to_string();
-    let body: Value = serde_json::from_slice(&axum::body::to_bytes(request.into_body(), 65536).await.unwrap()).unwrap();
+    let bytes = axum::body::to_bytes(request.into_body(), 65536).await.unwrap();
+    let body: Value = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes).unwrap()
+    };
     state.requests.lock().unwrap().push((path.clone(), body.clone()));
+    if path.ends_with("/container") {
+        return if state.no_container {
+            (axum::http::StatusCode::NOT_FOUND, "no container").into_response()
+        } else {
+            Json(crate::test_contract::Case::new("getVmContainer", false).response).into_response()
+        };
+    }
+    if path.ends_with("/exposures") {
+        return Json(crate::test_contract::Case::new("createVmExposure", false).response).into_response();
+    }
     if path == "/vms/create" {
         *state.managed.lock().unwrap() = body["managed"].clone();
     }
@@ -57,7 +73,11 @@ async fn respond(State(state): State<Arc<Fixture>>, request: Request<Body>) -> a
             )
                 .into_response();
         }
-        return Json(json!({"id":"vm-original","name":"vm-original","status":"Running","available_actions":[],"persistent":false,"ownership":ownership})).into_response();
+        let mut response = json!({"id":"vm-original","name":"vm-original","status":"Running","available_actions":[],"persistent":false});
+        if !managed.is_null() {
+            response["ownership"] = ownership;
+        }
+        return Json(response).into_response();
     }
     assert_eq!(body["ownership_token"], managed["ownership_token"]);
     assert!(!path.contains(managed["ownership_token"].as_str().unwrap()));
@@ -431,4 +451,58 @@ async fn failed_cleanup_exposes_only_explicit_retry_handle() {
             .count(),
         2
     );
+}
+
+#[tokio::test]
+async fn saved_environment_ports_discover_target_once_in_create_and_managed_sessions() {
+    for managed in [false, true] {
+        for (no_container, attached, inline) in [
+            (false, false, false),
+            (true, false, false),
+            (false, true, false),
+            (false, false, true),
+        ] {
+            let gateway = Gateway::new(Fixture {
+                no_container,
+                ..Default::default()
+            })
+            .await;
+            gateway.state.close_release.notify_one();
+            let options = CreateOptions {
+                environment: (!inline).then(|| capsem_api::environments::EnvironmentRevisionReference {
+                    environment_id: "00000000-0000-4000-8000-000000000001".into(),
+                    revision_id: "00000000-0000-4000-8000-000000000002".into(),
+                }),
+                attach: attached,
+                image: inline.then(|| "busybox".into()),
+                ..Default::default()
+            };
+            if managed {
+                gateway
+                    .hv
+                    .with_managed(options, |vm, _| async move {
+                        vm.ports().open(8080).await?;
+                        vm.ports().open(8081).await?;
+                        Ok(())
+                    })
+                    .await
+                    .unwrap();
+            } else {
+                let vm = gateway.hv.create(options).await.unwrap();
+                vm.ports().open(8080).await.unwrap();
+                vm.ports().open(8081).await.unwrap();
+            }
+            let requests = gateway.state.requests.lock().unwrap().clone();
+            let probes = requests.iter().filter(|(path, _)| path.ends_with("/container")).count();
+            assert_eq!(probes, usize::from(!attached && !inline));
+            let exposures: Vec<_> = requests
+                .iter()
+                .filter(|(path, _)| path.ends_with("/exposures"))
+                .collect();
+            assert_eq!(exposures.len(), 2);
+            for (_, body) in exposures {
+                assert_eq!(body["target"], if no_container { "vm" } else { "container" });
+            }
+        }
+    }
 }

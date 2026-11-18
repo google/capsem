@@ -151,16 +151,27 @@ impl Hypervisor {
         self.client.clone()
     }
 
+    pub(crate) fn provision_has_container(body: &models::ProvisionRequest) -> Option<bool> {
+        // A saved revision may select an image without an inline container.
+        if body.attach || body.container.is_some() {
+            Some(true)
+        } else if body.environment.is_some() {
+            None
+        } else {
+            Some(false)
+        }
+    }
+
     pub async fn create(&self, options: CreateOptions) -> Result<VM> {
-        let has_container = options.attach || options.image.is_some();
         let body = Self::provision_request(options)?;
+        let has_container = Self::provision_has_container(&body);
         let result = api::create_vm(
             &self.client.transport,
             &api::CreateVmParams { body },
             self.client.create_options(),
         )
         .await?;
-        VM::created(self.client.clone(), result.id, result.name, Some(has_container))
+        VM::created(self.client.clone(), result.id, result.name, has_container)
     }
 
     pub async fn log(&self, source: models::HostLogSource, options: LogOptions) -> Result<models::HostLogsResponse> {
