@@ -7,7 +7,9 @@ use axum::{
     Json,
 };
 use capsem_api::{
-    environments::{EnvironmentCreateRequest, EnvironmentCurrentResponse, EnvironmentMutationResponse},
+    environments::{
+        EnvironmentChangeRequest, EnvironmentCreateRequest, EnvironmentCurrentResponse, EnvironmentMutationResponse,
+    },
     AgentOperation,
 };
 use capsem_core::environment::EnvironmentResolutionError;
@@ -96,24 +98,41 @@ pub(crate) async fn create(
 ) -> Result<Json<EnvironmentMutationResponse>, AppError> {
     actor.require_operator()?;
     let owner = Arc::new(EnvironmentMutationCoordinator::new(state.environments.clone()));
-    let job = owner.submit(request, sources::Sources(state)).map_err(creation_error)?;
-    job.wait().await.map(Json).map_err(creation_error)
+    let job = owner.submit(request, sources::Sources(state)).map_err(mutation_error)?;
+    job.wait().await.map(Json).map_err(mutation_error)
 }
 
-fn creation_error(error: EnvironmentMutationError) -> AppError {
-    use EnvironmentMutationError as Create;
+/// Operator changes affect this blueprint's future creations. Running
+/// generations and agent approval/fork authority are separate operations.
+pub(crate) async fn change(
+    actor: AuthenticatedActor,
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+    Json(request): Json<EnvironmentChangeRequest>,
+) -> Result<Json<EnvironmentMutationResponse>, AppError> {
+    actor.require_operator()?;
+    let owner = Arc::new(EnvironmentMutationCoordinator::new(state.environments.clone()));
+    let job = owner
+        .submit_change(id, request, sources::Sources(state))
+        .map_err(mutation_error)?;
+    job.wait().await.map(Json).map_err(mutation_error)
+}
+
+fn mutation_error(error: EnvironmentMutationError) -> AppError {
+    use EnvironmentMutationError as Mutation;
     let status = match error {
-        Create::InvalidIntent | Create::Resolution(EnvironmentResolutionError::InvalidIntent) => {
+        Mutation::InvalidIntent | Mutation::Resolution(EnvironmentResolutionError::InvalidIntent) => {
             StatusCode::BAD_REQUEST
         }
-        Create::Conflict
-        | Create::Publication(EnvironmentFileError::Changed | EnvironmentFileError::RecoveryRequired) => {
+        Mutation::NotFound => StatusCode::NOT_FOUND,
+        Mutation::Conflict
+        | Mutation::Publication(EnvironmentFileError::Changed | EnvironmentFileError::RecoveryRequired) => {
             StatusCode::CONFLICT
         }
-        Create::Resolution(EnvironmentResolutionError::Refused | EnvironmentResolutionError::UnusableCatalogEntry) => {
-            StatusCode::FORBIDDEN
-        }
-        Create::Resolution(EnvironmentResolutionError::InvalidPin) => StatusCode::BAD_GATEWAY,
+        Mutation::Resolution(
+            EnvironmentResolutionError::Refused | EnvironmentResolutionError::UnusableCatalogEntry,
+        ) => StatusCode::FORBIDDEN,
+        Mutation::Resolution(EnvironmentResolutionError::InvalidPin) => StatusCode::BAD_GATEWAY,
         _ => StatusCode::SERVICE_UNAVAILABLE,
     };
     // Source and durability diagnostics never expose draft values or credentials.
