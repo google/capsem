@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Price Anthropic, OpenAI and Google models that the bundled genai-prices ledger does not list yet (for example `gpt-6-sol`, `claude-haiku-5-5`, `gemini-3.8-flash`) from the `llm-prices` crate, behind the default `llm-prices` feature of `capsem-core`. Ledger rows still win, and a fallback rate never applies to a call dated before the table checked it.
+
 - Reuse the supported public release HTTP reader for client continuation and isolate npm publisher configuration from legacy registry credentials while preserving GitHub OIDC authority.
 
 - Record the deliberate async-executor1.14.1 native lock/cache identity update while preserving the original published client and native artifacts.
