@@ -7,6 +7,7 @@ pub enum EnvironmentResolutionError {
     InvalidIntent,
     InvalidPin,
     Unavailable,
+    Refused,
     UnusableCatalogEntry,
 }
 impl std::fmt::Display for EnvironmentResolutionError {
@@ -15,6 +16,7 @@ impl std::fmt::Display for EnvironmentResolutionError {
             Self::InvalidIntent => "invalid environment intent",
             Self::InvalidPin => "environment source returned an invalid pin",
             Self::Unavailable => "environment resolution source unavailable",
+            Self::Refused => "environment source refused by current policy",
             Self::UnusableCatalogEntry => "environment catalog entry is no longer usable",
         })
     }

@@ -6,11 +6,15 @@ struct Sources {
     calls: Mutex<Vec<String>>,
     invalid: Option<&'static str>,
     revoked: bool,
+    refused_image: bool,
     wrong_selection: bool,
 }
 impl EnvironmentPinResolver for Sources {
     async fn image(&self, reference: &str) -> Result<String, EnvironmentResolutionError> {
         self.calls.lock().unwrap().push(format!("image:{reference}"));
+        if self.refused_image {
+            return Err(EnvironmentResolutionError::Refused);
+        }
         Ok(if self.invalid == Some("image") {
             "bad".into()
         } else {
@@ -278,4 +282,19 @@ async fn source_output_cannot_change_selection_or_publish_invalid_pins() {
         Some(EnvironmentResolutionError::InvalidIntent)
     );
     assert!(sources.calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn policy_refusal_stops_resolution_without_consulting_later_sources() {
+    let sources = Sources {
+        refused_image: true,
+        ..Sources::default()
+    };
+    assert_eq!(
+        resolve_environment(draft(), None, EnvironmentResolutionMode::Edit, &sources)
+            .await
+            .err(),
+        Some(EnvironmentResolutionError::Refused)
+    );
+    assert_eq!(*sources.calls.lock().unwrap(), ["image:development:stable"]);
 }
