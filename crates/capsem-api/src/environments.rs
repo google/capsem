@@ -4,6 +4,32 @@ pub use capsem_config::environment::*;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+/// Reconciliation result for a submitted mutation, including an accepted
+/// decision whose effect remains pending or failed. Request IDs are stable;
+/// clients must not infer a completed revision from HTTP success alone.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentMutationResponse {
+    #[schema(format = "uuid")]
+    pub request_id: String,
+    #[schema(format = "uuid")]
+    pub environment_id: String,
+    pub decision: crate::requests::RequestState,
+    pub application: crate::requests::RequestApplicationState,
+    pub result: Option<EnvironmentRevisionReference>,
+    pub application_error: Option<String>,
+}
+impl std::fmt::Debug for EnvironmentMutationResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EnvironmentMutationResponse")
+            .field("request_id", &self.request_id)
+            .field("environment_id", &self.environment_id)
+            .field("decision", &self.decision)
+            .field("application", &self.application)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Canonical current content verified against the committed host-ledger revision.
 /// Effective corporate policy is a separate view of this same revision.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

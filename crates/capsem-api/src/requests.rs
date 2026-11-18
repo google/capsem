@@ -3,6 +3,27 @@
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+/// A durable decision never implies that its approved effect has been applied.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestState {
+    Pending,
+    Approved,
+    Denied,
+    Cancelled,
+    Expired,
+    Stale,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RequestApplicationState {
+    Pending,
+    Applying,
+    Applied,
+    Failed,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RequestDecision {

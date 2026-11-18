@@ -89,6 +89,7 @@ fn environment_submissions_refuse_forged_authority_resolution_and_invalid_intent
 #[openapi(components(schemas(
     EnvironmentCreateRequest,
     EnvironmentChangeRequest,
+    EnvironmentMutationResponse,
     EnvironmentRevisionReference,
     capsem_config::environment::EnvironmentDocument,
     crate::requests::RequestResolveRequest
@@ -130,4 +131,33 @@ fn environment_dto_schemas_collect_complete_selector_and_canonical_graphs() {
         .unwrap()
         .keys()
         .any(|name| name.starts_with("EnvironmentSpecification_EnvironmentImage_")));
+}
+
+#[test]
+fn mutation_response_separates_approved_decision_from_unapplied_effect() {
+    let wire = json!({"request_id":id(1), "environment_id":id(2),
+        "decision":"approved", "application":"pending", "result":null,
+        "application_error":"private-application-diagnostic"});
+    let response: EnvironmentMutationResponse = serde_json::from_value(wire.clone()).unwrap();
+    assert_eq!(response.decision, crate::requests::RequestState::Approved);
+    assert_eq!(response.application, crate::requests::RequestApplicationState::Pending);
+    assert!(response.result.is_none());
+    assert_eq!(serde_json::to_value(&response).unwrap(), wire);
+    assert!(!format!("{response:?}").contains("private-application-diagnostic"));
+    for (key, value) in [("decision", "applied"), ("application", "approved")] {
+        let mut invalid = wire.clone();
+        invalid[key] = json!(value);
+        assert!(serde_json::from_value::<EnvironmentMutationResponse>(invalid).is_err());
+    }
+    let mut applied = response;
+    applied.application = crate::requests::RequestApplicationState::Applied;
+    applied.result = Some(EnvironmentRevisionReference {
+        environment_id: id(2),
+        revision_id: id(3),
+    });
+    applied.application_error = None;
+    assert_eq!(
+        serde_json::from_value::<EnvironmentMutationResponse>(serde_json::to_value(&applied).unwrap()).unwrap(),
+        applied
+    );
 }
