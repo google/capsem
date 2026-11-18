@@ -413,3 +413,97 @@ fn missing_rates_never_turn_cached_or_partial_usage_into_free_calls() {
         None
     );
 }
+
+#[cfg(feature = "llm-prices")]
+#[test]
+fn every_listed_first_party_model_is_priced() {
+    let table = PricingTable::load();
+    let unpriced: Vec<_> = llm_prices::all()
+        .iter()
+        .filter(|row| matches!(row.provider, "anthropic" | "openai" | "google"))
+        .filter(|row| row.cost(100_000, 5_000).is_some())
+        .filter(|row| {
+            table
+                .estimate_cost_at(
+                    row.provider,
+                    Some(row.model),
+                    Some(100_000),
+                    Some(5_000),
+                    &no_details(),
+                    at(2099, 1, 1),
+                )
+                .is_none()
+        })
+        .map(|row| row.model)
+        .collect();
+    assert!(unpriced.is_empty(), "unpriced: {unpriced:?}");
+}
+
+#[cfg(feature = "llm-prices")]
+#[test]
+fn unlisted_models_use_the_maintained_rates_and_ledger_rows_still_win() {
+    let ledgerless = PricingTable { providers: vec![] };
+    let row = llm_prices::lookup_provider("anthropic", "claude-haiku-4-5").unwrap();
+    let details = BTreeMap::from([
+        ("cache_read".into(), 40_000),
+        ("cache_write".into(), 10_000),
+        ("cache_write_1h".into(), 4_000),
+    ]);
+    let usage = llm_prices::Usage {
+        input: 50_000,
+        output: 2_000,
+        cache_read: 40_000,
+        cache_write_5m: 6_000,
+        cache_write_1h: 4_000,
+        batch: false,
+    };
+    let cost = ledgerless
+        .estimate_cost_at(
+            "anthropic",
+            Some("claude-haiku-4-5-20251001"),
+            Some(100_000),
+            Some(2_000),
+            &details,
+            at(2099, 1, 1),
+        )
+        .unwrap();
+    assert_eq!(cost, row.cost_usage(&usage).unwrap().total);
+    // The bundled ledger still prices the models it claims, by date.
+    let o3 = PricingTable::load()
+        .estimate_cost_at(
+            "openai",
+            Some("o3"),
+            Some(1_000_000),
+            Some(1_000_000),
+            &no_details(),
+            at(2025, 6, 9),
+        )
+        .unwrap();
+    assert_eq!(o3, 50.0);
+}
+
+#[cfg(feature = "llm-prices")]
+#[test]
+fn maintained_rates_are_never_borrowed_across_dates_or_providers() {
+    let ledgerless = PricingTable { providers: vec![] };
+    let price = |provider, model, date| {
+        ledgerless.estimate_cost_at(provider, Some(model), Some(1_000), Some(100), &no_details(), date)
+    };
+    assert!(price("openai", "gpt-4o", at(2099, 1, 1)).is_some());
+    // Before the table checked the row, the rate is not known to apply.
+    assert_eq!(price("openai", "gpt-4o", at(2020, 1, 1)), None);
+    // Another provider's row, or a provider the ledger does not cover.
+    assert_eq!(price("anthropic", "gpt-4o", at(2099, 1, 1)), None);
+    assert_eq!(price("azure", "gpt-4o", at(2099, 1, 1)), None);
+    assert_eq!(price("openai", "gpt-5-private-fork", at(2099, 1, 1)), None);
+}
+
+#[cfg(not(feature = "llm-prices"))]
+#[test]
+fn without_the_feature_unlisted_models_stay_unpriced() {
+    let ledgerless = PricingTable { providers: vec![] };
+    assert_eq!(
+        ledgerless.estimate_cost("openai", Some("gpt-4o"), Some(1_000), Some(100), &no_details()),
+        None
+    );
+}

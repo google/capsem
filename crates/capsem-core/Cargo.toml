@@ -49,6 +49,9 @@ rmp-serde = { workspace = true }
 uuid = { version = "1", features = ["v4", "serde"] }
 flate2 = "1"
 regex = { workspace = true }
+# Maintained LLM price table: prices models the bundled genai-prices ledger
+# does not list yet. No dependencies of its own, no build script, no network.
+llm-prices = { version = "1.7", optional = true }
 scraper = "0.25"
 alacritty_terminal = { path = "../../third_party/rust/alacritty_terminal", features = ["checkpoint"] }
 
@@ -71,6 +74,12 @@ objc2-virtualization = { workspace = true }
 objc2-foundation = { workspace = true }
 block2 = { workspace = true }
 core-foundation-sys = "0.8"
+
+[features]
+default = ["llm-prices"]
+# Price models missing from config/data/genai-prices.json from llm-prices.
+# Build with --no-default-features to keep them unpriced.
+llm-prices = ["dep:llm-prices"]
 
 [lints]
 workspace = true

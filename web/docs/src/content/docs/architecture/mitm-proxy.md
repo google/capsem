@@ -247,7 +247,7 @@ Parsing runs inline during `poll_frame()` -- response bytes pass through unchang
 
 ### Cost estimation
 
-Model pricing is loaded from the compact Capsem runtime ledger at `config/data/genai-prices.json` (embedded at compile time via `include_str!`). The ledger is transformed from `pydantic/genai-prices` with `just update-prices`, and model lookup uses the upstream `match` clauses without fuzzy fallback.
+Model pricing is loaded from the compact Capsem runtime ledger at `config/data/genai-prices.json` (embedded at compile time via `include_str!`). The ledger is transformed from `pydantic/genai-prices` with `just update-prices`, and model lookup uses the upstream `match` clauses without fuzzy fallback. A first-party model the ledger does not list is priced from the [`llm-prices`](https://crates.io/crates/llm-prices) table (the default `llm-prices` feature of `capsem-core`), only for calls on or after the date that table checked the row; build with `--no-default-features` to leave such models unpriced.
 
 ## Trace state correlation
 

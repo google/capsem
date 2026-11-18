@@ -114,28 +114,33 @@ struct PriceConstraint {
 
 struct PriceDate(time::Date);
 
-impl<'de> Deserialize<'de> for PriceDate {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        use serde::de::Error;
-        let text = String::deserialize(deserializer)?;
+impl PriceDate {
+    fn parse(text: &str) -> Result<Self, String> {
         if text.len() != 10
             || !text.bytes().enumerate().all(|(index, byte)| match index {
                 4 | 7 => byte == b'-',
                 _ => byte.is_ascii_digit(),
             })
         {
-            return Err(D::Error::custom("expected YYYY-MM-DD pricing date"));
+            return Err("expected YYYY-MM-DD pricing date".into());
         }
-        let year = text[..4].parse().map_err(D::Error::custom)?;
+        let year = text[..4].parse().map_err(|e| format!("{e}"))?;
         let month = text[5..7]
             .parse::<u8>()
-            .map_err(D::Error::custom)?
+            .map_err(|e| format!("{e}"))?
             .try_into()
-            .map_err(D::Error::custom)?;
-        let day = text[8..].parse().map_err(D::Error::custom)?;
+            .map_err(|e| format!("{e}"))?;
+        let day = text[8..].parse().map_err(|e| format!("{e}"))?;
         time::Date::from_calendar_date(year, month, day)
             .map(Self)
-            .map_err(D::Error::custom)
+            .map_err(|e| format!("{e}"))
+    }
+}
+
+impl<'de> Deserialize<'de> for PriceDate {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        Self::parse(&String::deserialize(deserializer)?).map_err(D::Error::custom)
     }
 }
 
@@ -225,7 +230,9 @@ impl PricingTable {
     /// Unknown models, missing usage and unsupported cache rates remain unknown.
     ///
     /// Uses only the upstream `match` clauses from pydantic/genai-prices. If
-    /// the bundled ledger does not claim the model, Capsem does not guess.
+    /// the bundled ledger does not claim the model, Capsem does not guess: with
+    /// the `llm-prices` feature it asks that table for a listed price, and
+    /// otherwise the call stays unpriced.
     pub fn estimate_cost(
         &self,
         provider: &str,
@@ -269,14 +276,18 @@ impl PricingTable {
             return None;
         }
         let write_5m = write.checked_sub(write_1h)?;
-        let provider = self.providers.iter().find(|p| p.id == provider)?;
-        let price = provider
-            .models
-            .iter()
-            .find(|m| m.match_rule.matches(model))?
-            .prices
-            .price(time::OffsetDateTime::from(timestamp).date())?;
         let base = input.checked_sub(read)?.checked_sub(write)?;
+        let date = time::OffsetDateTime::from(timestamp).date();
+        let Some(entry) = self
+            .providers
+            .iter()
+            .find(|p| p.id == provider)
+            .and_then(|p| p.models.iter().find(|m| m.match_rule.matches(model)))
+        else {
+            let usage = [base, output, read, write_5m, write_1h];
+            return maintained_price(provider, model, date, usage);
+        };
+        let price = entry.prices.price(date)?;
         let component = |tokens: u64, rate: &PriceValue| -> Option<f64> {
             if tokens == 0 {
                 Some(0.0)
@@ -292,6 +303,39 @@ impl PricingTable {
                 + component(write_1h, &price.input_mtok)? * 2.0,
         )
     }
+}
+
+/// Price a model the bundled ledger does not claim from the maintained
+/// `llm-prices` table, for the providers the ledger covers. The row's own
+/// provider must match, and the call must fall on or after the date that
+/// table last checked the row against the provider's pricing page, so a
+/// historical call never borrows a rate the table could not vouch for then.
+/// Without the `llm-prices` feature such models stay unpriced, as before.
+#[cfg(feature = "llm-prices")]
+fn maintained_price(provider: &str, model: &str, date: time::Date, usage: [u64; 5]) -> Option<f64> {
+    if !matches!(provider, "anthropic" | "openai" | "google") {
+        return None;
+    }
+    let row = llm_prices::lookup_provider(provider, model).filter(|row| row.provider == provider)?;
+    if date < PriceDate::parse(row.checked).ok()?.0 {
+        return None;
+    }
+    let [input, output, cache_read, cache_write_5m, cache_write_1h] = usage;
+    let usage = llm_prices::Usage {
+        input,
+        output,
+        cache_read,
+        cache_write_5m,
+        cache_write_1h,
+        batch: false,
+    };
+    let cost = row.cost_usage(&usage)?.total;
+    (cost.is_finite() && cost >= 0.0).then_some(cost)
+}
+
+#[cfg(not(feature = "llm-prices"))]
+fn maintained_price(_provider: &str, _model: &str, _date: time::Date, _usage: [u64; 5]) -> Option<f64> {
+    None
 }
 
 #[cfg(test)]

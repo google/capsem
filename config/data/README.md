@@ -29,7 +29,11 @@ file through
 first-party provider pricing blocks (`anthropic`, `google`, `openai`) and the
 fields used by the runtime (`id`, `match`, `context_window`, `prices`). Model
 lookup follows upstream matching, UTC date constraints and full-call prompt
-size tiers. Capsem does not fuzzy-price unknown model names.
+size tiers. Capsem does not fuzzy-price unknown model names. A model this
+ledger does not claim is priced from the `llm-prices` crate when the default
+`llm-prices` feature of `capsem-core` is on: same provider only, and only for
+calls dated on or after the row's `checked` date. Rows in this ledger always
+win, so dated pricing here is unchanged.
 
 `genai-prices-reviewed.json` records primary-source provenance and exact missing
 model IDs not yet published upstream. Refresh merges these entries only while
