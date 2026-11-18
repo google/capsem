@@ -11,6 +11,9 @@
 // Lifecycle commands use vsock:5004 independently of the agent. Browser
 // requests use only the guest-local socket, not direct host authority.
 
+#[path = "../preparation.rs"]
+mod preparation;
+
 #[path = "../vsock_io.rs"]
 mod vsock_io;
 
@@ -89,6 +92,10 @@ fn print_help(cmd: &str) {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let cmd = command_name(&args[0]);
+
+    if cmd == "capsem-prepare" {
+        process::exit(preparation::run(&args[1..]));
+    }
 
     if matches!(cmd, "xdg-open" | "capsem-open") {
         if open_browser(capsem_proto::browser::BROWSER_SOCKET, &args[1..]).is_err() {
