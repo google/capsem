@@ -14,6 +14,13 @@ export class Environments {
     return result;
   }
 
+  async change(id: string, request: models.EnvironmentChangeRequest, options: CallOptions = {}): Promise<models.EnvironmentMutationResponse> {
+    const requestId = request.request_id;
+    const result = await api.changeEnvironment(this.transport, {id, body: request}, options);
+    if (result.request_id !== requestId || result.environment_id !== id) throw new Error('Environment change identity changed');
+    return result;
+  }
+
   async info(id: string, options: CallOptions = {}): Promise<models.EnvironmentCurrentResponse> {
     const result = await api.getEnvironmentInfo(this.transport, {id}, options);
     if (result.document.identity.id !== id) throw new Error('Environment identity changed');

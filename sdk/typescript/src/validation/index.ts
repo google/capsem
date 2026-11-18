@@ -56,6 +56,7 @@ export {EnvironmentCatalogSelections_EnvironmentCatalogPinSchema} from "./Enviro
 export {EnvironmentCatalogSelections_EnvironmentCatalogPinSelectedItemSchema} from "./EnvironmentCatalogSelections_EnvironmentCatalogPinSelectedItem.js";
 export {EnvironmentCatalogSelections_EnvironmentCatalogSelectionSchema} from "./EnvironmentCatalogSelections_EnvironmentCatalogSelection.js";
 export {EnvironmentCatalogSelections_EnvironmentCatalogSelectionSelectedItemSchema} from "./EnvironmentCatalogSelections_EnvironmentCatalogSelectionSelectedItem.js";
+export {EnvironmentChangeRequestSchema} from "./EnvironmentChangeRequest.js";
 export {EnvironmentCreateRequestSchema} from "./EnvironmentCreateRequest.js";
 export {EnvironmentCurrentResponseSchema} from "./EnvironmentCurrentResponse.js";
 export {EnvironmentDocumentSchema} from "./EnvironmentDocument.js";

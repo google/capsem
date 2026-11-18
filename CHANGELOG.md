@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added: Operator environment changes use an observed base revision, retain unchanged pins and publish durable linear history. Exact request-ID retries reconcile without replaying changes or reverting later edits.
 
-- Added: TypeScript SDK `Hypervisor.environments` creates and inspects blueprints with explicit request IDs, response identity checks, deadlines and cancellation.
+- Added: TypeScript SDK `Hypervisor.environments` creates, changes and inspects blueprints with explicit request IDs, response identity checks, deadlines and cancellation.
 
 - Added: Python SDK `Hypervisor.environments` creates, changes and inspects blueprints with request-ID reconciliation, response identity checks and per-call deadlines.
 

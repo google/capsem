@@ -1,5 +1,5 @@
 import {expect, it} from 'vitest';
-import {Hypervisor, HttpError, RequestApplicationState, RequestState, type EnvironmentCreateRequest} from '../src/index.js';
+import {Hypervisor, HttpError, RequestApplicationState, RequestState, type EnvironmentCreateRequest, type CallOptions} from '../src/index.js';
 import {gateway} from './gateway.js';
 
 const requestId = '00000000-0000-4000-8000-000000000001';
@@ -68,17 +68,40 @@ it('refuses a substituted environment identity', async () => {
   });
 });
 
-it('retains the creation budget, explicit deadlines and cancellation without replay', async () => {
+it.each(['create', 'change'] as const)('retains the %s budget, deadlines and cancellation without replay', async mutation => {
   await gateway((_request, response) => {setTimeout(() => response.end(JSON.stringify(pending)), 150);}, async (url, received) => {
     const hv = new Hypervisor(url, 'token', {timeoutMs: 30});
     try {
-      expect((await hv.environments.create(input)).request_id).toBe(requestId);
-      await expect(hv.environments.create(input, {timeoutMs: 30})).rejects.toMatchObject({name: 'TimeoutError'});
+      const invoke = (options: CallOptions = {}) => mutation === 'create' ? hv.environments.create(input, options) : hv.environments.change(environmentId, {...input, base_revision_id: requestId}, options);
+      expect((await invoke()).request_id).toBe(requestId);
+      await expect(invoke({timeoutMs: 30})).rejects.toMatchObject({name: 'TimeoutError'});
       const controller = new AbortController();
-      const rejected = expect(hv.environments.create(input, {signal: controller.signal})).rejects.toMatchObject({name: 'AbortError'});
+      const rejected = expect(invoke({signal: controller.signal})).rejects.toMatchObject({name: 'AbortError'});
       setTimeout(() => controller.abort(), 30);
       await rejected;
-      expect(received.map(request => request.url)).toEqual(Array<string>(3).fill('/environments/create'));
+      expect(received.map(request => request.url)).toEqual(Array<string>(3).fill(mutation === 'create' ? '/environments/create' : `/environments/${environmentId}/changes`));
+    } finally { hv.close(); }
+  });
+});
+
+
+it.each([
+  {response: pending, valid: true},
+  {response: {...pending, request_id: environmentId}, valid: false},
+  {response: {...pending, environment_id: requestId}, valid: false},
+])('preserves change base and rejects substituted identities ($valid)', async ({response, valid}) => {
+  await gateway((_request, reply) => reply.end(JSON.stringify(response)), async (url, received) => {
+    const hv = new Hypervisor(url, 'token');
+    try {
+      const base = '00000000-0000-4000-8000-000000000003';
+      const request = {...input, base_revision_id: base};
+      const result = hv.environments.change(environmentId, request);
+      if (valid) expect((await result).application).toBe(RequestApplicationState.PENDING);
+      else await expect(result).rejects.toThrow('identity changed');
+      expect(received).toHaveLength(1);
+      expect(received[0]?.url).toBe(`/environments/${environmentId}/changes`);
+      expect(received[0]?.headers.authorization).toBe('Bearer token');
+      expect(JSON.parse(received[0]?.body.toString() ?? '')).toEqual(request);
     } finally { hv.close(); }
   });
 });
