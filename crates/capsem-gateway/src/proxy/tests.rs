@@ -37,6 +37,7 @@ fn proxy_app(uds_path: &str) -> Router {
         .route("/health", any(handle_proxy))
         .route("/images/pull", any(handle_proxy))
         .route("/environments/create", any(handle_proxy))
+        .route("/environments/{id}/changes", any(handle_proxy))
         .route("/item", any(handle_proxy))
         .route("/vms/list", any(handle_proxy))
         .route("/ok", any(handle_proxy))
@@ -763,7 +764,11 @@ fn exec_deadline_covers_the_exec_timeout_ceiling() {
 
 #[tokio::test]
 async fn image_backed_mutations_wait_for_download_and_verification_without_replaying() {
-    for image_path in ["/images/pull", "/environments/create"] {
+    for image_path in [
+        "/images/pull",
+        "/environments/create",
+        "/environments/00000000-0000-4000-8000-000000000001/changes",
+    ] {
         let received = Arc::new(tokio::sync::Notify::new());
         let calls = Arc::new(AtomicUsize::new(0));
         let handler_received = received.clone();
@@ -805,6 +810,8 @@ async fn image_backed_mutations_wait_for_download_and_verification_without_repla
             serde_json::json!({"image":"dev", "resolved":"verified-pin"})
         );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(upstream_deadline("/environments/known/info"), REQUEST_TIMEOUT);
+        assert_eq!(upstream_deadline("/environments/known/changes/extra"), REQUEST_TIMEOUT);
         assert_eq!(upstream_deadline("/images"), REQUEST_TIMEOUT);
         assert_eq!(upstream_deadline("/images/pull/extra"), REQUEST_TIMEOUT);
         server.abort();

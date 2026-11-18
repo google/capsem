@@ -30,10 +30,13 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 /// bounds by `capsem_api::MAX_EXEC_TIMEOUT_SECS`; they get that ceiling plus
 /// the ordinary request budget for readiness, boot and teardown.
 fn upstream_deadline(path: &str) -> Duration {
-    if matches!(path, "/images/pull" | "/environments/create") {
+    let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+    if matches!(
+        segments.as_slice(),
+        ["images", "pull"] | ["environments", "create"] | ["environments", _, "changes"]
+    ) {
         return Duration::from_millis(capsem_api::IMAGE_PULL_REQUEST_TIMEOUT_MS);
     }
-    let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
     let waits_for_a_command = matches!(segments.as_slice(), ["run"] | ["vms", _, "exec"]);
     if waits_for_a_command {
         REQUEST_TIMEOUT + Duration::from_secs(capsem_api::MAX_EXEC_TIMEOUT_SECS)
