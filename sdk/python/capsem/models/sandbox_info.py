@@ -10,6 +10,7 @@ from .browser_request import BrowserRequest
 from .cost_coverage import CostCoverage
 from .image_app import ImageApp
 from .model_base import Model
+from .sandbox_environment import SandboxEnvironment
 from .session_db_status import SessionDbStatus
 from .storage_diagnostics import StorageDiagnostics
 from .terminal_summary import TerminalSummary
@@ -33,6 +34,7 @@ class SandboxInfo(Model):
     created_at: StrictStr | None = None
     denied_requests: Annotated[StrictInt, Field(ge=0)] | None = None
     description: StrictStr | None = None
+    environment: SandboxEnvironment | None = None
     files: VmFilesInfo | None = None
     forked_from: StrictStr | None = None
     id: StrictStr

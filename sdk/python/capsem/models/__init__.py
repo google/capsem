@@ -320,6 +320,7 @@ from ._exports_2 import RestartStatus as RestartStatus
 from ._exports_2 import RevokedCredentialAuthority as RevokedCredentialAuthority
 from ._exports_2 import RevokeSessionGrantResponse as RevokeSessionGrantResponse
 from ._exports_2 import RunRequest as RunRequest
+from ._exports_3 import SandboxEnvironment as SandboxEnvironment
 from ._exports_3 import SandboxInfo as SandboxInfo
 from ._exports_3 import ScopeProfileSummary as ScopeProfileSummary
 from ._exports_3 import SecurityAskDecision as SecurityAskDecision

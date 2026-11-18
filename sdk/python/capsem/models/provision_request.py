@@ -7,6 +7,7 @@ from typing import Annotated
 from pydantic import ConfigDict, Field, StrictBool, StrictInt, StrictStr
 
 from .container_spec import ContainerSpec
+from .environment_revision_reference import EnvironmentRevisionReference
 from .managed_session_create import ManagedSessionCreate
 from .model_base import Model
 
@@ -18,6 +19,7 @@ class ProvisionRequest(Model):
     container: ContainerSpec | None = None
     cpus: Annotated[StrictInt, Field(ge=0)] | None = None
     env: dict[str, StrictStr] | None = None
+    environment: EnvironmentRevisionReference | None = None
     from_: StrictStr | None = Field(default=None, alias='from')
     labels: dict[str, StrictStr] | None = None
     managed: ManagedSessionCreate | None = None

@@ -40,9 +40,16 @@ def _memory_mb(memory: int | None) -> int | None:
 
 def _provision_request(*, name: str = "", cpus: int | None = None,
                        memory: int | None = None, env: dict[str, str] | None = None,
+                       environment: models.EnvironmentRevisionReference | None = None,
                        labels: dict[str, str] | None = None,
                        networks: Sequence[models.NetworkInfo] = (), image: str | None = None,
                        command: Sequence[str] = (), registry: Registry | None = None) -> models.ProvisionRequest:
+    if environment is not None:
+        if not isinstance(environment, models.EnvironmentRevisionReference):
+            raise TypeError("environment must be an EnvironmentRevisionReference")
+        environment = models.EnvironmentRevisionReference.model_validate(environment.model_dump())
+        if env is not None or image is not None:
+            raise ValueError("a saved environment cannot include inline variables or image overrides")
     if cpus is not None and (isinstance(cpus, bool) or not isinstance(cpus, int) or cpus < 1):
         raise ValueError("cpus must be positive")
     if image is None and (command or registry is not None):
@@ -67,6 +74,8 @@ def _provision_request(*, name: str = "", cpus: int | None = None,
         name=name or None, persistent=bool(name), cpus=cpus, ram_mb=_memory_mb(memory),
         env=env if image is None else None, labels=labels, networks=network_names,
     )
+    if environment is not None:
+        request.environment = environment
     if wire is not None:
         request.container = wire
     return request
@@ -105,6 +114,7 @@ class Hypervisor(Client):
 
     async def create(self, *, name: str = "", cpus: int | None = None,
                      memory: int | None = None, env: dict[str, str] | None = None,
+                     environment: models.EnvironmentRevisionReference | None = None,
                      labels: dict[str, str] | None = None,
                      networks: Sequence[models.NetworkInfo] = (), image: str | None = None,
                      command: Sequence[str] = (), registry: Registry | None = None) -> VM:
@@ -115,13 +125,14 @@ class Hypervisor(Client):
             cpus: Optional vCPU count override.
             memory: Optional RAM size in GiB.
             env: Optional environment variables for the VM or container workload.
+            environment: Exact approved environment revision; excludes inline workload overrides.
             labels: Optional string labels attached at creation.
             networks: Private networks to attach to the VM at creation.
             image: Optional OCI image reference to run as a container workload.
             command: Optional command argv override for the container workload.
             registry: Optional custom OCI registry configuration for pulling ``image``.
         """
-        request = _provision_request(name=name, cpus=cpus, memory=memory, env=env, labels=labels,
+        request = _provision_request(name=name, cpus=cpus, memory=memory, env=env, environment=environment, labels=labels,
                                      networks=networks, image=image, command=command, registry=registry)
         # The service answers only once a container workload is ready, so
         # wait at least as long as it does before giving up on the create.
@@ -134,11 +145,12 @@ class Hypervisor(Client):
 
     def managed(self, *, cpus: int | None = None, memory: int | None = None,
                 env: dict[str, str] | None = None, labels: dict[str, str] | None = None,
+                environment: models.EnvironmentRevisionReference | None = None,
                 networks: Sequence[models.NetworkInfo] = (),
                 image: str | None = None, command: Sequence[str] = (), registry: Registry | None = None) -> ManagedSession:
         """An ephemeral ownership scope: renew while entered, await cleanup on exit."""
         return ManagedSession(self._transport, _provision_request(
-            cpus=cpus, memory=memory, env=env, labels=labels, networks=networks, image=image, command=command, registry=registry))
+            cpus=cpus, memory=memory, env=env, environment=environment, labels=labels, networks=networks, image=image, command=command, registry=registry))
 
     async def log(self, source: models.HostLogSource = models.HostLogSource.SERVICE, *,
                   grep: str | None = None, tail: int | None = None,

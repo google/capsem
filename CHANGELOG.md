@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Python SDK creation and managed sessions accept exact environment revisions, reject inline workload overrides and expose applied environment metadata.
+
 - Added: Rust SDK creation options accept an exact environment revision and reject inline variable or image overrides before HTTP.
 
 - Added: VM creation binds a saved policy and ordinary variables to an exact committed environment revision. Cold resume, fork, persistence and corporate refresh preserve that selection; applied metadata requires acknowledgements from the original VM generation. Workload preparation and implicit environments remain incomplete.

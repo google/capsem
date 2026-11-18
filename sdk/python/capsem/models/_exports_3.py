@@ -1,5 +1,6 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .sandbox_environment import SandboxEnvironment
 from .sandbox_info import SandboxInfo
 from .scope_profile_summary import ScopeProfileSummary
 from .security_ask_decision import SecurityAskDecision
@@ -74,6 +75,7 @@ from .vm_status_response import VmStatusResponse
 from .vm_summary import VmSummary
 
 __all__ = [
+    'SandboxEnvironment',
     'SandboxInfo',
     'ScopeProfileSummary',
     'SecurityAskDecision',
