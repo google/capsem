@@ -206,6 +206,21 @@ pub struct EnvironmentPlugins {
     pub dummy_post_allow: Option<PluginConfiguration<DummyPostAllowOptions>>,
 }
 impl EnvironmentPlugins {
+    /// Corporate files merge per plugin, with the first declared entry winning
+    /// as a whole. Omitted options/directions never inherit from another file.
+    pub fn merge_first_wins(&mut self, fallback: Self) {
+        let first = std::mem::take(self);
+        *self = Self {
+            pii_filter: first.pii_filter.or(fallback.pii_filter),
+            secret_exfiltration: first.secret_exfiltration.or(fallback.secret_exfiltration),
+            utf8_guard: first.utf8_guard.or(fallback.utf8_guard),
+            credential_broker: first.credential_broker.or(fallback.credential_broker),
+            log_sanitizer: first.log_sanitizer.or(fallback.log_sanitizer),
+            dummy_pre_eicar: first.dummy_pre_eicar.or(fallback.dummy_pre_eicar),
+            dummy_post_allow: first.dummy_post_allow.or(fallback.dummy_post_allow),
+        };
+    }
+
     pub fn validate(&self) -> Result<(), &'static str> {
         if let Some(config) = &self.pii_filter {
             config.validate()?;

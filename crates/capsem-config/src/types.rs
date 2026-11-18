@@ -434,6 +434,10 @@ pub struct SettingsFile {
     /// Runtime plugin policy (`[plugins]`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub plugins: BTreeMap<String, super::security_rule_profile::SecurityPluginConfig>,
+    /// Corporate whole-plugin overrides for typed environment policy. The
+    /// policy loader rejects this section in user settings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment_plugins: Option<crate::plugins::EnvironmentPlugins>,
     /// MCP server configuration (optional section in settings or corp TOML).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mcp: Option<crate::mcp::McpConfig>,
@@ -492,6 +496,9 @@ pub enum CatalogSetting {
 
 impl SettingsFile {
     pub fn validate_metadata_contract(&self) -> Result<(), String> {
+        if let Some(plugins) = &self.environment_plugins {
+            plugins.validate().map_err(str::to_owned)?;
+        }
         if let Some(catalogs) = &self.catalogs {
             for kind in crate::catalogs::CatalogKind::ALL {
                 if let Some(source) = catalogs.source(kind) {
