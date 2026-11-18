@@ -268,3 +268,42 @@ upstreams = ["resolver.example:domain"]
     assert!(chain.contains(&active_path.display().to_string()), "{chain}");
     assert!(chain.contains("resolver.example:domain"), "{chain}");
 }
+
+#[test]
+fn environment_policy_reload_retains_the_exact_typed_snapshot_on_failure() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = RuntimePolicySource::new(directory.path().join("active_policy.toml"));
+    let boot = toml::from_str("name='development'\n[plugins.pii_filter.outbound]\nmode='block'\n[plugins.pii_filter.inbound]\nmode='block'\n[plugins.pii_filter.inbound.options]\nemail=false").unwrap();
+    let corporate = Default::default();
+    let inputs = capsem_core::environment::EnvironmentPolicyInputs::new(&boot, &boot, &corporate);
+    let active = ActivePolicyFile::from_environment(&inputs, None).unwrap();
+    let bytes = toml::to_string(&active).unwrap().into_bytes();
+    let loaded = source.load_bytes(&bytes).unwrap();
+    assert_eq!(
+        loaded.active_policy_digest,
+        capsem_core::net::policy_config::active_policy_digest(&bytes)
+    );
+    let snapshot = loaded.proxy_policy_snapshot();
+    assert!(snapshot.plugins().same_snapshot(&loaded.plugins));
+    assert!(source.load_bytes(b"environment = false").is_err());
+    let retained = source.current().unwrap();
+    assert!(retained.plugins.same_snapshot(&loaded.plugins));
+    assert_eq!(retained.active_policy_digest, loaded.active_policy_digest);
+    for (inbound, allowed) in [(false, false), (true, true)] {
+        let event = capsem_core::security_engine::SecurityEvent::new(
+            capsem_core::security_engine::RuntimeSecurityEventType::HttpRequest,
+        )
+        .with_http(capsem_core::security_engine::HttpSecurityEvent {
+            body: Some("person@example.com".into()),
+            status: inbound.then(|| "200".into()),
+            ..Default::default()
+        });
+        let result = capsem_core::security_engine::evaluate_security_boundary(
+            &retained.security_rules,
+            retained.plugins.clone(),
+            event,
+        )
+        .unwrap();
+        assert_eq!(result.enforcement.is_allowed(), allowed);
+    }
+}
