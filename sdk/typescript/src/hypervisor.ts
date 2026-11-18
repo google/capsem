@@ -90,6 +90,9 @@ export class Hypervisor extends Client {
 }
 
 function provisionRequest(options: CreateOptions): models.ProvisionRequest {
+  if (options.environment !== undefined && (options.env !== undefined || options.image !== undefined)) {
+    throw new TypeError('A saved environment cannot include inline variables or image overrides');
+  }
   if (options.cpus !== undefined && (!Number.isSafeInteger(options.cpus) || options.cpus < 1)) {
     throw new TypeError('cpus must be positive');
   }
@@ -109,6 +112,7 @@ function provisionRequest(options: CreateOptions): models.ProvisionRequest {
     attach: false,
   };
   return {
+    ...(options.environment === undefined ? {} : {environment: options.environment}),
     name: options.name || null, persistent: Boolean(options.name),
     cpus: options.cpus ?? null, ram_mb,
     env: container === undefined ? options.env ?? null : null,

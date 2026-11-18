@@ -3,6 +3,7 @@
 import type { BrowserRequest } from "./BrowserRequest.js";
 import type { CostCoverage } from "./CostCoverage.js";
 import type { ImageApp } from "./ImageApp.js";
+import type { SandboxEnvironment } from "./SandboxEnvironment.js";
 import type { SessionDbStatus } from "./SessionDbStatus.js";
 import type { StorageDiagnostics } from "./StorageDiagnostics.js";
 import type { TerminalSummary } from "./TerminalSummary.js";
@@ -24,6 +25,7 @@ export interface SandboxInfo {
   "created_at"?: string | null;
   "denied_requests"?: number | null;
   "description"?: string | null;
+  "environment"?: null | SandboxEnvironment;
   "files"?: null | VmFilesInfo;
   "forked_from"?: string | null;
   "id": string;

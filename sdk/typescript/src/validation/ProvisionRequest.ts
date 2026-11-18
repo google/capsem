@@ -3,12 +3,14 @@
 import {z} from "zod";
 import type {ProvisionRequest} from "../models/ProvisionRequest.js";
 import {ContainerSpecSchema} from "./ContainerSpec.js";
+import {EnvironmentRevisionReferenceSchema} from "./EnvironmentRevisionReference.js";
 import {ManagedSessionCreateSchema} from "./ManagedSessionCreate.js";
 
 export const ProvisionRequestSchema: z.ZodType<ProvisionRequest> = z.strictObject({
   "container": z.union([z.null(), z.lazy(() => ContainerSpecSchema)]).exactOptional(),
   "cpus": z.int().min(0).nullable().exactOptional(),
   "env": z.record(z.string(), z.string()).nullable().exactOptional(),
+  "environment": z.union([z.null(), z.lazy(() => EnvironmentRevisionReferenceSchema)]).exactOptional(),
   "from": z.string().nullable().exactOptional(),
   "labels": z.record(z.string(), z.string()).nullable().exactOptional(),
   "managed": z.union([z.null(), z.lazy(() => ManagedSessionCreateSchema)]).exactOptional(),

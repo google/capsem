@@ -240,6 +240,7 @@ export { RestartStatus } from "./RestartStatus.js";
 export type { RevokeSessionGrantResponse } from "./RevokeSessionGrantResponse.js";
 export { RevokedCredentialAuthority } from "./RevokedCredentialAuthority.js";
 export type { RunRequest } from "./RunRequest.js";
+export type { SandboxEnvironment } from "./SandboxEnvironment.js";
 export type { SandboxInfo } from "./SandboxInfo.js";
 export type { ScopeProfileSummary } from "./ScopeProfileSummary.js";
 export { SecurityAskDecision } from "./SecurityAskDecision.js";

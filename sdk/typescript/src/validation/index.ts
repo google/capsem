@@ -240,6 +240,7 @@ export {RestartStatusSchema} from "./RestartStatus.js";
 export {RevokeSessionGrantResponseSchema} from "./RevokeSessionGrantResponse.js";
 export {RevokedCredentialAuthoritySchema} from "./RevokedCredentialAuthority.js";
 export {RunRequestSchema} from "./RunRequest.js";
+export {SandboxEnvironmentSchema} from "./SandboxEnvironment.js";
 export {SandboxInfoSchema} from "./SandboxInfo.js";
 export {ScopeProfileSummarySchema} from "./ScopeProfileSummary.js";
 export {SecurityAskDecisionSchema} from "./SecurityAskDecision.js";

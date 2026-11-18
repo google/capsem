@@ -5,6 +5,7 @@ import type {SandboxInfo} from "../models/SandboxInfo.js";
 import {BrowserRequestSchema} from "./BrowserRequest.js";
 import {CostCoverageSchema} from "./CostCoverage.js";
 import {ImageAppSchema} from "./ImageApp.js";
+import {SandboxEnvironmentSchema} from "./SandboxEnvironment.js";
 import {SessionDbStatusSchema} from "./SessionDbStatus.js";
 import {StorageDiagnosticsSchema} from "./StorageDiagnostics.js";
 import {TerminalSummarySchema} from "./TerminalSummary.js";
@@ -26,6 +27,7 @@ export const SandboxInfoSchema: z.ZodType<SandboxInfo> = z.object({
   "created_at": z.string().nullable().exactOptional(),
   "denied_requests": z.int().min(0).nullable().exactOptional(),
   "description": z.string().nullable().exactOptional(),
+  "environment": z.union([z.null(), z.lazy(() => SandboxEnvironmentSchema)]).exactOptional(),
   "files": z.union([z.null(), z.lazy(() => VmFilesInfoSchema)]).exactOptional(),
   "forked_from": z.string().nullable().exactOptional(),
   "id": z.string(),

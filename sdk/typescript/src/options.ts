@@ -1,4 +1,4 @@
-import type {HistoryLayerFilter, HostLogSource, NetworkInfo, TimelineLayer} from './models/index.js';
+import type {EnvironmentRevisionReference, HistoryLayerFilter, HostLogSource, NetworkInfo, TimelineLayer} from './models/index.js';
 import type {CallOptions} from './transport.js';
 
 export type VmSelector = {id: string; name?: never} | {name: string; id?: never};
@@ -6,6 +6,7 @@ export interface Registry {username?: string; password?: string; ca_pem?: string
 export interface ImageListOptions extends CallOptions {refresh?: boolean}
 export interface ImagePullOptions extends CallOptions {registry?: Registry}
 export interface CreateOptions extends CallOptions {
+  environment?: EnvironmentRevisionReference;
   name?: string; cpus?: number; memory?: number;
   env?: Record<string, string>; labels?: Record<string, string>; networks?: readonly NetworkInfo[];
   image?: string; command?: readonly string[]; registry?: Registry;
