@@ -620,7 +620,7 @@ fn observe(
 }
 
 /// Read only a bounded regular marker. Generic legacy markers retain their
-/// existing message; sanitized startup diagnostics are already controller-owned.
+/// existing message. Guest-written diagnostics must also be safe at this boundary.
 fn failed_marker(state: &ServiceState, id: &str) -> Option<String> {
     use std::io::Read as _;
     let path = format!(
@@ -635,6 +635,12 @@ fn failed_marker(state: &ServiceState, id: &str) -> Option<String> {
     }
     let mut message = String::new();
     file.take(64 * 1024).read_to_string(&mut message).ok()?;
+    if message
+        .chars()
+        .any(|character| character.is_control() && !matches!(character, '\n' | '\t'))
+    {
+        return None;
+    }
     message.starts_with("startup ").then_some(message)
 }
 

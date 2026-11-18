@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Security: Guest-written startup failure markers cannot inject terminal control characters into host diagnostics.
+
 - Added: Saved environments run their approved `/bin/sh` startup before the OCI entrypoint. Readiness and surface waits include the retained startup timeout; failures retain bounded diagnostics, and cold restarts clear stale preparation state.
 
 - Added: Container status exposes approved startup as `preparing`; generated Python and TypeScript models accept the pending state.

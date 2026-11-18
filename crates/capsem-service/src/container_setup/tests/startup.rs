@@ -41,3 +41,26 @@ async fn startup_marker_is_preparing_and_failure_detail_is_bounded() {
         "untrusted oversized output must not reach the API"
     );
 }
+
+#[test]
+fn startup_failure_marker_cannot_inject_terminal_controls_into_host_diagnostics() {
+    let fx = fixture(images());
+    let generation = fx.state.containers.begin("box", "registry.example/app:1");
+    fx.state
+        .containers
+        .advance("box", generation, |status| status.state = ContainerState::Starting);
+    std::fs::create_dir_all(fx.workspace.join(".capsem-image")).unwrap();
+    std::fs::write(
+        fx.workspace.join(".capsem-image/failed"),
+        b"startup \x1b]52;c;forged\x07",
+    )
+    .unwrap();
+    let status = observe(&fx.state, "box", fx.state.containers.status("box"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(status.state, ContainerState::Failed);
+    assert!(
+        !status.error.unwrap().contains('\x1b'),
+        "guest-written markers are not trusted sanitized output"
+    );
+}
