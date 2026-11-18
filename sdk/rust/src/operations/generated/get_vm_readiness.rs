@@ -4,6 +4,7 @@ use crate::transport::{CallOptions, Request, Transport};
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct GetVmReadinessParams {
     pub id: String,
+    pub intent: capsem_api::VmLifecycleIntent,
 }
 
 pub async fn get_vm_readiness(
@@ -11,9 +12,11 @@ pub async fn get_vm_readiness(
     input: &GetVmReadinessParams,
     options: CallOptions,
 ) -> crate::Result<capsem_api::VmReadinessResponse> {
+    let query = [("intent", crate::operations::enum_value(&input.intent)?)];
     let path_id = input.id.to_string();
     let request = Request {
         parameters: &[("id", path_id.as_str())],
+        query: &query,
         options,
         ..Default::default()
     };
