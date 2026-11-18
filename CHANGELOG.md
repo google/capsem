@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Security: Release manifests and channel catalogs require authenticated HTTPS outside literal-loopback development fixtures. Native packages cannot persist a plain-HTTP manifest authority; digest-verified artifact downloads remain bound to the trusted manifest.
+
 - Fixed: Create-from consumes source identity, generation, running state and saved-revision expectations before target allocation or native cloning. Managed requests reject stale plans before ownership allocation and recheck cancellation after selection waits; ordinary producers retain ownership after HTTP disconnection.
 
 - Fixed: Fork checks original source generation and revision expectations before freezing or allocating a destination, and retains its copy under service ownership after HTTP disconnection. Publication conflicts remove only the unpublished copy; unconfirmed persistence identifies the retained VM for reconciliation.

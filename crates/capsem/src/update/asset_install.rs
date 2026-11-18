@@ -868,8 +868,9 @@ pub(super) async fn release_http_get_bytes(
     url: reqwest::Url,
     accept: Option<&'static str>,
     display_url: &str,
+    trust: super::transport::Trust,
 ) -> Result<Vec<u8>> {
-    let client = reqwest::Client::builder()
+    let client = super::transport::client_builder(&url, trust)?
         .user_agent("capsem")
         .connect_timeout(Duration::from_secs(15))
         .timeout(Duration::from_secs(120))
@@ -972,9 +973,14 @@ pub(super) async fn read_manifest_source(source: &str) -> Result<Vec<u8>> {
             if !has_scheme_authority_prefix(source, url.scheme()) {
                 anyhow::bail!("--manifest must use https://, http://, or file:// URLs, got {source}");
             }
-            release_http_get_bytes(url.clone(), Some("application/json"), source)
-                .await
-                .with_context(|| format!("read manifest body from {source}"))
+            release_http_get_bytes(
+                url.clone(),
+                Some("application/json"),
+                source,
+                super::transport::Trust::ManifestAuthority,
+            )
+            .await
+            .with_context(|| format!("read manifest body from {source}"))
         }
         scheme => anyhow::bail!("unsupported --manifest URL scheme {scheme}: use https://, http://, or file://"),
     }

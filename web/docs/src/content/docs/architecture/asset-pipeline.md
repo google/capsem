@@ -189,9 +189,11 @@ The package copies that selected manifest into its payload and writes
 BLAKE3 hash, origin, and source so corp can debug exactly which manifest a
 machine is using. `--manifest` is always URL-shaped: local custom manifests use
 `file:///absolute/path/to/manifest.json`, while hosted corp channels use
-`https://...` or `http://...`. Do not use `capsem update --corp` for asset
-channels; `--corp` provisions corporate policy config, while corporate VM asset
-channels use `capsem update --assets --manifest <URL>`.
+authenticated `https://...`. The manifest is the release root of trust;
+plain HTTP is permitted only for literal loopback development fixtures. Do not
+use `capsem update --corp` for asset channels; `--corp` provisions corporate
+policy config, while corporate VM asset channels use
+`capsem update --assets --manifest <URL>`.
 
 ## Runtime Hash Verification
 

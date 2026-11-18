@@ -1,7 +1,7 @@
 #!/bin/bash
 # build-pkg.sh -- Build a macOS .pkg installer from Tauri output + companion binaries.
 #
-# Usage: build-pkg.sh [--manifest file://...|http://...|https://...] <app_path> <bin_dir> <assets_dir> <version> [signing_identity]
+# Usage: build-pkg.sh [--manifest file://...|https://...] <app_path> <bin_dir> <assets_dir> <version> [signing_identity]
 #
 # Arguments:
 #   app_path          Path to signed Capsem.app (from Tauri build)
@@ -22,7 +22,7 @@ set -euo pipefail
 export COPYFILE_DISABLE=1
 
 usage() {
-    echo "usage: build-pkg.sh [--manifest file://...|http://...|https://...] <app_path> <bin_dir> <assets_dir> <version> [signing_identity]" >&2
+    echo "usage: build-pkg.sh [--manifest file://...|https://...] <app_path> <bin_dir> <assets_dir> <version> [signing_identity]" >&2
 }
 
 MANIFEST_PATH=""
@@ -93,8 +93,14 @@ raw_source = sys.argv[1]
 package_version = sys.argv[2]
 dst = pathlib.Path(sys.argv[3])
 parsed = urllib.parse.urlparse(raw_source)
-if parsed.scheme not in ("http", "https", "file"):
+if not parsed.scheme:
     raise SystemExit(f"manifest must be a URL: {raw_source}")
+if parsed.scheme not in ("https", "file"):
+    raise SystemExit(f"manifest release authority requires HTTPS or file://: {raw_source}")
+if parsed.scheme == "https" and (
+    not parsed.hostname or parsed.username is not None or parsed.password is not None
+):
+    raise SystemExit(f"manifest release authority requires an HTTPS origin without URL credentials: {raw_source}")
 parts = [part for part in parsed.path.split("/") if part]
 public_channel = (
     parts[-2]

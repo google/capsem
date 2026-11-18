@@ -278,8 +278,10 @@ bash build_system/packaging/macos/build-pkg.sh --manifest file:///path/to/assets
 The installer records that manifest URL in packaged `manifest-metadata.json`, then
 postinstall runs `capsem update --assets --manifest <URL>` to hydrate the live
 installed manifest and assets. Status reports the installed manifest hash plus
-metadata provenance. `--manifest` is URL-only so custom local manifests use `file://` and hosted
-corporate channels use `https://` or `http://`.
+metadata provenance. `--manifest` is URL-only so custom local manifests use
+`file://` and hosted corporate channels use authenticated `https://`. The
+manifest is the release root of trust, so installed packages never persist a
+plain-HTTP manifest source.
 
 ## Supply chain controls
 

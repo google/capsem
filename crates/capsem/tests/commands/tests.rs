@@ -313,3 +313,17 @@ async fn unicode_table_cells_truncate_at_utf8_boundaries() {
         ]
     );
 }
+
+#[tokio::test]
+async fn update_transport_security_cli_refuses_remote_http_before_service_or_network() {
+    let service = FakeService::start();
+    let output = command(
+        &service,
+        &["update", "--manifest", "http://192.0.2.1/assets/stable/manifest.json"],
+    )
+    .await;
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("HTTPS"), "{stderr}");
+    assert!(service.calls().is_empty(), "invalid update source reached the service");
+}

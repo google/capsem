@@ -1412,6 +1412,21 @@ fn binary_installer_metadata_rejects_path_names() {
     );
 }
 
+#[test]
+fn binary_installer_metadata_accepts_http_when_manifest_digests_bind_the_bytes() {
+    let installer = BinaryInstaller {
+        name: "Capsem-99.99.99.pkg".to_string(),
+        url: "http://artifacts.example/Capsem-99.99.99.pkg".to_string(),
+        sha256: "0".repeat(64),
+        blake3: "0".repeat(64),
+        size: 10,
+        install_layout: "macos_pkg".to_string(),
+    };
+
+    validate_binary_installer_metadata(&installer)
+        .expect("trusted manifest digests, not artifact transport, bind installer authority");
+}
+
 async fn installer_http_server(payload: &[u8]) -> (std::net::SocketAddr, tokio::task::JoinSet<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

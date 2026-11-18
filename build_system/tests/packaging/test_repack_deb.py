@@ -13,14 +13,10 @@ Skipped cleanly on any machine without `dpkg-deb` on PATH (macOS default);
 executed in Linux CI and inside the capsem-install-test container.
 """
 
-import contextlib
-import functools
-import http.server
 import json
 import re
 import shutil
 import subprocess
-import threading
 from pathlib import Path
 
 import pytest
@@ -162,60 +158,6 @@ def _deb_contents(deb: Path, dest: Path) -> Path:
         capture_output=True,
     )
     return dest
-
-
-class _QuietHandler(http.server.SimpleHTTPRequestHandler):
-    def log_message(self, format: str, *args: object) -> None:
-        return
-
-
-class _ReleaseServer(http.server.ThreadingHTTPServer):
-    seen_user_agents: list[str]
-
-
-class _ReleaseUserAgentRequiredHandler(_QuietHandler):
-    def do_GET(self) -> None:
-        user_agent = self.headers.get("User-Agent", "")
-        assert isinstance(self.server, _ReleaseServer)
-        self.server.seen_user_agents.append(user_agent)
-        if user_agent != "CapsemReleaseValidator/1.0":
-            self.send_response(403)
-            self.end_headers()
-            self.wfile.write(b"release validator user-agent required")
-            return
-        super().do_GET()
-
-
-@contextlib.contextmanager
-def _serve_directory(root: Path):
-    handler = functools.partial(_QuietHandler, directory=str(root))
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield f"http://127.0.0.1:{server.server_address[1]}"
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
-
-
-@contextlib.contextmanager
-def _serve_directory_requiring_release_user_agent(root: Path):
-    handler = functools.partial(_ReleaseUserAgentRequiredHandler, directory=str(root))
-    server = _ReleaseServer(("127.0.0.1", 0), handler)
-    server.seen_user_agents = []
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield (
-            f"http://127.0.0.1:{server.server_address[1]}",
-            server.seen_user_agents,
-        )
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
 
 
 def test_happy_path_adds_every_companion_binary(tmp_path):
@@ -513,45 +455,24 @@ def test_explicit_remote_manifest_url_is_packaged_with_origin_provenance(tmp_pat
     """Remote corp/release manifest URLs are recorded without package-time fetching."""
     fixture = _build_fixture_deb(tmp_path)
     bin_dir = tmp_path / "bin"
-    manifest_root = tmp_path / "remote"
-    manifest = manifest_root / "corp-manifest.json"
     _seed_binaries(bin_dir)
-    manifest_root.mkdir()
-    manifest.write_text(
-        json.dumps(
-            {
-                "format": 2,
-                "version": "remote-test",
-                "assets": {"current": "corp", "releases": {"corp": {"arches": {}}}},
-                "binaries": {"current": "remote"},
-            },
-            sort_keys=True,
-        )
-        + "\n"
-    )
     output = tmp_path / "out.deb"
-
-    with _serve_directory_requiring_release_user_agent(manifest_root) as (
-        base_url,
-        seen_user_agents,
-    ):
-        manifest_url = f"{base_url}/corp-manifest.json"
-        res = subprocess.run(
-            [
-                str(SCRIPT),
-                "--manifest",
-                manifest_url,
-                str(fixture),
-                str(bin_dir),
-                "",
-                str(output),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
+    manifest_url = "https://release.example.invalid/corp-manifest.json"
+    res = subprocess.run(
+        [
+            str(SCRIPT),
+            "--manifest",
+            manifest_url,
+            str(fixture),
+            str(bin_dir),
+            "",
+            str(output),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
     assert res.returncode == 0, f"repack-deb.sh failed: stdout={res.stdout!r} stderr={res.stderr!r}"
-    assert seen_user_agents == []
 
     extracted = _deb_contents(output, tmp_path / "extracted-remote")
     assets_dir = extracted / "usr" / "share" / "capsem" / "assets"
@@ -570,50 +491,53 @@ def test_explicit_remote_manifest_url_is_packaged_with_origin_provenance(tmp_pat
     assert "snapshot_sha256" not in origin
 
 
+def test_remote_http_manifest_url_is_not_packaged_as_release_authority(tmp_path):
+    fixture = _build_fixture_deb(tmp_path)
+    bin_dir = tmp_path / "bin"
+    _seed_binaries(bin_dir)
+
+    res = subprocess.run(
+        [
+            str(SCRIPT),
+            "--manifest",
+            "http://192.0.2.1/assets/corp/manifest.json",
+            str(fixture),
+            str(bin_dir),
+            "",
+            str(tmp_path / "out.deb"),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert res.returncode != 0
+    assert "HTTPS" in res.stderr
+
+
 def test_release_graph_manifest_url_is_recorded_without_conversion(tmp_path):
     """The package does not convert release graph manifests; install fetches the live URL."""
     fixture = _build_fixture_deb(tmp_path, version="1.5.0")
     bin_dir = tmp_path / "bin"
-    graph_root = tmp_path / "remote"
-    graph = graph_root / "assets" / "stable" / "manifest.json"
     _seed_binaries(bin_dir)
-    graph.parent.mkdir(parents=True)
-    graph.write_text(
-        json.dumps(
-            {
-                "schema": "capsem.release_graph.v1",
-                "version": "1.5.0+assets.2030.0101.1",
-                "status": "current",
-                "packages": [],
-            },
-            sort_keys=True,
-        )
-        + "\n"
-    )
     output = tmp_path / "out.deb"
-
-    with _serve_directory_requiring_release_user_agent(graph_root) as (
-        base_url,
-        seen_user_agents,
-    ):
-        manifest_url = f"{base_url}/assets/stable/manifest.json"
-        res = subprocess.run(
-            [
-                str(SCRIPT),
-                "--manifest",
-                manifest_url,
-                str(fixture),
-                str(bin_dir),
-                "",
-                str(output),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
+    manifest_url = "https://release.example.invalid/assets/stable/manifest.json"
+    res = subprocess.run(
+        [
+            str(SCRIPT),
+            "--manifest",
+            manifest_url,
+            str(fixture),
+            str(bin_dir),
+            "",
+            str(output),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
 
     assert res.returncode == 0, f"repack-deb.sh failed: stdout={res.stdout!r} stderr={res.stderr!r}"
-    assert seen_user_agents == []
 
     extracted = _deb_contents(output, tmp_path / "extracted-graph")
     assets_dir = extracted / "usr" / "share" / "capsem" / "assets"

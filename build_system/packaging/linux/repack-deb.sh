@@ -1,7 +1,7 @@
 #!/bin/bash
 # repack-deb.sh -- Repack a Tauri .deb with companion binaries and preinst plus postinst scripts.
 #
-# Usage: repack-deb.sh [--manifest file://...|http://...|https://...] <input.deb> <bin_dir> [assets_dir] [output.deb]
+# Usage: repack-deb.sh [--manifest file://...|https://...] <input.deb> <bin_dir> [assets_dir] [output.deb]
 #
 # Arguments:
 #   input.deb   Path to the Tauri-built .deb package
@@ -49,7 +49,7 @@ embed_native_cohort_retirement() {
     embed_pkg_script retire-cohort "$1"
 }
 usage() {
-    echo "usage: repack-deb.sh [--manifest file://...|http://...|https://...] <input.deb> <bin_dir> [assets_dir] [output.deb]" >&2
+    echo "usage: repack-deb.sh [--manifest file://...|https://...] <input.deb> <bin_dir> [assets_dir] [output.deb]" >&2
 }
 
 MANIFEST_PATH=""
@@ -112,8 +112,14 @@ raw_source = sys.argv[1]
 package_version = sys.argv[2]
 dst = pathlib.Path(sys.argv[3])
 parsed = urllib.parse.urlparse(raw_source)
-if parsed.scheme not in ("http", "https", "file"):
+if not parsed.scheme:
     raise SystemExit(f"manifest must be a URL: {raw_source}")
+if parsed.scheme not in ("https", "file"):
+    raise SystemExit(f"manifest release authority requires HTTPS or file://: {raw_source}")
+if parsed.scheme == "https" and (
+    not parsed.hostname or parsed.username is not None or parsed.password is not None
+):
+    raise SystemExit(f"manifest release authority requires an HTTPS origin without URL credentials: {raw_source}")
 parts = [part for part in parsed.path.split("/") if part]
 public_channel = (
     parts[-2]

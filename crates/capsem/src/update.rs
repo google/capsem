@@ -8,6 +8,7 @@
 mod asset_install;
 mod candidate_audit;
 mod privileged_install;
+mod transport;
 mod verified_update;
 
 use asset_install::*;
@@ -437,6 +438,15 @@ pub fn validate_source_url_arg(flag: &str, value: &str) -> std::result::Result<S
     }
 }
 
+pub fn validate_manifest_source_url_arg(value: &str) -> std::result::Result<String, String> {
+    let value = validate_source_url_arg("--manifest", value)?;
+    let parsed = reqwest::Url::parse(&value).expect("source URL was validated");
+    if matches!(parsed.scheme(), "https" | "http") {
+        transport::validate_authority_current(&parsed).map_err(|error| format!("--manifest: {error:#}"))?;
+    }
+    Ok(value)
+}
+
 fn has_scheme_authority_prefix(value: &str, scheme: &str) -> bool {
     let prefix = format!("{scheme}://");
     value
@@ -617,7 +627,18 @@ pub async fn refresh_update_cache_if_stale() {
 
     info!(source = %manifest_url, "update cache stale, checking for updates");
 
-    let client = reqwest::Client::new();
+    let client = match transport::client_builder(
+        &reqwest::Url::parse(&manifest_url).expect("validated manifest URL"),
+        transport::Trust::ManifestAuthority,
+    )
+    .and_then(|builder| builder.build().map_err(anyhow::Error::from))
+    {
+        Ok(client) => client,
+        Err(error) => {
+            warn!(error = %error, "update check: invalid release transport");
+            return;
+        }
+    };
     let resp = match client
         .get(&manifest_url)
         .header("Accept", "application/json")
@@ -789,6 +810,9 @@ fn validate_channel_manifest_record(channel: &str, manifest: &ReleaseManifestRec
             manifest.url
         );
     }
+    if let Ok(url) = reqwest::Url::parse(&manifest.url) {
+        transport::validate_authority_current(&url)?;
+    }
     validate_hex_digest(&manifest.digest.sha256, 64, "manifest digest sha256")?;
     validate_hex_digest(&manifest.digest.blake3, 64, "manifest digest blake3")?;
     Ok(())
@@ -821,9 +845,14 @@ async fn resolve_release_channel_manifest(channel: &str) -> Result<ResolvedRelea
     let channel = validate_channel_name(channel)?;
     let channels_url = release_channels_url()?;
     let catalog_url = reqwest::Url::parse(&channels_url).context("parse release channels URL")?;
-    let bytes = release_http_get_bytes(catalog_url.clone(), Some("application/json"), &channels_url)
-        .await
-        .with_context(|| format!("read release channels from {channels_url}"))?;
+    let bytes = release_http_get_bytes(
+        catalog_url.clone(),
+        Some("application/json"),
+        &channels_url,
+        transport::Trust::ManifestAuthority,
+    )
+    .await
+    .with_context(|| format!("read release channels from {channels_url}"))?;
     let catalog: ReleaseChannelsCatalog =
         serde_json::from_slice(&bytes).with_context(|| format!("parse release channels from {channels_url}"))?;
     let selected_url = select_channel_manifest_url(&catalog, &channel, env!("CARGO_PKG_VERSION"))?;
@@ -838,6 +867,7 @@ async fn resolve_release_channel_manifest(channel: &str) -> Result<ResolvedRelea
     if !matches!(url.scheme(), "https" | "http") {
         anyhow::bail!("channel {channel} resolved to unsupported manifest URL {url}");
     }
+    transport::validate_authority_current(&url)?;
     Ok(ResolvedReleaseChannelManifest {
         channel,
         url: url.to_string(),
@@ -856,6 +886,7 @@ fn release_channels_url() -> Result<String> {
             parsed.scheme()
         );
     }
+    transport::validate_authority_current(&parsed)?;
     Ok(parsed.to_string())
 }
 
@@ -891,6 +922,7 @@ fn validate_release_manifest_url(url: &str) -> Result<String> {
             parsed.scheme()
         );
     }
+    transport::validate_authority_current(&parsed)?;
     Ok(parsed.as_str().trim_end_matches('/').to_string())
 }
 
@@ -928,6 +960,7 @@ fn channel_manifest_url(manifest_url: &str) -> Result<String> {
             url.scheme()
         );
     }
+    transport::validate_authority_current(&url)?;
     let segments = url
         .path_segments()
         .map(|segments| segments.map(str::to_string).collect::<Vec<_>>())
@@ -1373,9 +1406,14 @@ async fn fetch_release_update_check(
     let manifest_url = release_manifest_url()?;
     let url =
         reqwest::Url::parse(&manifest_url).with_context(|| format!("parse release manifest URL {manifest_url}"))?;
-    let body = release_http_get_bytes(url, Some("application/json"), &manifest_url)
-        .await
-        .with_context(|| format!("read release manifest from {manifest_url}"))?;
+    let body = release_http_get_bytes(
+        url,
+        Some("application/json"),
+        &manifest_url,
+        transport::Trust::ManifestAuthority,
+    )
+    .await
+    .with_context(|| format!("read release manifest from {manifest_url}"))?;
     let channel_hash = channel_payload_hash(&body);
     let check = update_check_from_release_payload(&body, layout, &manifest_url, Some(channel_hash))?;
     Ok((body.to_vec(), check))
@@ -1387,9 +1425,14 @@ async fn fetch_selected_channel_update_check(
 ) -> Result<(Vec<u8>, UpdateCheck)> {
     let url =
         reqwest::Url::parse(&selection.url).with_context(|| format!("parse release manifest URL {}", selection.url))?;
-    let body = release_http_get_bytes(url, Some("application/json"), &selection.url)
-        .await
-        .with_context(|| format!("read release manifest from {}", selection.url))?;
+    let body = release_http_get_bytes(
+        url,
+        Some("application/json"),
+        &selection.url,
+        transport::Trust::ManifestAuthority,
+    )
+    .await
+    .with_context(|| format!("read release manifest from {}", selection.url))?;
     if let Err(error) = verify_selected_channel_manifest(selection, &body) {
         let current = capsem_assets::asset_manager::default_assets_dir()
             .map(|path| installed_asset_audit_state(&path))
@@ -1496,7 +1539,7 @@ async fn download_binary_installer_at(capsem_home: &Path, installer: &BinaryInst
     }
 
     let url = reqwest::Url::parse(&installer.url).with_context(|| format!("parse installer URL {}", installer.url))?;
-    let bytes = release_http_get_bytes(url, None, &installer.url)
+    let bytes = release_http_get_bytes(url, None, &installer.url, transport::Trust::DigestVerifiedArtifact)
         .await
         .with_context(|| format!("read installer body from {}", installer.url))?;
     verify_binary_installer_bytes(&bytes, installer)?;

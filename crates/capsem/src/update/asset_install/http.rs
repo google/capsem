@@ -43,11 +43,12 @@ pub(super) async fn download_release_channel_runtime_asset_from_http(
     download: &ReleaseChannelAssetDownload,
 ) -> Result<()> {
     let parsed = reqwest::Url::parse(url).with_context(|| format!("parse runtime image URL {url}"))?;
-    let client = reqwest::Client::builder()
-        .user_agent("capsem")
-        .connect_timeout(Duration::from_secs(15))
-        .build()
-        .context("build release image HTTP client")?;
+    let client =
+        super::super::transport::client_builder(&parsed, super::super::transport::Trust::DigestVerifiedArtifact)?
+            .user_agent("capsem")
+            .connect_timeout(Duration::from_secs(15))
+            .build()
+            .context("build release image HTTP client")?;
     let tmp = target.with_extension("tmp");
     let mut last_error = None;
 

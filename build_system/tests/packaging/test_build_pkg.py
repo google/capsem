@@ -1,13 +1,9 @@
 """Artifact-level tests for build_system/packaging/macos/build-pkg.sh."""
 
-import contextlib
-import functools
-import http.server
 import json
 import plistlib
 import shutil
 import subprocess
-import threading
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -109,55 +105,6 @@ def _find_capsem_share(expanded_pkg: Path) -> Path:
     matches = list(expanded_pkg.rglob("usr/local/share/capsem"))
     assert len(matches) == 1, f"expected one capsem share payload, found {matches}"
     return matches[0]
-
-
-class _QuietHandler(http.server.SimpleHTTPRequestHandler):
-    def log_message(self, format: str, *args: object) -> None:
-        return
-
-
-class _ReleaseUserAgentRequiredHandler(_QuietHandler):
-    def do_GET(self) -> None:
-        user_agent = self.headers.get("User-Agent", "")
-        self.server.seen_user_agents.append(user_agent)  # type: ignore[attr-defined]
-        if user_agent != "CapsemReleaseValidator/1.0":
-            self.send_response(403)
-            self.end_headers()
-            self.wfile.write(b"release validator user-agent required")
-            return
-        super().do_GET()
-
-
-@contextlib.contextmanager
-def _serve_directory(root: Path):
-    handler = functools.partial(_QuietHandler, directory=str(root))
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield f"http://127.0.0.1:{server.server_address[1]}"
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
-
-
-@contextlib.contextmanager
-def _serve_directory_requiring_release_user_agent(root: Path):
-    handler = functools.partial(_ReleaseUserAgentRequiredHandler, directory=str(root))
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    server.seen_user_agents = []  # type: ignore[attr-defined]
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield (
-            f"http://127.0.0.1:{server.server_address[1]}",
-            server.seen_user_agents,  # type: ignore[attr-defined]
-        )
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
 
 
 def test_macos_pkg_payload_is_closed_and_manifest_only_for_assets(tmp_path: Path) -> None:
@@ -365,54 +312,33 @@ def test_macos_pkg_remote_manifest_override_records_source_only(tmp_path: Path) 
     app = tmp_path / "Capsem.app"
     bin_dir = tmp_path / "bin"
     assets_dir = tmp_path / "assets"
-    manifest_root = tmp_path / "remote"
-    manifest = manifest_root / "corp-manifest.json"
-
     version = "9.9.10-remote-test"
     _seed_app(app, version)
     _seed_binaries(bin_dir)
-    manifest_root.mkdir()
-    manifest.write_text(
-        json.dumps(
-            {
-                "format": 2,
-                "version": "remote-test",
-                "assets": {"current": "corp", "releases": {"corp": {"arches": {}}}},
-                "binaries": {"current": "remote"},
-            },
-            sort_keys=True,
-        )
-        + "\n"
-    )
     assets_dir.mkdir()
 
     output_pkg = load_paths(REPO_ROOT).stage("packages") / f"Capsem-{version}.pkg"
     output_pkg.unlink(missing_ok=True)
     try:
-        with _serve_directory_requiring_release_user_agent(manifest_root) as (
-            base_url,
-            seen_user_agents,
-        ):
-            manifest_url = f"{base_url}/corp-manifest.json"
-            res = subprocess.run(
-                [
-                    str(SCRIPT),
-                    "--manifest",
-                    manifest_url,
-                    str(app),
-                    str(bin_dir),
-                    str(assets_dir),
-                        version,
-                ],
-                cwd=tmp_path,
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
+        manifest_url = "https://release.example.invalid/corp-manifest.json"
+        res = subprocess.run(
+            [
+                str(SCRIPT),
+                "--manifest",
+                manifest_url,
+                str(app),
+                str(bin_dir),
+                str(assets_dir),
+                version,
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
         assert res.returncode == 0, (
             f"build-pkg.sh failed: stdout={res.stdout!r} stderr={res.stderr!r}"
         )
-        assert seen_user_agents == []
         assert output_pkg.is_file()
 
         expanded = tmp_path / "expanded-remote"
@@ -436,5 +362,40 @@ def test_macos_pkg_remote_manifest_override_records_source_only(tmp_path: Path) 
         assert "packaged_at" in origin
         assert origin["package_version"] == version
         assert "snapshot_sha256" not in origin
+    finally:
+        output_pkg.unlink(missing_ok=True)
+
+
+def test_macos_pkg_rejects_remote_http_manifest_authority(tmp_path: Path) -> None:
+    app = tmp_path / "Capsem.app"
+    bin_dir = tmp_path / "bin"
+    assets_dir = tmp_path / "assets"
+    version = "9.9.11-http-authority-test"
+    _seed_app(app, version)
+    _seed_binaries(bin_dir)
+    assets_dir.mkdir()
+
+    output_pkg = load_paths(REPO_ROOT).stage("packages") / f"Capsem-{version}.pkg"
+    output_pkg.unlink(missing_ok=True)
+    try:
+        result = subprocess.run(
+            [
+                str(SCRIPT),
+                "--manifest",
+                "http://192.0.2.1/assets/corp/manifest.json",
+                str(app),
+                str(bin_dir),
+                str(assets_dir),
+                version,
+            ],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        assert result.returncode != 0
+        assert "HTTPS" in result.stderr
+        assert not output_pkg.exists()
     finally:
         output_pkg.unlink(missing_ok=True)

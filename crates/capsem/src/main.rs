@@ -409,7 +409,7 @@ enum MiscCommands {
 }
 
 fn validate_update_manifest_url(value: &str) -> std::result::Result<String, String> {
-    update::validate_source_url_arg("--manifest", value)
+    update::validate_manifest_source_url_arg(value)
 }
 
 fn validate_update_channel(value: &str) -> std::result::Result<String, String> {
