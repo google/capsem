@@ -68,12 +68,7 @@ impl<I, R, C> EnvironmentSpecification<I, R, C> {
         self.plugins.validate().map_err(str::to_owned)?;
         if let Some(startup) = &self.startup {
             require(self.image.is_some(), "environment startup requires an OCI image")?;
-            require(
-                startup.script.len() <= ENVIRONMENT_MAX_STARTUP_SCRIPT_BYTES
-                    && text(&startup.script)
-                    && startup.timeout_seconds > 0,
-                "invalid environment startup script or timeout",
-            )?;
+            startup.validate()?;
         }
         require(
             self.repositories.len() <= ENVIRONMENT_MAX_REPOSITORIES,
@@ -276,4 +271,24 @@ pub(super) fn validate_values(
         "injected environment variables exceed their count limit",
     )?;
     Ok(())
+}
+
+impl EnvironmentStartup {
+    /// Shared validation for canonical documents and trusted launcher staging.
+    pub fn validate(&self) -> Result<(), String> {
+        require(
+            self.script.len() <= ENVIRONMENT_MAX_STARTUP_SCRIPT_BYTES && text(&self.script) && self.timeout_seconds > 0,
+            "invalid environment startup script or timeout",
+        )
+    }
+}
+
+impl std::fmt::Debug for EnvironmentStartup {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("EnvironmentStartup")
+            .field("script_bytes", &self.script.len())
+            .field("timeout_seconds", &self.timeout_seconds)
+            .finish_non_exhaustive()
+    }
 }

@@ -351,3 +351,15 @@ mod mcps;
 mod plugins;
 
 mod package_registries;
+
+#[test]
+fn startup_debug_never_contains_approved_script_contents() {
+    let startup = EnvironmentStartup {
+        script: "secret-bearing-approved-script".into(),
+        timeout_seconds: 121,
+    };
+    let debug = format!("{startup:?}");
+    assert!(!debug.contains(&startup.script));
+    assert!(debug.contains("timeout_seconds: 121"));
+    startup.validate().unwrap();
+}
