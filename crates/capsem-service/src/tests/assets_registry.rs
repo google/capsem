@@ -223,8 +223,7 @@ fn deprecated_asset_cleanup_preserves_persistent_vm_pins() {
 
     let mut pins = test_asset_pins();
     pins.rootfs.hash = "blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".into();
-    let registry_path = base.join("persistent_registry.json");
-    let mut registry = PersistentRegistry::load(registry_path).expect("registry loads");
+    let mut registry = PersistentRegistry::load(base.join("persistent_registry.json")).expect("registry loads");
     registry.data.vms.insert(
         "saved-vm".into(),
         PersistentVmEntry {
