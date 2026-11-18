@@ -103,6 +103,14 @@ impl Hypervisor {
         if options.image.is_none() && (!options.command.is_empty() || options.registry.is_some()) {
             return Err(Error::InvalidInput("container command and registry require an image"));
         }
+        if let Some(environment) = &options.environment {
+            environment.validate().map_err(Error::InvalidInput)?;
+            if options.env.is_some() || options.image.is_some() {
+                return Err(Error::InvalidInput(
+                    "a saved environment cannot include inline variables or image overrides",
+                ));
+            }
+        }
         let name = options.name.filter(|name| !name.is_empty());
         let (env, container) = match options.image {
             Some(image) if !image.is_empty() => (
@@ -122,6 +130,7 @@ impl Hypervisor {
         // the client asks the gateway anything.
         let ram_mb = Self::memory_mb(options.memory)?;
         Ok(models::ProvisionRequest {
+            environment: options.environment,
             persistent: name.is_some(),
             name,
             cpus: options.cpus,

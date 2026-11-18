@@ -7,6 +7,7 @@ use crate::test_gateway::Server;
 use crate::*;
 
 mod deadlines;
+mod environment_launch;
 mod fixture;
 mod interactions;
 mod local;

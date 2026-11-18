@@ -44,6 +44,7 @@ pub enum VmSelector {
 /// Omitted CPU and memory values take the hypervisor's defaults.
 #[derive(Debug, Clone, Default)]
 pub struct CreateOptions {
+    pub environment: Option<capsem_api::environments::EnvironmentRevisionReference>,
     pub name: Option<String>,
     pub cpus: Option<u32>,
     /// Guest memory in GiB.
