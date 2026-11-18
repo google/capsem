@@ -16,6 +16,10 @@ pub(super) struct RunArgs {
     /// Shell command (with --image, the command follows the image instead)
     #[arg(conflicts_with = "image")]
     pub command: Option<String>,
+    /// Exact saved image revision to run: ENVIRONMENT_ID@REVISION_ID
+    #[arg(long, value_name = "ENVIRONMENT_ID@REVISION_ID", value_parser = environment_reference,
+          conflicts_with_all = ["command", "env", "image", "registry_ca", "registry_user"])]
+    pub environment: Option<capsem_api::environments::EnvironmentRevisionReference>,
     /// Maximum workload duration in seconds
     #[arg(long)]
     pub timeout: Option<u64>,
@@ -28,7 +32,7 @@ pub(super) struct RunArgs {
     /// CPU cores (default: 4)
     #[arg(long)]
     pub cpu: Option<u32>,
-    /// Named networks the VM joins at creation (repeatable; with --image)
+    /// Named networks the VM joins at creation (with --image or --environment)
     #[arg(long = "network")]
     pub network: Vec<String>,
     #[command(flatten)]
@@ -83,9 +87,28 @@ pub(super) fn ram_mb(ram_gb: Option<u64>) -> Option<u64> {
     ram_gb.map(|gb| gb.saturating_mul(1024))
 }
 
+pub(super) fn environment_reference(
+    value: &str,
+) -> Result<capsem_api::environments::EnvironmentRevisionReference, String> {
+    let (environment_id, revision_id) = value
+        .split_once('@')
+        .ok_or_else(|| "environment must be ENVIRONMENT_ID@REVISION_ID".to_owned())?;
+    let reference = capsem_api::environments::EnvironmentRevisionReference {
+        environment_id: environment_id.into(),
+        revision_id: revision_id.into(),
+    };
+    reference.validate().map_err(str::to_owned)?;
+    Ok(reference)
+}
+
 pub(super) async fn run(client: &GatewayClient, args: &RunArgs) -> Result<i32> {
+    if args.environment.is_some() {
+        container_image::validate_saved_options(&args.image, &args.env)?;
+        anyhow::ensure!(args.command.is_none(), "a saved image runs its approved command");
+        return run_image(client, args, None).await;
+    }
     match Workload::of(&args.image, &args.env)? {
-        Some(workload) => run_image(client, args, &workload).await,
+        Some(workload) => run_image(client, args, Some(&workload)).await,
         None => {
             anyhow::ensure!(
                 args.network.is_empty(),
@@ -130,7 +153,7 @@ pub(super) async fn write_exec_output(
 
 /// The image's workload attached, in a VM destroyed however the run ends:
 /// its exit, a timeout, a signal, or a failure.
-async fn run_image(client: &GatewayClient, args: &RunArgs, workload: &Workload<'_>) -> Result<i32> {
+async fn run_image(client: &GatewayClient, args: &RunArgs, workload: Option<&Workload<'_>>) -> Result<i32> {
     let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let cancel = async {
@@ -144,7 +167,12 @@ async fn run_image(client: &GatewayClient, args: &RunArgs, workload: &Workload<'
         persistent: false,
         env: None,
         networks: args.network.clone(),
-        container: Some(workload.spec(true).await?),
+        container: match workload {
+            Some(workload) => Some(workload.spec(true).await?),
+            None => None,
+        },
+        environment: args.environment.clone(),
+        attach: args.environment.is_some(),
         ..Default::default()
     };
     // Signals stay queued while the create request returns the VM to destroy.
@@ -152,7 +180,7 @@ async fn run_image(client: &GatewayClient, args: &RunArgs, workload: &Workload<'
     eprintln!("Running {} ({})", vm.name, vm.id);
     let work = async {
         container_image::follow(client, &vm.id, |state| state == ContainerState::Staged).await?;
-        container_image::expose(client, &vm.id, &workload.image.publish).await?;
+        container_image::expose(client, &vm.id, &args.image.publish).await?;
         container_image::attach(client, &vm.id).await
     };
     let deadline = async {

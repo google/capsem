@@ -5,11 +5,15 @@ use anyhow::Result;
 
 use crate::client::{self, ApiResponse, ForkRequest, ForkResponse, GatewayClient, ProvisionRequest, ProvisionResponse};
 use crate::container_image::{self, ImageArgs, Workload};
-use crate::container_run::ram_mb;
+use crate::container_run::{environment_reference, ram_mb};
 use capsem_api::ContainerState;
 
 #[derive(clap::Args)]
 pub(super) struct CreateArgs {
+    /// Exact saved environment revision: ENVIRONMENT_ID@REVISION_ID
+    #[arg(long, value_name = "ENVIRONMENT_ID@REVISION_ID", value_parser = environment_reference,
+          conflicts_with_all = ["env", "image", "registry_ca", "registry_user"])]
+    pub environment: Option<capsem_api::environments::EnvironmentRevisionReference>,
     /// Name for the session (makes it persistent -- "if you name it, you keep it")
     #[arg(short = 'n', long)]
     pub name: Option<String>,
@@ -38,7 +42,12 @@ pub(super) struct CreateArgs {
 
 pub(super) async fn create(client: &GatewayClient, args: &CreateArgs) -> Result<()> {
     let persistent = args.name.is_some() || args.from.is_some();
-    let workload = Workload::of(&args.image, &args.env)?;
+    let workload = if args.environment.is_some() {
+        container_image::validate_saved_options(&args.image, &args.env)?;
+        None
+    } else {
+        Workload::of(&args.image, &args.env)?
+    };
     // Resolve the environment before reading the image's registry inputs.
     let env = match workload {
         None => client::parse_env_vars(&args.env)?,
@@ -46,6 +55,7 @@ pub(super) async fn create(client: &GatewayClient, args: &CreateArgs) -> Result<
     };
     let labels = client::parse_env_vars(&args.label)?;
     let mut request = ProvisionRequest {
+        environment: args.environment.clone(),
         name: args.name.clone(),
         ram_mb: ram_mb(args.ram),
         cpus: args.cpu,
@@ -63,6 +73,8 @@ pub(super) async fn create(client: &GatewayClient, args: &CreateArgs) -> Result<
     let vm = container_image::provision(client, &request).await?;
     if let Some(workload) = &workload {
         start_image(client, &vm, workload).await?;
+    } else if args.environment.is_some() {
+        container_image::expose(client, &vm.id, &args.image.publish).await?;
     }
     if persistent {
         println!("{} (persistent)", vm.id);

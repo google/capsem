@@ -41,6 +41,15 @@ pub(super) struct ImageArgs {
     pub registry_user: Option<String>,
 }
 
+/// A selector cannot silently discard edits to the approved workload.
+pub(super) fn validate_saved_options(image: &ImageArgs, env: &[String]) -> Result<()> {
+    ensure!(
+        image.image.is_empty() && image.registry_ca.is_none() && image.registry_user.is_none() && env.is_empty(),
+        "a saved environment cannot include inline variables, image or registry overrides"
+    );
+    Ok(())
+}
+
 /// An image's workload: the reference, the command replacing its Cmd, and
 /// the container's environment.
 pub(super) struct Workload<'a> {

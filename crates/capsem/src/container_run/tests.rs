@@ -3,6 +3,36 @@ use crate::{Cli, Commands, SessionCommands};
 use clap::Parser;
 
 #[test]
+fn saved_environment_invocations_accept_exact_refs_and_refuse_inline_workload_edits() {
+    const SELECTED: &str = "00000000-0000-4000-8000-000000000001@00000000-0000-4000-8000-000000000002";
+    for verb in ["run", "create"] {
+        let parsed = Cli::try_parse_from(["capsem", verb, "--environment", SELECTED]);
+        assert!(parsed.is_ok(), "{verb}: {}", parsed.err().unwrap());
+        for additional in [
+            vec!["--env", "UNAPPROVED=value"],
+            vec!["--image", "other"],
+            vec!["--registry-user", "account"],
+            vec!["--registry-ca", "/private/ca.pem"],
+        ] {
+            let mut args = vec!["capsem", verb, "--environment", SELECTED];
+            args.extend(additional);
+            assert!(
+                Cli::try_parse_from(args).is_err(),
+                "saved workload overrides must fail before HTTP"
+            );
+        }
+        for invalid in [
+            "moving-name",
+            "not-a-uuid@also-invalid",
+            "00000000-0000-0000-0000-000000000000@00000000-0000-4000-8000-000000000002",
+        ] {
+            assert!(Cli::try_parse_from(["capsem", verb, "--environment", invalid]).is_err());
+        }
+    }
+    assert!(Cli::try_parse_from(["capsem", "run", "--environment", SELECTED, "unapproved command"]).is_err());
+}
+
+#[test]
 fn parse_run() {
     let cli = Cli::parse_from(["capsem", "run", "echo hello"]);
     match cli.command.unwrap() {
