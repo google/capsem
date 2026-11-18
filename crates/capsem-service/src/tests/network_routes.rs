@@ -202,6 +202,7 @@ async fn stopping_a_vm_keeps_its_membership_and_a_fork_has_none() {
         State(Arc::clone(&state)),
         Path("fork-src".into()),
         Json(ForkRequest {
+            expected: None,
             name: "my-fork".into(),
             description: None,
             labels: None,

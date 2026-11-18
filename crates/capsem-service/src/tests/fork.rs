@@ -38,6 +38,7 @@ async fn handle_fork_creates_persistent_sandbox() {
         State(state.clone()),
         Path("fork-src".into()),
         Json(ForkRequest {
+            expected: None,
             name: "my-fork".into(),
             description: Some("test".into()),
             labels: None,
@@ -83,6 +84,7 @@ async fn a_fork_whose_guest_will_not_freeze_fails_and_leaves_nothing() {
         State(state.clone()),
         Path("fork-src".into()),
         Json(ForkRequest {
+            expected: None,
             name: "my-fork".into(),
             description: None,
             labels: None,
@@ -111,6 +113,7 @@ async fn handle_fork_not_found() {
         State(state),
         Path("ghost".into()),
         Json(ForkRequest {
+            expected: None,
             name: "img".into(),
             description: None,
             labels: None,
@@ -151,6 +154,7 @@ async fn handle_fork_duplicate_returns_conflict() {
         State(state.clone()),
         Path("dup-src".into()),
         Json(ForkRequest {
+            expected: None,
             name: "same-name".into(),
             description: None,
             labels: None,
@@ -164,6 +168,7 @@ async fn handle_fork_duplicate_returns_conflict() {
         State(state),
         Path("dup-src".into()),
         Json(ForkRequest {
+            expected: None,
             name: "same-name".into(),
             description: None,
             labels: None,
@@ -202,6 +207,7 @@ async fn handle_fork_from_persistent_registry() {
         State(state.clone()),
         Path(vm_id.clone()),
         Json(ForkRequest {
+            expected: None,
             name: "from-pers".into(),
             description: None,
             labels: None,
@@ -231,6 +237,7 @@ async fn handle_fork_from_persistent_registry() {
         State(state.clone()),
         Path(vm_id.clone()),
         Json(ForkRequest {
+            expected: None,
             name: "from-pers-override".into(),
             description: None,
             labels: Some(overridden.clone()),
@@ -254,6 +261,7 @@ async fn handle_fork_from_persistent_registry() {
         State(state.clone()),
         Path(vm_id.clone()),
         Json(ForkRequest {
+            expected: None,
             name: "from-pers-cleared".into(),
             description: None,
             labels: Some(HashMap::new()),
@@ -278,6 +286,7 @@ async fn handle_fork_from_persistent_registry() {
         State(state.clone()),
         Path(vm_id),
         Json(ForkRequest {
+            expected: None,
             name: "from-pers-bad".into(),
             description: None,
             labels: Some(HashMap::from([("dot.key".into(), "v".into())])),
@@ -315,6 +324,7 @@ async fn handle_fork_refuses_a_profile_era_vm() {
         State(Arc::clone(&state)),
         Path(vm_id),
         Json(ForkRequest {
+            expected: None,
             name: "blocked-fork".into(),
             description: None,
             labels: None,

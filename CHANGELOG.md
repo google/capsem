@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Operator VM readiness reads identify the original generation and the intent-specific boot, desired or saved revision. Historical timing is verified, and changed selections are refused before a wait plan is returned.
+
 - Added: Rust SDK lifecycle readiness requests carry the required typed operation intent.
 
 - Added: Lifecycle readiness queries require a typed start, fork or clone intent, so wait planning can distinguish an active boot from the revision selected for a new VM. Service integration remains in progress.

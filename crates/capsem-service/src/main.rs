@@ -56,6 +56,7 @@ mod credential_routes;
 mod environment_launch;
 mod environment_routes;
 mod ledger_worker;
+mod lifecycle_readiness;
 mod mcp_routes;
 mod plugin_routes;
 mod private_routes;
