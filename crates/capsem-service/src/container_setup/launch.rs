@@ -133,7 +133,9 @@ pub(super) async fn run(
         "container startup stage"
     );
     let started = std::time::Instant::now();
-    let access = spec.registry.unwrap_or_default();
+    let access = decision
+        .registry_access(&requested, spec.registry.unwrap_or_default())
+        .await?;
     let image = state
         .containers
         .source

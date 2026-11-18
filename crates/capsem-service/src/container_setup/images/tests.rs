@@ -5,6 +5,7 @@ use capsem_core::net::policy_config::{CatalogSetting, ImagePolicyConfig, Setting
 use serde_json::{json, Value};
 mod environment_pins;
 mod inventory;
+mod transport;
 
 #[tokio::test]
 async fn cache_observation_requires_the_same_filesystem_as_launch() {

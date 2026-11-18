@@ -302,8 +302,14 @@ The catalog is `ghcr.io/google/capsem/catalog:stable` unless `[images]` in
 ```toml
 [images]
 catalog = "mirror.company.com/capsem/catalog:stable"  # or false for none
-catalog_ca = "/etc/capsem/mirror-ca.pem"              # trusted for the catalog only
+catalog_ca = "/etc/capsem/mirror-ca.pem"              # trusted for this registry host and port
 ```
+
+The CA also applies to image and published filesystem pulls from that exact
+registry host and port. Other registries use public roots unless the request
+supplies its own registry CA. The PEM bundle must resolve to a regular file
+of at most 1 MiB; configured symlinks are supported. Trust does not grant
+source or image admission.
 
 With the catalog off or unreadable, no name resolves and only the explicit
 `sources` and `admit` grants admit anything.

@@ -29,6 +29,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use tokio::time::{Duration, Instant};
 pub(crate) mod inventory;
 mod saved;
+mod transport;
 
 /// How long a catalog read is reused before the next request reads it again.
 pub(crate) const CATALOG_REFRESH: Duration = Duration::from_secs(capsem_proto::CACHE_IMAGE_CATALOG_REFRESH_SECONDS);
@@ -684,7 +685,9 @@ async fn fetch_image(state: &ServiceState, request: ImagePullRequest) -> Result<
     let requested = decision.resolve(&request.image).await?;
     decision.check_source(&requested).await?;
     let download = state.containers.downloads.begin(&requested.pull);
-    let access = request.registry.unwrap_or_default();
+    let access = decision
+        .registry_access(&requested, request.registry.unwrap_or_default())
+        .await?;
     let image = state
         .containers
         .source

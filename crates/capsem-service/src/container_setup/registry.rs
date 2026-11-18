@@ -1,6 +1,39 @@
 //! Request registry transports borrow persistent credential-free cache owners.
 use super::*;
 
+/// A private registry trust bundle may contain multiple roots, but is not an
+/// unbounded input. This accommodates ordinary system-sized PEM bundles.
+pub(super) const MAX_CA_BYTES: usize = 1024 * 1024;
+
+pub(super) async fn read_catalog_ca(source: &CatalogSource) -> anyhow::Result<Option<String>> {
+    let Some(path) = source.ca.clone() else {
+        return Ok(None);
+    };
+    tokio::task::spawn_blocking(move || -> anyhow::Result<Option<String>> {
+        use std::io::Read;
+        // Operator-configured symlinks are valid. Resolve them first, then open
+        // the final regular inode without following a replacement link or
+        // waiting for a FIFO writer. No guest-provided path reaches this owner.
+        let resolved =
+            std::fs::canonicalize(&path).with_context(|| format!("resolve [images] catalog_ca {}", path.display()))?;
+        let file = capsem_foundation::unix::fs::open_regular_file_no_follow(&resolved)
+            .with_context(|| format!("open [images] catalog_ca {}", path.display()))?;
+        let mut bytes = Vec::new();
+        file.take((MAX_CA_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)
+            .context("read [images] catalog_ca")?;
+        anyhow::ensure!(
+            bytes.len() <= MAX_CA_BYTES,
+            "[images] catalog_ca exceeds {MAX_CA_BYTES} bytes"
+        );
+        Ok(Some(
+            String::from_utf8(bytes).context("[images] catalog_ca must be UTF-8 PEM")?,
+        ))
+    })
+    .await
+    .context("read registry trust task")?
+}
+
 #[derive(Clone, Default)]
 pub(crate) struct RegistryImages {
     cache: Arc<std::sync::OnceLock<capsem_assets::oci::ImageCache>>,
@@ -161,18 +194,11 @@ impl ImageSource for RegistryImages {
 
 impl RegistryImages {
     async fn catalog_puller(&self, source: &CatalogSource) -> anyhow::Result<capsem_assets::oci::Puller> {
-        let ca = match &source.ca {
-            Some(path) => Some(
-                tokio::fs::read(path)
-                    .await
-                    .with_context(|| format!("read [images] catalog_ca {}", path.display()))?,
-            ),
-            None => None,
-        };
+        let ca = read_catalog_ca(source).await?;
         let puller = capsem_assets::oci::Puller::new_with_root_certificate(
             stage::oci_architecture()?,
             capsem_assets::oci::RegistryAuth::Anonymous,
-            ca.as_deref(),
+            ca.as_deref().map(str::as_bytes),
         )?
         .with_cache(&self.cache()?);
         Ok(puller)

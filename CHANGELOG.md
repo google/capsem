@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed: Image and published filesystem pulls inherit the configured catalog CA for the same registry host and port. CA bundles are bounded to 1 MiB regular files; explicit request trust remains authoritative.
+
 - Security: Guest-written startup failure markers cannot inject terminal control characters into host diagnostics.
 
 - Added: Saved environments run their approved `/bin/sh` startup before the OCI entrypoint. Readiness and surface waits include the retained startup timeout; failures retain bounded diagnostics, and cold restarts clear stale preparation state.
