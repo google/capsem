@@ -12,6 +12,9 @@ use super::types::SettingsFile;
 /// providers, plugin modes and MCP servers. Corporate integration and network
 /// mechanics stay corp-only.
 pub fn validate_settings_toml_contract(file: &SettingsFile) -> Result<(), String> {
+    if file.environment_plugins.is_some() {
+        return Err("settings.toml cannot define corporate environment plugin overrides".into());
+    }
     if file.catalogs.is_some() {
         return Err("settings.toml cannot define corporate catalog source overrides".into());
     }

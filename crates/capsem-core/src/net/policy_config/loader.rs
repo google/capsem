@@ -361,6 +361,11 @@ fn merge_corp_files(files: impl IntoIterator<Item = SettingsFile>) -> SettingsFi
                 target.mcp = sources.mcp;
             }
         }
+        if let Some(plugins) = file.environment_plugins {
+            corp.environment_plugins
+                .get_or_insert_with(Default::default)
+                .merge_first_wins(plugins);
+        }
         if corp.managed_sessions.is_none() {
             corp.managed_sessions = file.managed_sessions;
         }

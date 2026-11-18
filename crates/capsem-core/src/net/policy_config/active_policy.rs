@@ -68,6 +68,9 @@ impl ActivePolicyFile {
     pub fn from_settings_and_corp(settings: &SettingsFile, corp: &SettingsFile) -> Result<Self, String> {
         settings.validate_metadata_contract()?;
         corp.validate_metadata_contract()?;
+        if settings.environment_plugins.is_some() || corp.environment_plugins.is_some() {
+            return Err("typed corporate plugin overrides require environment policy publication".into());
+        }
         let mut user_rules = SecurityRuleProfile {
             default: settings.default.clone(),
             profiles: settings.profiles.clone(),

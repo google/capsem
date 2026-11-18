@@ -173,3 +173,19 @@ impl CompiledEnvironmentPlugins {
 
 #[cfg(test)]
 mod tests;
+
+impl super::EnvironmentPolicyInputs<'_> {
+    pub fn compile_plugins(&self) -> Result<CompiledEnvironmentPlugins, String> {
+        self.corporate().validate_metadata_contract()?;
+        if !self.corporate().plugins.is_empty() {
+            return Err(
+                "environment policy requires typed corporate environment_plugins, not legacy plugin modes".into(),
+            );
+        }
+        let defaults = EnvironmentPlugins::default();
+        CompiledEnvironmentPlugins::resolve(
+            self.plugins(),
+            self.corporate().environment_plugins.as_ref().unwrap_or(&defaults),
+        )
+    }
+}

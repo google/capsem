@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed: Legacy policy publication refuses typed corporate plugin overrides it cannot enforce, rather than silently discarding their options.
+
 - Added: Operator environment changes use an observed base revision, retain unchanged pins and publish durable linear history. Exact request-ID retries reconcile without replaying changes or reverting later edits.
 
 - Added: TypeScript SDK `Hypervisor.environments` creates, changes and inspects blueprints with explicit request IDs, response identity checks, deadlines and cancellation.

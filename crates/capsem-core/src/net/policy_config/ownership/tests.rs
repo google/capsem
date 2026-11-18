@@ -109,3 +109,14 @@ upstreams = ["127.0.0.1:5353"]
         );
     }
 }
+
+#[test]
+fn settings_cannot_claim_typed_corporate_environment_plugin_overrides() {
+    for content in [
+        "[environment_plugins]",
+        "[environment_plugins.pii_filter.inbound]\nmode='block'",
+    ] {
+        let file = parse(content);
+        assert!(validate_settings_toml_contract(&file).is_err());
+    }
+}

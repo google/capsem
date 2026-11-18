@@ -368,3 +368,10 @@ fn settings_toml_behavior_settings_reach_the_active_policy() {
     assert_eq!(locked.network.max_body_capture, Some(0), "corp wins");
     assert_eq!(locked.network.log_bodies, Some(true));
 }
+
+#[test]
+fn legacy_policy_publication_cannot_silently_drop_typed_corporate_plugin_options() {
+    let corporate = parse("[environment_plugins.pii_filter.inbound]\nmode='block'");
+    assert!(ActivePolicyFile::from_settings_and_corp(&SettingsFile::default(), &corporate).is_err());
+    assert!(ActivePolicyFile::from_settings_and_corp(&corporate, &SettingsFile::default()).is_err());
+}

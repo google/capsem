@@ -547,3 +547,33 @@ fn batch_update_settings_empty_changes_is_noop() {
     let applied = batch_update_settings(&changes).unwrap();
     assert!(applied.is_empty());
 }
+
+#[test]
+fn corporate_environment_plugins_preserve_first_whole_entry_through_actual_file_loading() {
+    let root = tempfile::tempdir().unwrap();
+    let first = root.path().join("first.toml");
+    let second = root.path().join("second.toml");
+    std::fs::write(&first,"[environment_plugins.pii_filter.inbound]\nmode='block'\n[environment_plugins.pii_filter.inbound.options]\nemail=false").unwrap();
+    std::fs::write(
+        &second,
+        "[environment_plugins.pii_filter.outbound]\nmode='rewrite'\n[environment_plugins.utf8_guard]\nmode='block'",
+    )
+    .unwrap();
+    let (_, corporate) = policy_files_from_paths(None, &[first.clone(), second.clone()]).unwrap();
+    let plugins = corporate.environment_plugins.unwrap();
+    assert_eq!(
+        plugins.pii_filter.as_ref().unwrap().inbound.mode,
+        capsem_config::SecurityPluginMode::Block
+    );
+    assert_eq!(
+        plugins.pii_filter.as_ref().unwrap().outbound.mode,
+        capsem_config::SecurityPluginMode::Disable
+    );
+    assert_eq!(
+        plugins.utf8_guard.as_ref().unwrap().mode,
+        capsem_config::SecurityPluginMode::Block
+    );
+    assert!(load_local_settings_file(&first).is_err());
+    std::fs::write(second, "[environment_plugins.credential_broker]\nmode='disable'").unwrap();
+    assert!(policy_files_from_paths(None, &[first, root.path().join("second.toml")]).is_err());
+}

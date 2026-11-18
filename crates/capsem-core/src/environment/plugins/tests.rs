@@ -201,3 +201,40 @@ fn environment_plugin_compilation_separates_capture_and_utf8_direction_without_w
     };
     assert!(CompiledEnvironmentPlugins::resolve(&EnvironmentPlugins::default(), &corporate).is_err());
 }
+
+#[test]
+fn corporate_environment_plugins_compile_acknowledged_boot_options_with_whole_entry_locks() {
+    let boot = toml::from_str(
+        "name='boot'\n[plugins.pii_filter.inbound]\nmode='rewrite'\n[plugins.pii_filter.inbound.options]\nemail=false",
+    )
+    .unwrap();
+    let live = toml::from_str("name='live'\n[plugins.utf8_guard]\nmode='block'").unwrap();
+    let corporate = toml::from_str("[environment_plugins.pii_filter.outbound]\nmode='block'\n[environment_plugins.pii_filter.outbound.options]\nphone=false").unwrap();
+    let compiled = super::super::EnvironmentPolicyInputs::new(&boot, &live, &corporate)
+        .compile_plugins()
+        .unwrap();
+    let inbound = compiled.configuration(PluginId::PiiFilter, PluginDirection::Inbound);
+    assert!(inbound.locked());
+    assert_eq!(inbound.mode, Disable);
+    assert!(matches!(&inbound.options, CompiledPluginOptions::PiiFilter(options) if options.email));
+    let outbound = compiled.configuration(PluginId::PiiFilter, PluginDirection::Outbound);
+    assert_eq!(outbound.mode, Block);
+    assert!(matches!(&outbound.options, CompiledPluginOptions::PiiFilter(options) if !options.phone));
+    assert_eq!(
+        compiled
+            .configuration(PluginId::Utf8Guard, PluginDirection::Inbound)
+            .mode,
+        Disable
+    );
+}
+
+#[test]
+fn corporate_environment_plugin_compilation_refuses_legacy_modes_instead_of_dropping_them() {
+    let environment = toml::from_str("name='environment'").unwrap();
+    let corporate = toml::from_str("[plugins.pii_filter]\nmode='block'").unwrap();
+    assert!(
+        super::super::EnvironmentPolicyInputs::new(&environment, &environment, &corporate)
+            .compile_plugins()
+            .is_err()
+    );
+}
