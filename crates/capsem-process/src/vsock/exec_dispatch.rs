@@ -97,7 +97,7 @@ impl ExecDispatch {
         let mut boundary = capsem_core::security_engine::emit_process_exec_security_boundary(
             &self.db,
             &rules,
-            Arc::clone(&plugins),
+            plugins.clone(),
             capsem_logger::ExecEvent {
                 event_id: None,
                 timestamp: std::time::SystemTime::now(),
@@ -118,7 +118,7 @@ impl ExecDispatch {
             if let Err(error) = result {
                 boundary = Err(error);
             } else if !Arc::ptr_eq(&rules, &self.rules.read().unwrap())
-                || !Arc::ptr_eq(&plugins, &self.plugins.read().unwrap())
+                || !plugins.same_snapshot(&self.plugins.read().unwrap())
             {
                 emission.enforcement.action = capsem_core::security_engine::SecurityEnforcementAction::Block;
                 emission.event.decision.effective = capsem_core::security_engine::SecurityDecisionKind::Block;

@@ -20,7 +20,9 @@ fn bridge() -> Bridge {
         rules: Arc::new(std::sync::RwLock::new(Arc::new(
             capsem_core::net::policy_config::SecurityRuleSet::new(Vec::new()),
         ))),
-        plugins: Arc::new(std::sync::RwLock::new(Arc::new(std::collections::BTreeMap::new()))),
+        plugins: Arc::new(std::sync::RwLock::new(
+            capsem_core::security_engine::SecurityPluginPolicy::default(),
+        )),
         jobs: Arc::new(JobStore::new()),
         hub,
         approvals: None,

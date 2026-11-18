@@ -14,7 +14,8 @@ async fn rewrite_reply(data: Vec<u8>, size: u64) -> ProcessToService {
             mode: SecurityPluginMode::Rewrite,
             detection_level: DetectionLevel::High,
         },
-    )]));
+    )]))
+    .into();
     let (request, response, handler) = channel(&dispatcher).await;
     request
         .send(ServiceToProcess::LogFileBoundary {

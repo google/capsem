@@ -61,7 +61,9 @@ impl Ledger {
         let rules = Arc::new(std::sync::RwLock::new(Arc::new(
             capsem_core::net::policy_config::SecurityRuleSet::new(Vec::new()),
         )));
-        let plugins = Arc::new(std::sync::RwLock::new(Arc::new(std::collections::BTreeMap::new())));
+        let plugins = Arc::new(std::sync::RwLock::new(
+            capsem_core::security_engine::SecurityPluginPolicy::default(),
+        ));
         super::super::super::handle_guest_msg(
             GuestToHost::ExecDone { id, exit_code: 0 },
             &self.js,

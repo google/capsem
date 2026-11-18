@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
 use capsem_core::net::policy::NetworkMechanics;
-use capsem_core::net::policy_config::{ActivePolicyFile, ModelEndpointRegistry, SecurityPluginConfig, SecurityRuleSet};
+use capsem_core::net::policy_config::{ActivePolicyFile, ModelEndpointRegistry, SecurityRuleSet};
+use capsem_core::security_engine::SecurityPluginPolicy;
 use capsem_proto::mcp_contracts::McpServerDef;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -23,7 +24,7 @@ pub(crate) struct RuntimePolicyConfig {
     pub(crate) network: NetworkMechanics,
     pub(crate) dns_upstreams: Vec<SocketAddr>,
     pub(crate) security_rules: SecurityRuleSet,
-    pub(crate) plugins: BTreeMap<String, SecurityPluginConfig>,
+    pub(crate) plugins: SecurityPluginPolicy,
     pub(crate) model_endpoints: ModelEndpointRegistry,
     pub(crate) mcp: capsem_core::mcp::policy::McpConfig,
 }
@@ -108,7 +109,7 @@ impl RuntimePolicyConfig {
         mcp_runtime.proxy_policy.replace(self.proxy_policy_snapshot());
         *net_state.policy.write().unwrap() = std::sync::Arc::new(self.network);
         *mcp_runtime.security_rules.write().unwrap() = std::sync::Arc::new(self.security_rules);
-        *mcp_runtime.plugin_policy.write().unwrap() = std::sync::Arc::new(self.plugins);
+        *mcp_runtime.plugin_policy.write().unwrap() = self.plugins;
         tracing::info!(
             active_policy_digest = %self.active_policy_digest,
             security_rule_count = security_rule_ids.len(),

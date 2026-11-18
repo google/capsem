@@ -36,7 +36,9 @@ fn authorized_publisher(action: &str) -> Arc<Publisher> {
     let engine = Arc::new(NetworkSecurity {
         db: Arc::new(capsem_logger::DbWriter::open_in_memory(128).unwrap()),
         rules: Arc::new(RwLock::new(Arc::new(rules))),
-        plugins: Arc::new(RwLock::new(Arc::new(std::collections::BTreeMap::new()))),
+        plugins: Arc::new(RwLock::new(
+            capsem_core::security_engine::SecurityPluginPolicy::default(),
+        )),
     });
     Arc::new(Publisher::default().with_security("vm-b".into(), "beta".into(), engine))
 }

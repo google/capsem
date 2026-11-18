@@ -153,7 +153,8 @@ match = 'file.import.content == "CAPSEM_REWRITTEN_EICAR"'
             detection_level: DetectionLevel::High,
             content: Default::default(),
         },
-    )]));
+    )]))
+    .into();
     let (request, response, handler) = channel(&dispatcher).await;
     let mut message = import_request();
     if let ServiceToProcess::LogFileBoundary { data, size, .. } = &mut message {

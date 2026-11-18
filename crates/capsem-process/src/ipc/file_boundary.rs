@@ -169,7 +169,7 @@ pub(crate) async fn emit_explicit_file_security_event(
     let Some(mut emission) = capsem_core::security_engine::emit_explicit_file_security_write_and_rules_with_plugins(
         db,
         &rules,
-        Arc::clone(&plugins),
+        plugins.clone(),
         capsem_core::security_engine::ExplicitFileSecurityEvent {
             action: boundary.action,
             path: boundary.path,
@@ -198,7 +198,7 @@ pub(crate) async fn emit_explicit_file_security_event(
         held_bytes
     };
     capsem_core::security_engine::approval::resolve_emission(db, approvals, &mut emission, held_bytes).await?;
-    if !Arc::ptr_eq(&rules, &security_rules.read().unwrap()) || !Arc::ptr_eq(&plugins, &plugin_policy.read().unwrap()) {
+    if !Arc::ptr_eq(&rules, &security_rules.read().unwrap()) || !plugins.same_snapshot(&plugin_policy.read().unwrap()) {
         return Err("file security policy changed while operation was held".into());
     }
     Ok(Some(emission))

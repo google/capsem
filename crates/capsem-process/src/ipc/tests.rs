@@ -131,7 +131,7 @@ impl Dispatcher {
         let plugins = BTreeMap::new();
         let model_endpoints = capsem_core::net::policy_config::ModelEndpointRegistry::default();
         let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(rule_set.clone())));
-        let plugin_policy = Arc::new(std::sync::RwLock::new(Arc::new(plugins.clone())));
+        let plugin_policy = Arc::new(std::sync::RwLock::new(plugins.clone().into()));
         let proxy_policy = capsem_core::net::proxy_engine::ProxyPolicyHandle::new(
             capsem_core::net::proxy_engine::ProxyPolicySnapshot::new(
                 initial_digest,
@@ -193,7 +193,7 @@ impl Dispatcher {
             capsem_core::net::mitm_proxy::McpEndpointState::new(
                 aggregator.clone(),
                 Arc::clone(&security_rules),
-                Arc::clone(&plugin_policy),
+                plugin_policy.clone(),
                 Arc::new(tokio::sync::Semaphore::new(4)),
                 capsem_core::net::mitm_proxy::McpTimeouts::from_env(),
             )

@@ -16,14 +16,16 @@ async fn export(data: Vec<u8>, plugin: &str) -> JobResult {
         },
     );
     let rules = Arc::new(RwLock::new(Arc::new(SecurityRuleSet::new(Vec::new()))));
-    let plugins = Arc::new(RwLock::new(Arc::new(std::collections::BTreeMap::from([(
-        plugin.into(),
-        SecurityPluginConfig {
-            content: Default::default(),
-            mode: SecurityPluginMode::Rewrite,
-            detection_level: DetectionLevel::High,
-        },
-    )]))));
+    let plugins = Arc::new(RwLock::new(capsem_core::security_engine::SecurityPluginPolicy::from(
+        std::collections::BTreeMap::from([(
+            plugin.into(),
+            SecurityPluginConfig {
+                content: Default::default(),
+                mode: SecurityPluginMode::Rewrite,
+                detection_level: DetectionLevel::High,
+            },
+        )]),
+    )));
     let mut calls = tokio::task::JoinSet::new();
     crate::vsock::handle_guest_msg_with_tasks(
         capsem_proto::GuestToHost::FileContent {

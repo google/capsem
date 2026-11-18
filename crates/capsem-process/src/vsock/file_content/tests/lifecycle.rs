@@ -26,7 +26,9 @@ impl Export {
         let rules = Arc::new(RwLock::new(Arc::new(
             SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).unwrap(),
         )));
-        let plugins = Arc::new(RwLock::new(Arc::new(Default::default())));
+        let plugins = Arc::new(RwLock::new(
+            capsem_core::security_engine::SecurityPluginPolicy::default(),
+        ));
         let jobs = Arc::new(JobStore::new());
         let state = Arc::new(FileReadState {
             approvals: Some(Arc::clone(&peer.capability)),

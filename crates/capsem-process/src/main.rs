@@ -691,13 +691,13 @@ async fn run_async_main_loop(
         active_policy = %runtime_config.active_policy_path.display(),
         security_rule_count = security_rule_ids.len(),
         security_rule_ids = ?security_rule_ids,
-        plugin_count = runtime_config.plugins.len(),
+        plugin_count = runtime_config.plugins.configured_plugin_count(),
         dns_upstreams = ?runtime_config.dns_upstreams,
         "capsem-process loaded runtime policy"
     );
     let guest_config = capsem_core::net::policy_config::GuestConfig::default();
     let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(runtime_config.security_rules.clone())));
-    let plugin_policy = Arc::new(std::sync::RwLock::new(Arc::new(runtime_config.plugins.clone())));
+    let plugin_policy = Arc::new(std::sync::RwLock::new(runtime_config.plugins.clone()));
     let proxy_policy = capsem_core::net::proxy_engine::ProxyPolicyHandle::new(runtime_config.proxy_policy_snapshot());
     let job_store = Arc::new(JobStore {
         publisher: Arc::new(

@@ -11,7 +11,9 @@ async fn slow_stream_completion_leaves_control_and_other_jobs_responsive() {
     let rules = Arc::new(std::sync::RwLock::new(Arc::new(
         capsem_core::net::policy_config::SecurityRuleSet::new(Vec::new()),
     )));
-    let plugins = Arc::new(std::sync::RwLock::new(Arc::new(std::collections::BTreeMap::new())));
+    let plugins = Arc::new(std::sync::RwLock::new(
+        capsem_core::security_engine::SecurityPluginPolicy::default(),
+    ));
     let (output, _consumer) = mpsc::channel(1);
     let mut active = ActiveExec::new();
     active.stream = Some(output);
@@ -116,7 +118,9 @@ async fn output_that_never_arrives_is_an_error_not_an_empty_success() {
     let rules = Arc::new(std::sync::RwLock::new(Arc::new(
         capsem_core::net::policy_config::SecurityRuleSet::new(Vec::new()),
     )));
-    let plugins = Arc::new(std::sync::RwLock::new(Arc::new(std::collections::BTreeMap::new())));
+    let plugins = Arc::new(std::sync::RwLock::new(
+        capsem_core::security_engine::SecurityPluginPolicy::default(),
+    ));
     js.active_execs.lock().unwrap().insert(1, ActiveExec::new());
     let (tx, result) = oneshot::channel();
     js.jobs.lock().unwrap().insert(1, tx);
@@ -146,7 +150,9 @@ async fn a_deposited_empty_capture_stays_a_successful_empty_result() {
     let rules = Arc::new(std::sync::RwLock::new(Arc::new(
         capsem_core::net::policy_config::SecurityRuleSet::new(Vec::new()),
     )));
-    let plugins = Arc::new(std::sync::RwLock::new(Arc::new(std::collections::BTreeMap::new())));
+    let plugins = Arc::new(std::sync::RwLock::new(
+        capsem_core::security_engine::SecurityPluginPolicy::default(),
+    ));
     js.active_execs.lock().unwrap().insert(1, ActiveExec::new());
     let (tx, result) = oneshot::channel();
     js.jobs.lock().unwrap().insert(1, tx);

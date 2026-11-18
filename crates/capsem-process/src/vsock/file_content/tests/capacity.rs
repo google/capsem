@@ -16,7 +16,9 @@ async fn bounded_file_memory_preserves_an_uncontended_ten_mib_transfer() {
         },
     );
     let rules = Arc::new(RwLock::new(Arc::new(SecurityRuleSet::new(Vec::new()))));
-    let plugins = Arc::new(RwLock::new(Arc::new(Default::default())));
+    let plugins = Arc::new(RwLock::new(
+        capsem_core::security_engine::SecurityPluginPolicy::default(),
+    ));
     let mut calls = tokio::task::JoinSet::new();
     crate::vsock::handle_guest_msg_with_tasks(
         capsem_proto::GuestToHost::FileContent {
