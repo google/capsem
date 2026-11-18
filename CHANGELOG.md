@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Security: Remote corporate configuration authorities require HTTPS across every redirect; local provisioning continues to use absolute `file://` URLs.
+
 - Security: Desktop browser handoffs from a guest require an explicit user action and reveal the complete destination on hover before opening it on the host.
 
 - Security: Release manifests and channel catalogs require authenticated HTTPS outside literal-loopback development fixtures. Native packages cannot persist a plain-HTTP manifest authority; digest-verified artifact downloads remain bound to the trusted manifest.

@@ -8,7 +8,8 @@ use capsem_foundation::unix::fs::atomic_write_private;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
+use reqwest::{Client, Response, Url};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
@@ -41,10 +42,48 @@ pub struct CorpSource {
     pub refresh_interval_hours: u32,
 }
 
-/// Fetch corp config from a URL, validate it as TOML, and return the content + ETag.
-pub async fn fetch_corp_config(client: &reqwest::Client, url: &str) -> Result<(String, Option<String>)> {
-    let parsed = reqwest::Url::parse(url).with_context(|| {
-        format!("corp config source must be a URL: use https://..., http://..., or file:///absolute/path, got {url}")
+fn validate_remote_source(url: &Url) -> Result<()> {
+    if url.scheme() != "https" {
+        bail!("remote corp config authority requires HTTPS; use file:///absolute/path for local config");
+    }
+    if !url.username().is_empty() || url.password().is_some() || !url.has_host() {
+        bail!("remote corp config authority requires an HTTPS origin without URL credentials");
+    }
+    Ok(())
+}
+
+fn remote_client() -> Result<Client> {
+    Client::builder()
+        .https_only(true)
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= 10 {
+                return attempt.error("corp config redirect limit exceeded");
+            }
+            match validate_remote_source(attempt.url()) {
+                Ok(()) => attempt.follow(),
+                Err(error) => attempt.error(error.to_string()),
+            }
+        }))
+        .build()
+        .context("build corp config HTTPS client")
+}
+
+async fn fetch_remote_response(url: &Url, etag: Option<&str>) -> Result<Response> {
+    validate_remote_source(url)?;
+    let client = remote_client()?;
+    let mut request = client.get(url.clone()).header("User-Agent", "capsem");
+    if let Some(etag) = etag {
+        request = request.header("If-None-Match", etag);
+    }
+    let response = request.send().await.context("failed to fetch corp config")?;
+    validate_remote_source(response.url()).context("corp config redirect crossed its authenticated authority")?;
+    Ok(response)
+}
+
+/// Fetch corp config from an authenticated URL, validate it as TOML, and return the content + ETag.
+pub async fn fetch_corp_config(url: &str) -> Result<(String, Option<String>)> {
+    let parsed = Url::parse(url).with_context(|| {
+        format!("corp config source must be a URL: use https://... or file:///absolute/path, got {url}")
     })?;
     info!(url = %url, "fetching corp config");
 
@@ -60,22 +99,12 @@ pub async fn fetch_corp_config(client: &reqwest::Client, url: &str) -> Result<(S
         return Ok((body, None));
     }
 
-    if !matches!(parsed.scheme(), "http" | "https") {
-        anyhow::bail!(
-            "unsupported corp config URL scheme {}: use https://, http://, or file://",
-            parsed.scheme()
-        );
-    }
+    validate_remote_source(&parsed)?;
     if !has_scheme_authority_prefix(url, parsed.scheme()) {
-        anyhow::bail!("corp config source must use https://, http://, or file:// URLs, got {url}");
+        anyhow::bail!("corp config source must use https:// or file:// URLs, got {url}");
     }
 
-    let resp = client
-        .get(parsed)
-        .header("User-Agent", "capsem")
-        .send()
-        .await
-        .context("failed to fetch corp config")?;
+    let resp = fetch_remote_response(&parsed, None).await?;
 
     if !resp.status().is_success() {
         anyhow::bail!("corp config fetch failed: HTTP {} for {}", resp.status(), url);
@@ -171,9 +200,8 @@ pub async fn refresh_corp_config_if_stale(capsem_dir: PathBuf) {
     let age_hours = age_secs / 3600;
     info!(url = %url, age_hours, "corp config stale, refreshing");
 
-    let client = reqwest::Client::new();
     if url.starts_with("file://") {
-        match fetch_corp_config(&client, &url).await {
+        match fetch_corp_config(&url).await {
             Ok((body, _)) => {
                 let content_hash = capsem_crypto::blake3::hash(body.as_bytes()).to_hex().to_string();
                 let new_source = CorpSource {
@@ -195,12 +223,14 @@ pub async fn refresh_corp_config_if_stale(capsem_dir: PathBuf) {
         return;
     }
 
-    let mut req = client.get(&url).header("User-Agent", "capsem");
-    if let Some(etag) = &source.etag {
-        req = req.header("If-None-Match", etag);
-    }
-
-    let resp = match req.send().await {
+    let parsed = match Url::parse(&url).context("parse stored corp config source") {
+        Ok(url) => url,
+        Err(e) => {
+            warn!(error = %e, "corp config refresh refused invalid source");
+            return;
+        }
+    };
+    let resp = match fetch_remote_response(&parsed, source.etag.as_deref()).await {
         Ok(r) => r,
         Err(e) => {
             warn!(error = %e, "corp config refresh failed");
@@ -259,8 +289,7 @@ pub async fn refresh_corp_config_if_stale(capsem_dir: PathBuf) {
 /// Provision corp config from a URL: fetch, validate, install.
 /// Convenience wrapper combining fetch + install for the service API.
 pub async fn provision_from_source(capsem_dir: &Path, source_url: &str) -> Result<()> {
-    let client = reqwest::Client::new();
-    let (body, etag) = fetch_corp_config(&client, source_url).await?;
+    let (body, etag) = fetch_corp_config(source_url).await?;
     let content_hash = capsem_crypto::blake3::hash(body.as_bytes()).to_hex().to_string();
     let cs = CorpSource {
         url: Some(source_url.to_string()),

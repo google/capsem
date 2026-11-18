@@ -105,11 +105,7 @@ async fn fetch_corp_config_rejects_bare_file_path_source() {
     let dir = tmp_dir();
     let corp_path = dir.path().join("corp.toml");
     std::fs::write(&corp_path, "refresh_policy = \"6h\"\n").unwrap();
-    let client = reqwest::Client::new();
-
-    let error = fetch_corp_config(&client, &corp_path.display().to_string())
-        .await
-        .unwrap_err();
+    let error = fetch_corp_config(&corp_path.display().to_string()).await.unwrap_err();
 
     assert!(
         format!("{error:#}").contains("corp config source must be a URL"),
@@ -119,9 +115,7 @@ async fn fetch_corp_config_rejects_bare_file_path_source() {
 
 #[tokio::test]
 async fn fetch_corp_config_rejects_file_url_shorthand_path_source() {
-    let client = reqwest::Client::new();
-
-    let error = fetch_corp_config(&client, "file:corp.toml").await.unwrap_err();
+    let error = fetch_corp_config("file:corp.toml").await.unwrap_err();
 
     assert!(
         format!("{error:#}").contains("corp config file URL must start with file://"),
@@ -134,15 +128,39 @@ async fn fetch_corp_config_accepts_file_url_source() {
     let dir = tmp_dir();
     let corp_path = dir.path().join("corp.toml");
     std::fs::write(&corp_path, "refresh_policy = \"6h\"\n").unwrap();
-    let client = reqwest::Client::new();
     let source = format!("file://{}", corp_path.display());
 
-    let (body, etag) = fetch_corp_config(&client, &source)
-        .await
-        .expect("file URL corp config fetches");
+    let (body, etag) = fetch_corp_config(&source).await.expect("file URL corp config fetches");
 
     assert_eq!(body, "refresh_policy = \"6h\"\n");
     assert!(etag.is_none());
+}
+
+#[tokio::test]
+async fn provision_rejects_remote_http_before_network_or_install() {
+    let dir = tmp_dir();
+    let error = provision_from_source(dir.path(), "http://127.0.0.1:9/corp.toml")
+        .await
+        .unwrap_err();
+
+    assert!(format!("{error:#}").contains("requires HTTPS"), "{error:#}");
+    assert!(!dir.path().join("corp.toml").exists());
+    assert!(!dir.path().join("corp-source.json").exists());
+}
+
+#[test]
+fn remote_corp_authority_rejects_downgrades_and_url_credentials() {
+    assert!(validate_remote_source(&Url::parse("https://corp.example/config.toml").unwrap()).is_ok());
+    for source in [
+        "http://corp.example/config.toml",
+        "https://user:secret@corp.example/config.toml",
+        "file:///etc/capsem/corp.toml",
+    ] {
+        assert!(
+            validate_remote_source(&Url::parse(source).unwrap()).is_err(),
+            "{source}"
+        );
+    }
 }
 
 #[test]
