@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: The Rust SDK exposes the VM readiness operation and optional start/resume expectation bodies, preserving empty legacy calls.
+
 - Added: Lifecycle readiness contracts identify the original VM generation and selected environment revision. Start/resume, fork and clone-source requests can carry an optional expectation; service admission and public wait planning remain in progress. Generated SDK operations preserve empty start/resume requests and send JSON only when a body is supplied.
 
 - Fixed: CLI creation uses the shared exact-revision startup wait planner, refusing unavailable or changed timing before creation and preserving the ordinary and attached fast paths.

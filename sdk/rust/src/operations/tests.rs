@@ -40,6 +40,11 @@ macro_rules! operation {
 
 operation!(get_hypervisor_info, "getHypervisorInfo");
 operation!(get_environment_info, "getEnvironmentInfo", GetEnvironmentInfoParams);
+operation!(
+    get_environment_readiness,
+    "getEnvironmentReadiness",
+    GetEnvironmentReadinessParams
+);
 operation!(create_environment, "createEnvironment", CreateEnvironmentParams);
 operation!(change_environment, "changeEnvironment", ChangeEnvironmentParams);
 operation!(create_agent_access, "createAgentAccess", CreateAgentAccessParams);
@@ -133,6 +138,7 @@ operation!(get_vm_history, "getVmHistory", GetVmHistoryParams);
 operation!(get_vm_event_bodies, "getVmEventBodies", GetVmEventBodiesParams);
 operation!(export_vm_bodies, "exportVmBodies", ExportVmBodiesParams);
 operation!(get_vm_info, "getVmInfo", GetVmInfoParams);
+operation!(get_vm_readiness, "getVmReadiness", GetVmReadinessParams);
 operation!(get_vm_logs, "getVmLogs", GetVmLogsParams);
 operation!(pause_vm, "pauseVm", PauseVmParams);
 operation!(persist_vm, "persistVm", PersistVmParams);
@@ -173,6 +179,7 @@ fn every_contract_operation_has_http_cases() {
 
 #[test]
 fn typed_parameters_reject_unknown_enums_and_negative_unsigned_limits() {
+    assert!(serde_json::from_value::<CreateVmParams>(serde_json::json!({})).is_err());
     assert!(serde_json::from_value::<GetVmHistoryParams>(serde_json::json!({"id":"vm","layer":"made-up"})).is_err());
     assert!(serde_json::from_value::<GetVmHistoryParams>(serde_json::json!({"id":"vm","limit":-1})).is_err());
     assert!(serde_json::from_value::<GetHypervisorLogsParams>(serde_json::json!({"name":"/tmp/secret"})).is_err());

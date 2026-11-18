@@ -150,18 +150,21 @@ impl Case {
                 });
             }
         }
-        let request_media = operation["requestBody"]["content"].as_object().map(|content| {
-            let (media, body) = content.iter().next().unwrap();
-            input.insert(
-                "body".into(),
-                if media == "application/octet-stream" {
-                    json!([0, 255, 13, 10])
-                } else {
-                    sample(&body["schema"], full)
-                },
-            );
-            media.clone()
-        });
+        let request_media = operation["requestBody"]["content"]
+            .as_object()
+            .filter(|_| full || operation["requestBody"]["required"] == true)
+            .map(|content| {
+                let (media, body) = content.iter().next().unwrap();
+                input.insert(
+                    "body".into(),
+                    if media == "application/octet-stream" {
+                        json!([0, 255, 13, 10])
+                    } else {
+                        sample(&body["schema"], full)
+                    },
+                );
+                media.clone()
+            });
         let success_status = operation["responses"]
             .as_object()
             .unwrap()
@@ -224,7 +227,10 @@ impl Case {
                 // and every array element must still reach the HTTP boundary.
                 assert_supplied_fields(&actual, &self.input["body"]);
             }
-            None => assert!(body.is_empty()),
+            None => {
+                assert!(body.is_empty());
+                assert!(!parts.headers.contains_key("content-type"));
+            }
         }
         assert!(server.received.try_recv().is_err());
     }

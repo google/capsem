@@ -175,6 +175,7 @@ impl VM {
             &self.client.transport,
             &api::StartVmParams {
                 id: self.resolve().await?,
+                body: None,
             },
             self.client.create_options(),
         )
@@ -208,6 +209,7 @@ impl VM {
             &self.client.transport,
             &api::ResumeVmParams {
                 id: self.resolve().await?,
+                body: None,
             },
             self.client.create_options(),
         )
@@ -237,6 +239,7 @@ impl VM {
                 name: name.into(),
                 description,
                 labels,
+                expected: None,
             },
         };
         let result = api::fork_vm(&self.client.transport, &params, self.client.options).await?;

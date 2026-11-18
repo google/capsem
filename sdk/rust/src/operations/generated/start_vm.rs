@@ -4,6 +4,7 @@ use crate::transport::{CallOptions, Request, Transport};
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct StartVmParams {
     pub id: String,
+    pub body: Option<capsem_api::VmStartRequest>,
 }
 
 pub async fn start_vm(
@@ -14,6 +15,7 @@ pub async fn start_vm(
     let path_id = input.id.to_string();
     let request = Request {
         parameters: &[("id", path_id.as_str())],
+        body: input.body.as_ref().map(serde_json::to_vec).transpose()?,
         options,
         ..Default::default()
     };

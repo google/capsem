@@ -91,6 +91,8 @@ mod get_vm_info;
 pub use get_vm_info::{get_vm_info, GetVmInfoParams};
 mod get_vm_logs;
 pub use get_vm_logs::{get_vm_logs, GetVmLogsParams};
+mod get_vm_readiness;
+pub use get_vm_readiness::{get_vm_readiness, GetVmReadinessParams};
 mod get_vm_stats_detail;
 pub use get_vm_stats_detail::{get_vm_stats_detail, GetVmStatsDetailParams};
 mod get_vm_stats_summary;
