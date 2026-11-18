@@ -17,7 +17,11 @@ pub use catalog_contents::{
 };
 pub use catalog_rules::RuleCatalogInputs;
 mod mcp_permissions;
+mod repositories;
 mod resolution;
+pub use repositories::{
+    RepositoryAdmission, RepositoryHttpsResolver, RepositoryNetworkAuthority, RepositoryResolutionError,
+};
 mod rules;
 pub use catalog_sources::effective_catalog_source;
 pub(crate) use catalog_sources::validate_corporate_catalog_sources;

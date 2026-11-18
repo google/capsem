@@ -78,6 +78,8 @@ core-foundation-sys = "0.8"
 workspace = true
 
 [dev-dependencies]
+base64.workspace = true
+hyper-util = { workspace = true, features = ["service"] }
 vt100 = "0.16.2"
 sse-stream = { workspace = true }
 rusqlite = { workspace = true }
