@@ -942,3 +942,6 @@ hash = { count = 1, reason = "hash-skill-content" }
 # Three borrowed external fields distinguish responses from server requests;
 # one typed decode correlates IDs without allocating a second payload tree.
 json = { count = 4, reason = "mcp" }
+
+[sources."sdk/rust/src/operations/generated/get_environment_info.rs"]
+json = { count = 1, reason = "http" }
