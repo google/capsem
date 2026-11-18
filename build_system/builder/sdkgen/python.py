@@ -268,7 +268,9 @@ def render_models(schemas: dict[str, Schema]) -> dict[str, str]:
     for index, start in enumerate(range(0, len(exports), 80)):
         group = f"_exports_{index}"
         group_names = names[start:start + 80]
-        files[group + ".py"] = HEADER + "\n".join(exports[start:start + 80]) + "\n\n__all__ = [\n" + "\n".join(
+        # Generic class names and their snake-case module paths have different
+        # sort orders; imports follow the actual module path, as Ruff requires.
+        files[group + ".py"] = HEADER + "\n".join(sorted(exports[start:start + 80])) + "\n\n__all__ = [\n" + "\n".join(
             f"    {name!r}," for name in group_names
         ) + "\n]\n"
         for name in sorted(group_names, key=str.casefold):

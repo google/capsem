@@ -193,3 +193,10 @@ def test_generated_text_and_collection_budgets_reject_oversize_values() -> None:
         assert adapter.validate_python(valid) == valid
         with pytest.raises(ValidationError):
             adapter.validate_python(oversized)
+
+
+def test_reexport_imports_follow_module_paths_for_generic_schema_names() -> None:
+    schemas = {name: Schema.model_validate({"type": "string"})
+               for name in ["ImageSelection", "Image_Pin"]}
+    exports = render_models(schemas)["_exports_0.py"]
+    assert exports.index("from .image__pin import") < exports.index("from .image_selection import")
