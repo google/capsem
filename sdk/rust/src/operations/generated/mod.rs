@@ -17,6 +17,8 @@ mod close_managed_session;
 pub use close_managed_session::{close_managed_session, CloseManagedSessionParams};
 mod create_agent_access;
 pub use create_agent_access::{create_agent_access, CreateAgentAccessParams};
+mod create_environment;
+pub use create_environment::{create_environment, CreateEnvironmentParams};
 mod create_network;
 pub use create_network::{create_network, CreateNetworkParams};
 mod create_proxy;

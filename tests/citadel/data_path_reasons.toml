@@ -945,3 +945,6 @@ json = { count = 4, reason = "mcp" }
 
 [sources."sdk/rust/src/operations/generated/get_environment_info.rs"]
 json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/create_environment.rs"]
+json = { count = 2, reason = "http" }

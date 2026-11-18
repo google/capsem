@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Typed Rust SDK environment creation with explicit request-ID reconciliation and the image-resolution deadline.
+
 - Added: Operator environment creation persists immutable requests, publishes a new blueprint and reconciles repeated request IDs. Image pins use the native admission owner; repository and catalog sources remain unavailable pending integration.
 
 - Added: Typed current environment inspection operations and canonical environment models across the Rust, Python, and TypeScript SDKs.

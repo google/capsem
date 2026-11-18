@@ -220,12 +220,32 @@ impl Case {
             Some(media) => {
                 assert_eq!(parts.headers["content-type"], media);
                 let actual: Value = serde_json::from_slice(&body).unwrap();
-                for (key, value) in self.input["body"].as_object().unwrap() {
-                    assert_eq!(&actual[key], value, "request field {key}");
-                }
+                // Serde fills optional nested defaults. Every supplied field
+                // and every array element must still reach the HTTP boundary.
+                assert_supplied_fields(&actual, &self.input["body"]);
             }
             None => assert!(body.is_empty()),
         }
         assert!(server.received.try_recv().is_err());
+    }
+}
+
+pub(crate) fn assert_supplied_fields(actual: &serde_json::Value, expected: &serde_json::Value) {
+    match expected {
+        serde_json::Value::Object(fields) => {
+            assert!(actual.is_object());
+            for (key, value) in fields {
+                assert!(actual.get(key).is_some(), "missing response field {key}");
+                assert_supplied_fields(&actual[key], value);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            let actual = actual.as_array().expect("array response");
+            assert_eq!(actual.len(), values.len());
+            for (actual, expected) in actual.iter().zip(values) {
+                assert_supplied_fields(actual, expected);
+            }
+        }
+        value => assert_eq!(actual, value),
     }
 }
