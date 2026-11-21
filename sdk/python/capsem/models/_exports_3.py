@@ -1,5 +1,9 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .request_detail_response import RequestDetailResponse
+from .request_kind import RequestKind
+from .request_list_response import RequestListResponse
+from .request_resolve_request import RequestResolveRequest
 from .request_review_availability import RequestReviewAvailability
 from .request_state import RequestState
 from .request_summary import RequestSummary
@@ -76,12 +80,12 @@ from .value import Value
 from .vm_action import VmAction
 from .vm_action_response import VmActionResponse
 from .vm_ai_info import VmAiInfo
-from .vm_files_info import VmFilesInfo
-from .vm_lifecycle_intent import VmLifecycleIntent
-from .vm_lifecycle_selection import VmLifecycleSelection
-from .vm_lifecycle_state import VmLifecycleState
 
 __all__ = [
+    'RequestDetailResponse',
+    'RequestKind',
+    'RequestListResponse',
+    'RequestResolveRequest',
     'RequestReviewAvailability',
     'RequestState',
     'RequestSummary',
@@ -158,8 +162,4 @@ __all__ = [
     'VmAction',
     'VmActionResponse',
     'VmAiInfo',
-    'VmFilesInfo',
-    'VmLifecycleIntent',
-    'VmLifecycleSelection',
-    'VmLifecycleState',
 ]

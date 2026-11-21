@@ -1,5 +1,17 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .environment_rules__environment_catalog_pin__environment_access_rule_custom_value import (
+    EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRuleCustomValue,
+)
+from .environment_rules__environment_catalog_pin__environment_detection_rule import (
+    EnvironmentRules_EnvironmentCatalogPin_EnvironmentDetectionRule,
+)
+from .environment_rules__environment_catalog_pin__environment_detection_rule_custom_value import (
+    EnvironmentRules_EnvironmentCatalogPin_EnvironmentDetectionRuleCustomValue,
+)
+from .environment_rules__environment_catalog_selection__environment_access_rule import (
+    EnvironmentRules_EnvironmentCatalogSelection_EnvironmentAccessRule,
+)
 from .environment_rules__environment_catalog_selection__environment_access_rule_custom_value import (
     EnvironmentRules_EnvironmentCatalogSelection_EnvironmentAccessRuleCustomValue,
 )
@@ -94,12 +106,12 @@ from .interaction_request import InteractionRequest
 from .interaction_request_kind import InteractionRequestKind
 from .interaction_role import InteractionRole
 from .interaction_tool_call import InteractionToolCall
-from .interaction_tool_call_kind import InteractionToolCallKind
-from .interaction_tool_result import InteractionToolResult
-from .interaction_tool_result_kind import InteractionToolResultKind
-from .json_content import JsonContent
 
 __all__ = [
+    'EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRuleCustomValue',
+    'EnvironmentRules_EnvironmentCatalogPin_EnvironmentDetectionRule',
+    'EnvironmentRules_EnvironmentCatalogPin_EnvironmentDetectionRuleCustomValue',
+    'EnvironmentRules_EnvironmentCatalogSelection_EnvironmentAccessRule',
     'EnvironmentRules_EnvironmentCatalogSelection_EnvironmentAccessRuleCustomValue',
     'EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRule',
     'EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRuleCustomValue',
@@ -176,8 +188,4 @@ __all__ = [
     'InteractionRequestKind',
     'InteractionRole',
     'InteractionToolCall',
-    'InteractionToolCallKind',
-    'InteractionToolResult',
-    'InteractionToolResultKind',
-    'JsonContent',
 ]

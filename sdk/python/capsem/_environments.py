@@ -10,6 +10,15 @@ class Environments:
     def __init__(self, transport: Transport) -> None:
         self._transport = transport
 
+    async def list(
+        self, *, search: str | None = None, after: str | None = None,
+        limit: int | None = None, request_timeout: float | None = None,
+    ) -> models.EnvironmentListResponse:
+        """List visible committed environments; follow the cursor to continue search."""
+        return await api.list_environments(
+            self._transport, search=search, after=after, limit=limit, request_timeout=request_timeout,
+        )
+
     async def create(
         self, request: models.EnvironmentCreateRequest, *, request_timeout: float | None = None,
     ) -> models.EnvironmentMutationResponse:

@@ -69,7 +69,11 @@ from .environment_create_request import EnvironmentCreateRequest
 from .environment_current_response import EnvironmentCurrentResponse
 from .environment_document import EnvironmentDocument
 from .environment_identity import EnvironmentIdentity
+from .environment_image import EnvironmentImage
 from .environment_image_update_policy import EnvironmentImageUpdatePolicy
+from .environment_list_item import EnvironmentListItem
+from .environment_list_response import EnvironmentListResponse
+from .environment_list_summary import EnvironmentListSummary
 from .environment_mcp_definition import EnvironmentMcpDefinition
 from .environment_mcp_definition_remote import EnvironmentMcpDefinitionRemote
 from .environment_mcp_definition_sandbox import EnvironmentMcpDefinitionSandbox
@@ -89,18 +93,6 @@ from .environment_revision_reference import EnvironmentRevisionReference
 from .environment_rule_parameter import EnvironmentRuleParameter
 from .environment_rules__environment_catalog_pin__environment_access_rule import (
     EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRule,
-)
-from .environment_rules__environment_catalog_pin__environment_access_rule_custom_value import (
-    EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRuleCustomValue,
-)
-from .environment_rules__environment_catalog_pin__environment_detection_rule import (
-    EnvironmentRules_EnvironmentCatalogPin_EnvironmentDetectionRule,
-)
-from .environment_rules__environment_catalog_pin__environment_detection_rule_custom_value import (
-    EnvironmentRules_EnvironmentCatalogPin_EnvironmentDetectionRuleCustomValue,
-)
-from .environment_rules__environment_catalog_selection__environment_access_rule import (
-    EnvironmentRules_EnvironmentCatalogSelection_EnvironmentAccessRule,
 )
 
 __all__ = [
@@ -165,7 +157,11 @@ __all__ = [
     'EnvironmentCurrentResponse',
     'EnvironmentDocument',
     'EnvironmentIdentity',
+    'EnvironmentImage',
     'EnvironmentImageUpdatePolicy',
+    'EnvironmentListItem',
+    'EnvironmentListResponse',
+    'EnvironmentListSummary',
     'EnvironmentMcpDefinition',
     'EnvironmentMcpDefinitionRemote',
     'EnvironmentMcpDefinitionSandbox',
@@ -180,8 +176,4 @@ __all__ = [
     'EnvironmentRevisionReference',
     'EnvironmentRuleParameter',
     'EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRule',
-    'EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRuleCustomValue',
-    'EnvironmentRules_EnvironmentCatalogPin_EnvironmentDetectionRule',
-    'EnvironmentRules_EnvironmentCatalogPin_EnvironmentDetectionRuleCustomValue',
-    'EnvironmentRules_EnvironmentCatalogSelection_EnvironmentAccessRule',
 ]
