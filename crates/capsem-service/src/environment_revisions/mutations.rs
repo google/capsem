@@ -16,6 +16,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 mod proposals;
 pub use proposals::EnvironmentProposalOrigin;
+mod decisions;
+pub use decisions::{ApprovedEnvironmentReview, ResolvedEnvironmentReview, ReviewedEnvironmentChange};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EnvironmentMutationError {
@@ -349,13 +351,21 @@ impl EnvironmentMutationCoordinator {
     }
 
     async fn read_request(&self, request_id: String) -> Result<EnvironmentRequestRecord, EnvironmentMutationError> {
+        self.find_request(request_id)
+            .await?
+            .ok_or(EnvironmentMutationError::LedgerFailure)
+    }
+
+    async fn find_request(
+        &self,
+        request_id: String,
+    ) -> Result<Option<EnvironmentRequestRecord>, EnvironmentMutationError> {
         self.revisions
             .ledger
             .environment_requests(EnvironmentRequestQuery::Get { request_id })
             .await
-            .map_err(|_| EnvironmentMutationError::LedgerFailure)?
-            .pop()
-            .ok_or(EnvironmentMutationError::LedgerFailure)
+            .map(|mut rows| rows.pop())
+            .map_err(|_| EnvironmentMutationError::LedgerFailure)
     }
 
     async fn write(&self, operation: WriteOp) -> Result<(), EnvironmentMutationError> {
@@ -408,7 +418,7 @@ pub(super) fn view(record: EnvironmentRequestRecord) -> EnvironmentMutationRespo
             EnvironmentRequestState::Expired => RequestState::Expired,
             EnvironmentRequestState::Stale => RequestState::Stale,
         },
-        application: if result.is_some() {
+        application: if result.is_some() && record.requester.is_none() {
             RequestApplicationState::Applied
         } else {
             RequestApplicationState::Pending

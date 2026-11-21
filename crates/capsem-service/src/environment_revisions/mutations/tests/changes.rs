@@ -21,6 +21,209 @@ async fn seed(f: &Fixture) -> EnvironmentMutationResponse {
 }
 
 #[tokio::test]
+async fn exact_operator_decision_publishes_one_fork_of_the_reviewed_base() {
+    use capsem_api::requests::{RequestDecision, RequestResolveRequest};
+    use capsem_api::CallerActor;
+
+    let f = Fixture::new();
+    let parent = seed(&f).await;
+    let intent = change(&parent, 2);
+    let base = parent.result.as_ref().unwrap().clone();
+    let access = uuid::Uuid::parse_str(&id(10)).unwrap();
+    let origin = EnvironmentProposalOrigin::delegated(access, id(11), uuid::Uuid::parse_str(&id(12)).unwrap());
+    let proposed = f
+        .creates
+        .submit_proposal(
+            base.environment_id.clone(),
+            intent.clone(),
+            origin,
+            Source::default(),
+            |_| Ok(()),
+        )
+        .unwrap()
+        .wait()
+        .await
+        .unwrap();
+    let observed = f
+        .revisions
+        .review_request(&proposed.request_id)
+        .await
+        .unwrap()
+        .observed_revision;
+    let approve = RequestResolveRequest {
+        observed_revision: observed,
+        decision: RequestDecision::Approve,
+        reason: "approve the editor change for the original owner".into(),
+    };
+    let wrong = RequestResolveRequest {
+        observed_revision: "abcdef000000".into(),
+        ..approve.clone()
+    };
+    assert!(matches!(
+        f.creates
+            .resolve_proposal(id(2), wrong, &CallerActor::Operator, |_| false, |_| async { Ok(()) })
+            .await,
+        Err(EnvironmentMutationError::Conflict)
+    ));
+    let agent = CallerActor::DelegatedAgent {
+        access_id: access.to_string(),
+    };
+    assert!(matches!(
+        f.creates
+            .resolve_proposal(id(2), approve.clone(), &agent, |_| true, |_| async { Ok(()) })
+            .await,
+        Err(EnvironmentMutationError::Refused)
+    ));
+    let first = f
+        .creates
+        .resolve_proposal(
+            id(2),
+            approve.clone(),
+            &CallerActor::Operator,
+            |_| false,
+            |review| {
+                let base = base.clone();
+                async move {
+                    assert_eq!(review.target.session_id, id(11));
+                    assert_eq!(review.target.generation, id(12));
+                    assert_eq!(review.base.environment_id, base.environment_id);
+                    assert_eq!(review.base.revision_id, base.revision_id);
+                    assert_eq!(review.specification.variables["EDITOR"], "emacs");
+                    Ok(())
+                }
+            },
+        )
+        .await
+        .unwrap();
+    assert!(first.approved.is_some());
+    let fork = first.response.result.as_ref().unwrap();
+    assert_eq!(first.response.decision, RequestState::Approved);
+    assert_eq!(first.response.application, RequestApplicationState::Pending);
+    assert_ne!(fork.environment_id, base.environment_id);
+    let saved = f.revisions.load_current(&fork.environment_id).await.unwrap();
+    assert_eq!(saved.document.specification.variables["EDITOR"], "emacs");
+    let fork_parent = saved.revision.fork_parent.unwrap();
+    assert_eq!(fork_parent.revision_id, base.revision_id);
+    assert_eq!(fork_parent.environment_id, base.environment_id);
+    let shared = f.revisions.load_current(&base.environment_id).await.unwrap();
+    assert_eq!(shared.document.specification.variables["EDITOR"], "vim");
+    let retry = f
+        .creates
+        .resolve_proposal(
+            id(2),
+            approve,
+            &CallerActor::Operator,
+            |_| false,
+            |_| async {
+                panic!("an exact retry cannot revalidate or publish a second fork");
+                #[allow(unreachable_code)]
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+    assert!(retry.approved.is_none());
+    assert_eq!(retry.response, first.response);
+}
+
+#[tokio::test]
+async fn denied_cancelled_stale_and_interrupted_requests_never_publish_a_fork() {
+    use capsem_api::requests::{RequestDecision, RequestResolveRequest};
+    use capsem_api::CallerActor;
+
+    let f = Fixture::new();
+    let parent = seed(&f).await;
+    let access = uuid::Uuid::parse_str(&id(20)).unwrap();
+    let agent = CallerActor::DelegatedAgent {
+        access_id: access.to_string(),
+    };
+    for (number, decision, caller, expected) in [
+        (2, RequestDecision::Deny, &CallerActor::Operator, RequestState::Denied),
+        (3, RequestDecision::Cancel, &agent, RequestState::Cancelled),
+        (4, RequestDecision::Approve, &CallerActor::Operator, RequestState::Stale),
+        (
+            5,
+            RequestDecision::Approve,
+            &CallerActor::Operator,
+            RequestState::Approved,
+        ),
+    ] {
+        let origin = EnvironmentProposalOrigin::delegated(access, id(21), uuid::Uuid::parse_str(&id(22)).unwrap());
+        f.creates
+            .submit_proposal(
+                parent.environment_id.clone(),
+                change(&parent, number),
+                origin,
+                Source::default(),
+                |_| Ok(()),
+            )
+            .unwrap()
+            .wait()
+            .await
+            .unwrap();
+        let request_id = id(number);
+        let observed = f.revisions.review_request(&request_id).await.unwrap().observed_revision;
+        let intent = RequestResolveRequest {
+            observed_revision: observed,
+            decision,
+            reason: "resolve the original review".into(),
+        };
+        if decision == RequestDecision::Cancel {
+            assert!(matches!(
+                f.creates
+                    .resolve_proposal(
+                        request_id.clone(),
+                        intent.clone(),
+                        caller,
+                        |_| false,
+                        |_| async { Ok(()) }
+                    )
+                    .await,
+                Err(EnvironmentMutationError::Refused)
+            ));
+        }
+        if number == 5 {
+            // A process may stop between the durable approval and fork preparation.
+            f.creates
+                .write(WriteOp::EnvironmentRequestDecision(EnvironmentRequestDecision {
+                    request_id: request_id.clone(),
+                    timestamp_unix_ms: now().unwrap(),
+                    actor: "operator".into(),
+                    decision: EnvironmentRequestDecisionKind::Approve,
+                    reason: intent.reason.clone(),
+                }))
+                .await
+                .unwrap();
+        }
+        let resolved = f
+            .creates
+            .resolve_proposal(
+                request_id.clone(),
+                intent,
+                caller,
+                |target| target.session_id == id(21) && target.generation == id(22),
+                |_| async move {
+                    assert_eq!(number, 4, "only the fresh approval checks live authority");
+                    Err::<(), _>(EnvironmentMutationError::Conflict)
+                },
+            )
+            .await
+            .unwrap();
+        assert!(resolved.approved.is_none());
+        assert_eq!(resolved.response.decision, expected);
+        assert_eq!(resolved.response.application, RequestApplicationState::Pending);
+        assert!(resolved.response.result.is_none());
+        assert!(f
+            .revisions
+            .ledger
+            .environment_revisions(EnvironmentRevisionQuery::ForRequest { request_id })
+            .await
+            .unwrap()
+            .is_empty());
+    }
+}
+
+#[tokio::test]
 async fn delegated_proposal_rechecks_authority_after_source_resolution() {
     use std::sync::atomic::AtomicBool;
 
