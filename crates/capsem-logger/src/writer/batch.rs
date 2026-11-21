@@ -205,6 +205,7 @@ fn insert_batch_ops<'a>(
             WriteOp::PrepareEnvironmentVariablePurge(record) => environment_purges::prepare(tx, record, bodies)?,
             WriteOp::ObserveCatalogRevocation(record) => catalog_revocations::observe(tx, record)?,
             WriteOp::EnvironmentApplication(record) => environment_applications::apply(tx, record, bodies)?,
+            WriteOp::EnvironmentApplicationBoot(record) => environment_applications::settle_boot(tx, record)?,
             WriteOp::EnvironmentRequestInvalidation(record) => environment_requests::invalidate(tx, record)?,
             WriteOp::EnvironmentRequestResult(record) => environment_requests::bind_result(tx, record, bodies)?,
             WriteOp::EnvironmentSandboxReference(record) => environment_references::update_sandbox(tx, record)?,

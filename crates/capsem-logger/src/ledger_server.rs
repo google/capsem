@@ -362,6 +362,7 @@ fn requires_coordinator(operation: &LedgerCommand) -> bool {
         | crate::WriteOp::EnvironmentRequestInvalidation(_)
         | crate::WriteOp::EnvironmentSandboxReference(_)
         | crate::WriteOp::EnvironmentApplication(_)
+        | crate::WriteOp::EnvironmentApplicationBoot(_)
         | crate::WriteOp::PrepareEnvironmentVariablePurge(_) => true,
         crate::WriteOp::HostEvent(event) => matches!(
             event.kind,

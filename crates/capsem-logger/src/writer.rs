@@ -244,6 +244,7 @@ pub enum WriteOp {
     Network(NetworkRecord),
     NetworkMembership(NetworkMembership),
     NetworkDeparture(NetworkDeparture),
+    EnvironmentApplicationBoot(crate::events::environment::application::EnvironmentApplicationBoot),
 }
 
 /// What a flush barrier reports back: `Err` when the disk flush the barrier

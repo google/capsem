@@ -46,6 +46,15 @@ pub struct EnvironmentSandboxReferences {
     pub desired: Option<EnvironmentRevisionParent>,
 }
 
+/// A cold launch whose exact selected workload has reached readiness.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentApplicationBoot {
+    pub target: EnvironmentRequestTarget,
+    pub revision: EnvironmentRevisionParent,
+    pub timestamp_unix_ms: i64,
+}
+
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentApplicationMutation {

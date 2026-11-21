@@ -396,8 +396,99 @@ async fn approved_agent_fork_application_binds_only_its_exact_requester() {
     let mut other = change.clone();
     other.target.session_id = id(23);
     rejected(&writer, WriteOp::EnvironmentApplication(other)).await;
+    durable(&writer, WriteOp::EnvironmentApplication(change.clone())).await;
+    change.expected_references.desired = Some(reference(6, 7));
+    change.expected_version = Some(1);
+    change.timestamp_unix_ms = 46;
+    change.state = EnvironmentApplicationState::Applying;
+    durable(&writer, WriteOp::EnvironmentApplication(change.clone())).await;
+    change.expected_version = Some(2);
+    change.timestamp_unix_ms = 47;
+    change.state = EnvironmentApplicationState::Applied;
+    change.composition.live_policy = reference(6, 7);
     durable(&writer, WriteOp::EnvironmentApplication(change)).await;
+
     let reader = crate::DbHandle::open_external_reader(&path).unwrap();
+    let boot = EnvironmentApplicationBoot {
+        target: EnvironmentRequestTarget {
+            session_id: id(20),
+            generation: id(22),
+        },
+        revision: reference(6, 7),
+        timestamp_unix_ms: 50,
+    };
+    let shared = EnvironmentApplicationBoot {
+        revision: reference(2, 3),
+        ..boot.clone()
+    };
+    let sibling = EnvironmentApplicationBoot {
+        target: EnvironmentRequestTarget {
+            session_id: id(23),
+            generation: id(24),
+        },
+        ..boot.clone()
+    };
+    let original = EnvironmentApplicationBoot {
+        target: target(),
+        ..boot.clone()
+    };
+    for candidate in [shared, sibling, original] {
+        durable(&writer, WriteOp::EnvironmentApplicationBoot(candidate)).await;
+        assert!(
+            reader
+                .environment_request_history(&id(40))
+                .await
+                .unwrap()
+                .unwrap()
+                .record
+                .application
+                .unwrap()
+                .pending_restart
+        );
+    }
+    rejected(&writer, WriteOp::EnvironmentApplicationBoot(boot.clone())).await;
+    durable(
+        &writer,
+        WriteOp::EnvironmentSandboxReference(EnvironmentSandboxReferenceMutation {
+            session_id: boot.target.session_id.clone(),
+            generation: boot.target.generation.clone(),
+            kind: EnvironmentSandboxReferenceKind::Boot,
+            expected: None,
+            revision: Some(boot.revision.clone()),
+            timestamp_unix_ms: 49,
+            actor: "system".into(),
+        }),
+    )
+    .await;
+    durable(&writer, WriteOp::EnvironmentApplicationBoot(boot.clone())).await;
+    let replay = EnvironmentApplicationBoot {
+        timestamp_unix_ms: 51,
+        ..boot
+    };
+    durable(&writer, WriteOp::EnvironmentApplicationBoot(replay)).await;
+    assert!(
+        !reader
+            .environment_request_history(&id(40))
+            .await
+            .unwrap()
+            .unwrap()
+            .record
+            .application
+            .unwrap()
+            .pending_restart
+    );
+    let saved = reader
+        .environment_applications(crate::db::EnvironmentApplicationQuery::Get {
+            request_id: id(40),
+            target: target(),
+        })
+        .await
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(saved.version, 4);
+    assert_eq!(saved.composition.boot, reference(2, 3));
+    assert_eq!(saved.target, target());
     assert_eq!(
         reader
             .environment_references(crate::db::EnvironmentReferenceQuery::CurrentEnvironment { environment_id: id(2) })
@@ -406,6 +497,20 @@ async fn approved_agent_fork_application_binds_only_its_exact_requester() {
         vec![crate::db::EnvironmentReferenceRecord::CurrentEnvironment {
             revision: reference(2, 3)
         }]
+    );
+    drop(reader);
+    writer.shutdown_blocking();
+    let reopened = crate::DbHandle::open_external_reader(&path).unwrap();
+    assert!(
+        !reopened
+            .environment_request_history(&id(40))
+            .await
+            .unwrap()
+            .unwrap()
+            .record
+            .application
+            .unwrap()
+            .pending_restart
     );
 }
 

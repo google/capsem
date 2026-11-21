@@ -6,6 +6,9 @@ use crate::events::environment::{EnvironmentSandboxReferenceKind, EnvironmentSan
 use crate::events::{EnvironmentRevisionParent, HostEventKind};
 use rusqlite::OptionalExtension;
 
+mod boot;
+pub(super) use boot::settle_boot;
+
 fn matches_record(m: &EnvironmentApplicationMutation, old: &EnvironmentApplicationRecord, version: i64) -> bool {
     old.version == version
         && old.request_id == m.request_id
