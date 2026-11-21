@@ -57,7 +57,7 @@ pub(super) fn read_security_ask_event_row(row: &Row<'_>) -> rusqlite::Result<Sec
 /// Parse an fs_events row into FileEvent. Column order must match the SELECT in queries above.
 pub(super) fn read_file_event_row(row: &Row<'_>) -> rusqlite::Result<FileEvent> {
     let ts_str: String = row.get(0)?;
-    let timestamp = humantime::parse_rfc3339(&ts_str).unwrap_or(SystemTime::UNIX_EPOCH);
+    let timestamp = capsem_foundation::time::parse_rfc3339(&ts_str).unwrap_or(SystemTime::UNIX_EPOCH);
     let action_str: String = row.get(1)?;
     Ok(FileEvent {
         event_id: row.get::<_, Option<String>>(6).ok().flatten(),

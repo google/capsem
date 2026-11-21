@@ -166,7 +166,7 @@ fn pin_replay_clock(source: &Connection) {
         .query_row("SELECT MAX(timestamp) FROM net_events", [], |row| row.get(0))
         .unwrap_or(None);
     let instant = latest
-        .and_then(|value| humantime::parse_rfc3339(&value).ok())
+        .and_then(|value| capsem_foundation::time::parse_rfc3339(&value).ok())
         .unwrap_or(UNIX_EPOCH);
     let nanos = instant.duration_since(UNIX_EPOCH).unwrap_or_default().as_nanos() as u64;
     REPLAY_INSTANT_NANOS.store(nanos, Ordering::Relaxed);
@@ -190,7 +190,7 @@ fn opt<T: rusqlite::types::FromSql>(row: &rusqlite::Row<'_>, column: &str) -> Op
 
 fn at(row: &rusqlite::Row<'_>, column: &str) -> SystemTime {
     opt::<String>(row, column)
-        .and_then(|value| humantime::parse_rfc3339(&value).ok())
+        .and_then(|value| capsem_foundation::time::parse_rfc3339(&value).ok())
         .unwrap_or(SystemTime::UNIX_EPOCH)
 }
 

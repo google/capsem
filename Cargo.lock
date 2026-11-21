@@ -989,7 +989,6 @@ dependencies = [
  "capsem-telemetry",
  "criterion",
  "flate2",
- "humantime",
  "memmap2",
  "metrics",
  "metrics-util",

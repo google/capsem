@@ -808,7 +808,7 @@ fn write_warcinfo<W: Write>(
 /// verify -- a `1970-01-01` that no clock produced would have been the one
 /// exception, sitting in the record that describes the file.
 fn warc_date_now() -> String {
-    humantime::format_rfc3339_seconds(SystemTime::now()).to_string()
+    capsem_foundation::time::format_rfc3339_seconds(SystemTime::now())
 }
 
 impl ExportRow {
@@ -888,7 +888,7 @@ fn warc_date_from_ledger(stamp: &str) -> Option<String> {
 fn warc_date_from_unix_ms(millis: i64) -> Option<String> {
     let millis = u64::try_from(millis).ok()?;
     let instant = UNIX_EPOCH.checked_add(Duration::from_millis(millis))?;
-    Some(humantime::format_rfc3339_seconds(instant).to_string())
+    Some(capsem_foundation::time::format_rfc3339_seconds(instant))
 }
 
 /// Counts what reaches the writer, so the summary can report bytes without the

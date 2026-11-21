@@ -104,7 +104,7 @@ const MODEL_CALL_COLUMNS_TAIL: &str = "model, process_name, pid,
 /// Parse a model_calls row into (id, ModelCall). Column order must match MODEL_CALL_COLUMNS.
 fn read_model_call_row(row: &Row<'_>) -> rusqlite::Result<(i64, ModelCall)> {
     let ts_str: String = row.get(1)?;
-    let timestamp = humantime::parse_rfc3339(&ts_str).unwrap_or(SystemTime::UNIX_EPOCH);
+    let timestamp = capsem_foundation::time::parse_rfc3339(&ts_str).unwrap_or(SystemTime::UNIX_EPOCH);
     let id: i64 = row.get(0)?;
 
     Ok((
@@ -239,7 +239,7 @@ impl DbReader {
 
         let rows = stmt.query_map(params![limit as i64], |row| {
             let ts_str: String = row.get(0)?;
-            let timestamp = humantime::parse_rfc3339(&ts_str).unwrap_or(SystemTime::UNIX_EPOCH);
+            let timestamp = capsem_foundation::time::parse_rfc3339(&ts_str).unwrap_or(SystemTime::UNIX_EPOCH);
             let decision_str: String = row.get(3)?;
 
             Ok(NetEvent {
@@ -382,7 +382,7 @@ impl DbReader {
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![pattern, limit as i64], |row| {
             let ts_str: String = row.get(0)?;
-            let timestamp = humantime::parse_rfc3339(&ts_str).unwrap_or(SystemTime::UNIX_EPOCH);
+            let timestamp = capsem_foundation::time::parse_rfc3339(&ts_str).unwrap_or(SystemTime::UNIX_EPOCH);
             let decision_str: String = row.get(3)?;
             Ok(NetEvent {
                 event_id: row.get(25)?,
@@ -505,7 +505,7 @@ impl DbReader {
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![limit as i64], |row| {
             let ts_str: String = row.get(0)?;
-            let timestamp = humantime::parse_rfc3339(&ts_str).unwrap_or(SystemTime::UNIX_EPOCH);
+            let timestamp = capsem_foundation::time::parse_rfc3339(&ts_str).unwrap_or(SystemTime::UNIX_EPOCH);
             Ok(ExecEvent {
                 event_id: row.get(7)?,
                 timestamp,
@@ -532,7 +532,7 @@ impl DbReader {
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![limit as i64], |row| {
             let ts_str: String = row.get(0)?;
-            let timestamp = humantime::parse_rfc3339(&ts_str).unwrap_or(SystemTime::UNIX_EPOCH);
+            let timestamp = capsem_foundation::time::parse_rfc3339(&ts_str).unwrap_or(SystemTime::UNIX_EPOCH);
             Ok(AuditEvent {
                 event_id: row.get(15)?,
                 timestamp,

@@ -19,7 +19,6 @@ capsem-foundation = { path = "../capsem-foundation" }
 capsem-proto = { path = "../capsem-proto" }
 capsem-telemetry = { path = "../capsem-telemetry" }
 rusqlite = { workspace = true }
-humantime = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true }

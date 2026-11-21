@@ -146,7 +146,7 @@ pub(crate) fn format_timestamp(timestamp: SystemTime) -> String {
 /// exactly the blocks it meant to drop.
 #[must_use]
 pub fn format_ledger_timestamp(timestamp: SystemTime) -> String {
-    humantime::format_rfc3339_micros(timestamp).to_string()
+    capsem_foundation::time::format_rfc3339_micros(timestamp)
 }
 
 /// Truncate an optional string field to at most `max` bytes, at a char
