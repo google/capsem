@@ -72,7 +72,9 @@ async fn respond(State(state): State<Arc<Fixture>>, request: Request<Body>) -> a
         "expires_at":"2099-01-01T00:00:00Z","lease_seconds":3,"renew_after_seconds":1});
     if state.short_expiry {
         ownership["expires_at"] =
-            json!(humantime::format_rfc3339(std::time::SystemTime::now() + Duration::from_millis(200)).to_string());
+            json!(capsem_foundation::time::format_rfc3339(
+                std::time::SystemTime::now() + Duration::from_millis(200)
+            ));
     }
     if path == "/vms/create" {
         if state.held_create {

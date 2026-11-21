@@ -66,7 +66,7 @@ impl ManagedSession {
             || ownership.lease_seconds == 0
             || ownership.renew_after_seconds == 0
             || ownership.renew_after_seconds >= ownership.lease_seconds
-            || humantime::parse_rfc3339(&ownership.expires_at)
+            || capsem_foundation::time::parse_rfc3339(&ownership.expires_at)
                 .map_err(|_| Error::Managed("invalid ownership expiry"))?
                 <= SystemTime::now()
             || self
@@ -135,7 +135,7 @@ impl ManagedSession {
         });
         let remaining = self.ownership.as_ref().map(|meta| {
             // Validation admitted this timestamp. Zero remaining time expires immediately.
-            humantime::parse_rfc3339(&meta.expires_at)
+            capsem_foundation::time::parse_rfc3339(&meta.expires_at)
                 .expect("validated expiry")
                 .duration_since(SystemTime::now())
                 .unwrap_or_default()

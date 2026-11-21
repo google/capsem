@@ -19,7 +19,6 @@ http-body-util.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
 futures.workspace = true
-humantime.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
