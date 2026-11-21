@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import {
     RequestApplicationState, RequestDecision, RequestReviewAvailability, RequestState,
     type EnvironmentReviewContent, type RequestDetailResponse, type RequestSummary,
@@ -7,9 +7,10 @@
   import X from 'phosphor-svelte/lib/X';
   import { getEnvironmentRequest, resolveEnvironmentRequest } from '../../api';
 
-  let { requests, names, onclose, onresolved }: {
+  let { requests, names, changed, onclose, onresolved }: {
     requests: RequestSummary[];
     names: Map<string, string | null | undefined>;
+    changed: { id: string } | null;
     onclose: () => void;
     onresolved: () => Promise<void>;
   } = $props();
@@ -22,9 +23,11 @@
   let reason = $state('');
   let readEpoch = 0;
 
-  let reviewable = $derived(detail?.summary.decision === RequestState.PENDING
-    && detail.proposed.availability === RequestReviewAvailability.COMPLETE
-    && detail.base?.availability === RequestReviewAvailability.COMPLETE);
+  let pending = $derived(detail?.summary.decision === RequestState.PENDING
+    && requests.some(request => request.request_id === detail?.summary.request_id));
+  let reviewable = $derived(pending
+    && detail?.proposed.availability === RequestReviewAvailability.COMPLETE
+    && detail?.base?.availability === RequestReviewAvailability.COMPLETE);
   type Specification = NonNullable<EnvironmentReviewContent['specification']>;
   const labels: Record<keyof Specification, string> = {
     name: 'Name', description: 'Description', image: 'Image', startup: 'Startup',
@@ -74,9 +77,16 @@
     }
   }
 
+  $effect(() => {
+    const update = changed;
+    if (update) untrack(() => {
+      if (update.id === selected && phase !== 'resolving') void select(update.id);
+    });
+  });
+
   async function decide(decision: RequestDecision) {
     const current = detail;
-    if (!current || phase || !reason.trim() || current.summary.decision !== RequestState.PENDING) return;
+    if (!current || phase || !reason.trim() || !pending) return;
     if (decision === RequestDecision.APPROVE && !reviewable) return;
     const epoch = readEpoch;
     phase = 'resolving';
@@ -147,8 +157,10 @@
         {/if}
         <p class="text-xs text-muted-foreground-1">Expires {new Date(detail.summary.expires_at_unix_ms).toLocaleString()}</p>
       </div>
-      {#if detail.summary.decision === RequestState.PENDING}
+      {#if pending}
         <p>Approval creates a fork for this VM. Access controls update live. Workload settings take effect on its next start.</p>
+      {:else if detail.summary.decision === RequestState.PENDING}
+        <p role="status">This request is no longer in the pending queue.</p>
       {:else}
         <p role="status" class="capitalize">Decision {detail.summary.decision}
           {#if detail.summary.decision === RequestState.APPROVED} · Application {detail.summary.application}{/if}
@@ -195,7 +207,7 @@
           {/each}
         </div>
       </details>
-      {#if detail.summary.decision === RequestState.PENDING}
+      {#if pending}
         <label class="block space-y-1">
           <span class="font-medium">Decision reason</span>
           <textarea bind:value={reason} rows={2} maxlength={4096} disabled={phase !== null}

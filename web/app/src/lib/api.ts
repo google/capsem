@@ -694,6 +694,7 @@ interface VmStateEvent {
 let _eventWs: WebSocket | null = null;
 const _vmStateCallbacks: ((payload: VmStateEvent) => void)[] = [];
 const _approvalCallbacks = new Set<{ changed: (id: string) => void; connected: () => void }>();
+const _environmentRequestCallbacks = new Set<{ changed: (id: string) => void; connected: () => void }>();
 const sessionUuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 
 function _connectEventWs() {
@@ -708,6 +709,7 @@ function _connectEventWs() {
     if (_eventWs !== ws) return;
     console.log('[api] events-ws connected');
     for (const listener of _approvalCallbacks) listener.connected();
+    for (const listener of _environmentRequestCallbacks) listener.connected();
   };
   ws.onmessage = (ev) => {
     if (_eventWs !== ws) return;
@@ -715,10 +717,11 @@ function _connectEventWs() {
       const msg = JSON.parse(ev.data as string);
       if (msg.type === 'vm-state-changed') {
         for (const cb of _vmStateCallbacks) cb(msg.payload);
-      } else if (msg.type === 'approval-pending') {
+      } else if (msg.type === 'approval-pending' || msg.type === 'environment-requests-changed') {
         const id: unknown = msg.payload?.id;
         if (typeof id === 'string' && id !== '00000000-0000-0000-0000-000000000000' && sessionUuid.test(id)) {
-          for (const listener of _approvalCallbacks) listener.changed(id);
+          const listeners = msg.type === 'approval-pending' ? _approvalCallbacks : _environmentRequestCallbacks;
+          for (const listener of listeners) listener.changed(id);
         }
       }
     } catch {
@@ -744,6 +747,12 @@ export function onApprovalQueueChanged(changed: (id: string) => void, connected:
   const listener = { changed, connected };
   _approvalCallbacks.add(listener);
   return () => { _approvalCallbacks.delete(listener); };
+}
+
+export function onEnvironmentRequestsChanged(changed: (id: string) => void, connected: () => void): () => void {
+  const listener = { changed, connected };
+  _environmentRequestCallbacks.add(listener);
+  return () => { _environmentRequestCallbacks.delete(listener); };
 }
 
 /** Subscribe to VM state change events. Returns an unsubscribe function. */

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { SecurityAskStatus, type RequestSummary, type SecurityAskDecision } from '@capsem/sdk';
-  import { listEnvironmentRequests, listSecurityAsks, onApprovalQueueChanged, resolveSecurityAsk } from '../../api';
+  import { listEnvironmentRequests, listSecurityAsks, onApprovalQueueChanged, onEnvironmentRequestsChanged, resolveSecurityAsk } from '../../api';
   import { ApiError } from '../../gateway-sdk';
   import { vmStore } from '../../stores/vms.svelte';
   import { watchVisibleRefresh } from '../../models/visible-refresh';
@@ -16,6 +16,7 @@
   let queueCounts = $state(new Map<string, number>());
   let environmentRequests = $state<RequestSummary[]>([]);
   let environmentOpen = $state(false);
+  let environmentChange = $state<{ id: string } | null>(null);
   let environmentEpoch = 0;
   const notices = new ApprovalNotices();
   const queue = new ApprovalQueue(listSecurityAsks, resolveSecurityAsk, value => view = value);
@@ -50,6 +51,16 @@
       // Keep the last confirmed queue while the service reconnects.
     }
   }
+
+  $effect(() => {
+    if (environmentRequests.length === 0) return;
+    const next = Math.min(...environmentRequests.map(request => request.expires_at_unix_ms));
+    const expiry = setTimeout(() => {
+      const now = Date.now();
+      environmentRequests = environmentRequests.filter(request => request.expires_at_unix_ms > now);
+    }, Math.max(0, next - Date.now()));
+    return () => clearTimeout(expiry);
+  });
   function close() {
     activeVm = null;
     focusAsk = null;
@@ -104,14 +115,19 @@
 
   onMount(() => {
     const unsubscribe = onApprovalQueueChanged(
-      id => { void refresh.enqueue([id], true); void refreshEnvironment(); },
-      () => { void vmStore.refresh().then(() => reconcile(true)); void refreshEnvironment(); },
+      id => { void refresh.enqueue([id], true); },
+      () => { void vmStore.refresh().then(() => reconcile(true)); },
+    );
+    const unsubscribeEnvironment = onEnvironmentRequestsChanged(
+      id => { environmentChange = { id }; void refreshEnvironment(); },
+      () => { void refreshEnvironment(); },
     );
     void reconcile();
     void refreshEnvironment();
-    const stop = watchVisibleRefresh(async () => { await Promise.all([reconcile(), refreshEnvironment()]); }, 2000);
+    const stop = watchVisibleRefresh(reconcile, 2000);
     return () => {
       unsubscribe();
+      unsubscribeEnvironment();
       stop();
       refresh.dispose();
       queue.dispose();
@@ -140,5 +156,5 @@
 {#if activeVm}<ApprovalPanel state={view} vmName={activeName} {focusAsk} onclose={close} onretry={()=>{if(activeVm)void queue.load(activeVm);}} ondecide={decide}/>{/if}
 {#if environmentOpen}
   <EnvironmentApprovalPanel requests={environmentRequests} {names}
-    onclose={() => environmentOpen = false} onresolved={refreshEnvironment} />
+    changed={environmentChange} onclose={() => environmentOpen = false} onresolved={refreshEnvironment} />
 {/if}

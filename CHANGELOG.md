@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: The web approval center receives environment request changes from the gateway and catches up after reconnecting.
 - Fixed: Environment approvals show that deferred changes have applied once the originating VM successfully starts with the approved revision.
 - Added: The approval center shows the exact changes in an environment proposal and lets the operator approve the fork or deny the request.
 - Added: Operators can approve, deny, or inspect an environment proposal through the gateway. Approval applies the fork's live policy to the originating VM and saves deferred configuration for its next start.

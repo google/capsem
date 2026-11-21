@@ -781,6 +781,9 @@ describe('api', () => {
       const changed = vi.fn();
       const reconnect = vi.fn();
       const unsubscribe = api.onApprovalQueueChanged(changed, reconnect);
+      const environmentChanged = vi.fn();
+      const environmentReconnect = vi.fn();
+      const unsubscribeEnvironment = api.onEnvironmentRequestsChanged(environmentChanged, environmentReconnect);
       const id = '00000000-0000-4000-8000-000000000001';
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
@@ -795,6 +798,12 @@ describe('api', () => {
       notify(null);
       notify({ id: 'not-a-vm' });
       expect(changed.mock.calls).toEqual([[id], [id]]);
+      const emitEnvironment = (payload: unknown) => wsOnMessage?.({
+        data: JSON.stringify({ type: 'environment-requests-changed', payload }),
+      });
+      emitEnvironment({ id });
+      emitEnvironment({ id: 'invalid' });
+      expect(environmentChanged).toHaveBeenCalledExactlyOnceWith(id);
 
       mockFetch.mockReturnValueOnce(jsonResponse({ token: 'new-token' }));
       const previousMessage = wsOnMessage;
@@ -805,10 +814,15 @@ describe('api', () => {
       expect(mockFetch.mock.calls.some(call => String(call[0]).endsWith('/token'))).toBe(true);
       wsOnOpen?.();
       expect(reconnect).toHaveBeenCalledTimes(2);
+      expect(environmentReconnect).toHaveBeenCalledTimes(2);
       previousMessage?.({ data: JSON.stringify({ type: 'approval-pending', payload: { id } }) });
+      previousMessage?.({ data: JSON.stringify({ type: 'environment-requests-changed', payload: { id } }) });
       unsubscribe();
       notify({ id });
       expect(changed).toHaveBeenCalledTimes(2);
+      unsubscribeEnvironment();
+      emitEnvironment({ id });
+      expect(environmentChanged).toHaveBeenCalledTimes(1);
     });
   });
 
