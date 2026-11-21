@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: The CLI lists and inspects environment requests and submits decisions with the exact reviewed observation.
+- Added: `capsem info` shows the VM's boot, live policy, and desired environment revisions and whether workload changes are pending restart.
 - Added: The web approval center receives environment request changes from the gateway and catches up after reconnecting.
 - Fixed: Environment approvals show that deferred changes have applied once the originating VM successfully starts with the approved revision.
 - Added: The approval center shows the exact changes in an environment proposal and lets the operator approve the fork or deny the request.

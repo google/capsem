@@ -19,6 +19,7 @@ mod network_commands;
 mod paths;
 mod platform;
 mod proxy_command;
+mod request_commands;
 mod route_ids;
 mod service_install;
 mod session_display;
@@ -105,6 +106,10 @@ enum Commands {
     /// Manage named networks: groups of sessions that can reach each other
     #[command(subcommand)]
     Network(NetworkCommands),
+
+    /// Review and resolve environment change requests
+    #[command(subcommand)]
+    Requests(request_commands::RequestCommands),
 
     /// List the image catalog, or pull an image ahead of a create
     Images(image_commands::ImagesArgs),
@@ -1452,6 +1457,7 @@ async fn main() -> Result<()> {
             println!("{}", resumed.id);
         }
         Commands::Network(command) => network_commands::run(&client, command).await?,
+        Commands::Requests(command) => request_commands::run(&client, command).await?,
         Commands::Images(args) => image_commands::run(&client, args).await?,
         Commands::Proxy(args) => {
             let result = proxy_command::run(&client, args).await;

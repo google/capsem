@@ -22,6 +22,11 @@ pub(crate) const GROUPED_HELP: &str = "\
   \x1b[32;1mimages\x1b[0m       List the image catalog (`create --image NAME` runs one)
   \x1b[32;1mimages pull\x1b[0m  Pull an image ahead of a create
 
+\x1b[36;1;4mEnvironment Requests:\x1b[0m
+  \x1b[32;1mrequests list\x1b[0m     List pending environment requests
+  \x1b[32;1mrequests info\x1b[0m     Show the exact review and application state
+  \x1b[32;1mrequests resolve\x1b[0m  Submit a decision for a reviewed request
+
 \x1b[36;1;4mModel Proxy:\x1b[0m
   \x1b[32;1mproxy\x1b[0m       Run a VM-free OpenAI-compatible API endpoint
 

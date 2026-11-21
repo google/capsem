@@ -39,7 +39,7 @@ approved = [
 ]
 
 [capsem_cli]
-count = 42
+count = 45
 approved = [
   "assets ensure",
   "assets status",
@@ -71,6 +71,10 @@ approved = [
   "persist",
   "proxy",
   "purge",
+  # Operator review journey approved by milestone #406.
+  "requests info",
+  "requests list",
+  "requests resolve",
   "restart",
   "resume",
   "run",

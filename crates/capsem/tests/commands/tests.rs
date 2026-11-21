@@ -2,6 +2,9 @@ use super::service::FakeService;
 use serde_json::{json, Value};
 use std::{process::Output, time::Duration};
 
+#[path = "tests/request_command_tests.rs"]
+mod request_command_tests;
+
 async fn command(service: &FakeService, args: &[&str]) -> Output {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(
@@ -94,6 +97,20 @@ async fn lifecycle_commands_use_canonical_routes_and_exact_mutations() {
     let service = FakeService::start();
     listed(&service, true);
     service.route("GET", "/vms/vm-canonical/info", 200, session(true));
+    let readiness = "/vms/vm-canonical/readiness";
+    let stopped = json!({"id": "vm-canonical", "generation": null, "running": false, "environment": null});
+    let running = json!({"id": "vm-canonical", "generation": "00000000-0000-4000-8000-000000000004",
+        "running": true, "environment": null});
+    let mut after_stop = running.clone();
+    after_stop["running"] = json!(false);
+    for selection in [&stopped, &running, &after_stop] {
+        service.once(
+            "GET",
+            readiness,
+            200,
+            json!({"selection": selection, "startup_timeout_seconds": 0}),
+        );
+    }
     service.route(
         "POST",
         "/vms/vm-canonical/resume",
@@ -131,7 +148,11 @@ async fn lifecycle_commands_use_canonical_routes_and_exact_mutations() {
     assert_eq!(
         mutations,
         vec![
-            ("POST".into(), "/vms/vm-canonical/resume".into(), Some(json!({}))),
+            (
+                "POST".into(),
+                "/vms/vm-canonical/resume".into(),
+                Some(json!({"expected": stopped}))
+            ),
             ("POST".into(), "/vms/vm-canonical/pause".into(), Some(json!({}))),
             (
                 "POST".into(),
@@ -141,11 +162,24 @@ async fn lifecycle_commands_use_canonical_routes_and_exact_mutations() {
             (
                 "POST".into(),
                 "/vms/vm-canonical/fork".into(),
-                Some(json!({"name": "copy", "description": "branch"}))
+                Some(json!({"name": "copy", "description": "branch", "expected": running}))
             ),
             ("POST".into(), "/vms/vm-canonical/stop".into(), Some(json!({}))),
-            ("POST".into(), "/vms/vm-canonical/resume".into(), Some(json!({}))),
+            (
+                "POST".into(),
+                "/vms/vm-canonical/resume".into(),
+                Some(json!({"expected": after_stop}))
+            ),
             ("DELETE".into(), "/vms/vm-canonical/delete".into(), None),
+        ]
+    );
+    let intents: Vec<_> = service.find("GET", readiness).into_iter().map(|r| r.path).collect();
+    assert_eq!(
+        intents,
+        [
+            format!("{readiness}?intent=start"),
+            format!("{readiness}?intent=fork"),
+            format!("{readiness}?intent=start")
         ]
     );
 }

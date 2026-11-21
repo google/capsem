@@ -44,7 +44,6 @@ MCP_TO_CLI: dict[str, str | tuple[None, str]] = {
     # MCP bridge
     "capsem_mcp_servers": "mcp servers",
     "capsem_mcp_tools": "mcp tools",
-    "capsem_mcp_call": "mcp call",
     "capsem_mcp_refresh": "mcp refresh",
     # MCP-only: bridges / AI-caller helpers with no CLI analog
     "capsem_read_file": (
@@ -119,6 +118,10 @@ CLI_ONLY: dict[str, str] = {
     "version": "human CLI build metadata; MCP status reports typed gateway state",
     "assets status": "runtime asset diagnostics; MCP status includes aggregate asset health",
     "assets ensure": "local runtime asset repair; host MCP owns no asset download authority",
+    "requests info": "operator access to the full frozen approval review",
+    "requests list": "operator environment approval inbox",
+    "requests resolve": "operator decision or authenticated requester withdrawal",
+    "mcp call": "operator gateway invocation without an equivalent host MCP tool",
     # MCP sub-namespace: not every entry has a tool
 }
 

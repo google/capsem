@@ -76,6 +76,25 @@ pub(crate) fn print_session_info(info: &SessionInfo) {
     if let Some(desc) = &info.description {
         println!("Desc:    {}", desc);
     }
+    if let Some(environment) = &info.environment {
+        println!();
+        println!(
+            "Desired environment: {}@{}",
+            environment.desired.environment_id, environment.desired.revision_id
+        );
+        if let Some(boot) = &environment.boot {
+            println!("Boot environment: {}@{}", boot.environment_id, boot.revision_id);
+        }
+        if let Some(policy) = &environment.live_policy {
+            println!("Live policy revision: {}@{}", policy.environment_id, policy.revision_id);
+        }
+        if let Some(digest) = &environment.policy_digest {
+            println!("Policy digest: {digest}");
+        }
+        if environment.pending_restart == Some(true) {
+            println!("Workload changes pending restart");
+        }
+    }
 
     let has_telemetry = info.created_at.is_some()
         || info.uptime_secs.is_some()

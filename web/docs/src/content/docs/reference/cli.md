@@ -60,7 +60,7 @@ Use the UI or SDK's VM stop operation when you want a retained VM shut down.
 | Command | Options / behavior |
 | --- | --- |
 | `capsem list` | `-q, --quiet`: IDs only. Alias: `capsem ls`. |
-| `capsem info VM` | `--json`: typed VM information. |
+| `capsem info VM` | Show VM details, including its boot, live policy and desired environment revisions when available. `--json` returns typed VM information. |
 | `capsem logs VM` | Serial and process logs; `--tail N`. |
 | `capsem history VM` | `--tail N` defaults to 500; `--all`, `--search TEXT`, `--layer all\|exec\|audit`, `--json`. |
 | `capsem cp SRC DST` | Exactly one side is `VM:PATH`; the other is a local path. Download to `-` for stdout. |
@@ -70,6 +70,19 @@ Use the UI or SDK's VM stop operation when you want a retained VM shut down.
 
 File transfer requires a running VM's security ledger. Relative paths select
 its workspace; exact guest path handling is specified by the file API.
+
+## Review environment requests
+
+These commands are available in Capsem 0.7.3 and return JSON.
+
+| Command | Effect |
+| --- | --- |
+| `capsem requests list [--all] [--limit N] [--after CURSOR]` | List pending requests. Add `--all` to include past decisions and use the response's `next_cursor` to continue. |
+| `capsem requests info REQUEST_ID` | Show the frozen original and proposed settings, `observed_revision`, and current application state. |
+| `capsem requests resolve REQUEST_ID DECISION --observed-revision REVISION --reason TEXT` | Send the review's exact `observed_revision` with `approve` or `deny` as an operator. A scoped requester can use `cancel` with the observation from its proposal receipt. |
+
+Check `decision` and `application` separately. Approval can apply live policy
+immediately and leave workload settings pending until the VM's next start.
 
 ## Private networks
 
