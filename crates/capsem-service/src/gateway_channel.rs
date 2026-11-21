@@ -7,6 +7,9 @@ use axum::{body::Body, extract::FromRequestParts, http::request::Parts, http::St
 use hyper_util::rt::TokioIo;
 use tower::ServiceExt;
 
+mod events;
+pub(super) use events::event_routes;
+
 /// Sealed transport proof. Caller authentication is validated separately on
 /// every request; a pooled gateway connection never conveys an actor alone.
 #[derive(Clone)]

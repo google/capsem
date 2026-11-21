@@ -33,7 +33,8 @@ pub(super) async fn serve(socket: std::os::unix::net::UnixStream, state: Arc<Ser
     let requests = WireReceiver::new(socket.try_clone()?)?;
     let responses = WireSender::new(socket)?;
     let authority = crate::instance::WorkerAuthority::default();
-    let service_router = crate::router_runtime::build_service_router(Arc::clone(&state));
+    let service_router = crate::router_runtime::build_service_router(Arc::clone(&state))
+        .merge(crate::gateway_channel::event_routes(Arc::clone(&state)));
     let mut operator_epoch = state.caller_authority.begin();
     let mut metrics_issued = false;
     let mut expected_id = 1_u64;
