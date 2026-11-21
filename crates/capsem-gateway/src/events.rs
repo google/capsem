@@ -78,6 +78,7 @@ where
                 if notifications.receiver_count() != 0 {
                     let (kind, id) = match event {
                         SessionEvent::ApprovalPending(id) => ("approval-pending", uuid::Uuid::from_bytes(id)),
+                        SessionEvent::RequestDenied(id) => ("request-denied", uuid::Uuid::from_bytes(id)),
                     };
                     let text = serde_json::json!({"type":kind,"payload":{"id":id.to_string()}}).to_string();
                     let _ = notifications.send(Event::Message(text));

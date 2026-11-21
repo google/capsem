@@ -73,21 +73,22 @@ async fn one_feed_delivers_without_status_polling_and_legacy_lifecycle_events_st
     }
 
     let id = uuid::Uuid::from_bytes([0x2b; 16]);
-    send.send(Bytes::from_owner(
-        SessionEvent::ApprovalPending(*id.as_bytes()).encode(),
-    ))
-    .await
-    .unwrap();
-    for client in &mut clients {
-        let event = tokio::time::timeout(IO_TIMEOUT, client.next())
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
-        assert_eq!(
-            serde_json::from_str::<Value>(event.to_text().unwrap()).unwrap(),
-            json!({"type":"approval-pending","payload":{"id":id.to_string()}})
-        );
+    for (event, kind) in [
+        (SessionEvent::ApprovalPending(*id.as_bytes()), "approval-pending"),
+        (SessionEvent::RequestDenied(*id.as_bytes()), "request-denied"),
+    ] {
+        send.send(Bytes::from_owner(event.encode())).await.unwrap();
+        for client in &mut clients {
+            let event = tokio::time::timeout(IO_TIMEOUT, client.next())
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(event.to_text().unwrap()).unwrap(),
+                json!({"type":kind,"payload":{"id":id.to_string()}})
+            );
+        }
     }
     assert_eq!(status_reads.load(Ordering::SeqCst), 0);
 

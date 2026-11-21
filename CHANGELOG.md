@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 - Added: Authenticated `/events` clients receive `approval-pending` notifications when a VM’s actionable approval queue changes, even when no client polls `/status` (#404).
+- Added: Authenticated `/events` clients receive `request-denied` notifications with the VM ID when new network denials reach its ledger (#404).
 
 - Fixed: Restore Inspect adapter PyPI publication and its clean public-registry consumer check now that the publisher is authorized for `inspect-capsem-sandbox` (#392).
 
