@@ -10,6 +10,7 @@ from pathlib import Path
 
 import psutil
 import pytest
+from helpers.bounded import bounded
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.gateway import TcpHttpClient
 from helpers.sdk_packages import python_gateway, typescript_gateway
@@ -111,6 +112,91 @@ def test_installed_sdk_renews_long_preparation_and_cancels_original_owner(langua
 def test_gateway_cold_lifecycle_waits_for_the_retained_revision(
     operation, service, tmp_path
 ):
+    assert_cold_lifecycle_waits(
+        service, tmp_path, "gateway", operation, COLD_STARTUP_SECONDS
+    )
+
+
+@pytest.mark.parametrize(
+    ("client", "operation"),
+    [
+        ("cli", "resume"),
+        ("cli", "clone"),
+        ("rust", "start"),
+        ("rust", "resume"),
+        ("rust", "clone"),
+    ],
+)
+def test_client_cold_lifecycle_waits_for_the_retained_revision(
+    client, operation, service, tmp_path
+):
+    # The Rust SDK previously allowed 110 seconds plus the 120-second gateway allowance.
+    startup_seconds = 238 if client == "rust" else COLD_STARTUP_SECONDS
+    assert_cold_lifecycle_waits(service, tmp_path, client, operation, startup_seconds)
+
+
+def run_cold_client(client, operation, service, gateway, source, source_name, timeout):
+    target_name = vm_name("cold-clone")
+    env = environment(service)
+    if client == "cli":
+        args = (
+            [
+                "create",
+                "--from",
+                source_name,
+                "-n",
+                target_name,
+                "--ram",
+                str(DEFAULT_RAM_MB // 1024),
+                "--cpu",
+                str(DEFAULT_CPUS),
+            ]
+            if operation == "clone"
+            else ["resume", source]
+        )
+        command = cli(service, *args)
+    else:
+        command = bounded(
+            [
+                "cargo",
+                "run",
+                "--quiet",
+                "--locked",
+                "--offline",
+                "-p",
+                "capsem-sdk",
+                "--example",
+                "gateway_acceptance",
+                "--",
+                operation,
+            ],
+            timeout,
+        )
+        env.update(
+            SDK_GATEWAY_URL=gateway.base_url,
+            SDK_GATEWAY_TOKEN=gateway.token,
+            SDK_VM_ID=source,
+            SDK_COLD_SOURCE_NAME=source_name,
+            SDK_COLD_TARGET_NAME=target_name,
+            SDK_COLD_MEMORY_GIB=str(DEFAULT_RAM_MB // 1024),
+            SDK_COLD_CPUS=str(DEFAULT_CPUS),
+        )
+    result = subprocess.run(
+        command,
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=timeout + 10,
+        check=False,
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    target = result.stdout.split()[0]
+    uuid.UUID(target)
+    return target
+
+
+def assert_cold_lifecycle_waits(service, tmp_path, client, operation, startup_seconds):
     artifacts = {}
     with registry(tmp_path, image_config=IMAGE_CONFIG, artifacts=artifacts) as (
         image,
@@ -121,12 +207,12 @@ def test_gateway_cold_lifecycle_waits_for_the_retained_revision(
         publish_catalog(artifacts, "library/catalog", "stable", entry(image))
         use_catalog(service, f"{authority}/library/catalog:stable", certificate)
         script = STARTUP.removesuffix("sleep 3\n") + (
-            f'if [ "$count" -gt 0 ]; then sleep {COLD_STARTUP_SECONDS}; fi\n'
+            f'if [ "$count" -gt 0 ]; then sleep {startup_seconds}; fi\n'
         )
         specification = {
             "name": "cold-startup",
             "image": {"reference": "redis"},
-            "startup": {"script": script, "timeout_seconds": COLD_STARTUP_SECONDS + 30},
+            "startup": {"script": script, "timeout_seconds": startup_seconds + 30},
             "variables": {"BOUND_REVISION": "retained-variable"},
         }
         selected = save(service, specification)
@@ -165,7 +251,7 @@ def test_gateway_cold_lifecycle_waits_for_the_retained_revision(
                     "running": False,
                     "environment": selected,
                 },
-                "startup_timeout_seconds": COLD_STARTUP_SECONDS + 30,
+                "startup_timeout_seconds": startup_seconds + 30,
             }
             if operation == "clone":
                 path = "/vms/create"
@@ -183,12 +269,23 @@ def test_gateway_cold_lifecycle_waits_for_the_retained_revision(
                     else {}
                 )
             started = time.monotonic()
-            code, result = api.call_json(
-                "POST", path, payload, timeout=COLD_STARTUP_SECONDS + 75
-            )
-            assert code == 200, (code, result)
-            assert time.monotonic() - started >= COLD_STARTUP_SECONDS
-            target = result["id"]
+            if client == "gateway":
+                code, result = api.call_json(
+                    "POST", path, payload, timeout=startup_seconds + 75
+                )
+                assert code == 200, (code, result)
+                target = result["id"]
+            else:
+                target = run_cold_client(
+                    client,
+                    operation,
+                    service,
+                    gateway,
+                    source,
+                    source_name,
+                    startup_seconds + 75,
+                )
+            assert time.monotonic() - started >= startup_seconds
             assert (target != source) == (operation == "clone")
             try:
                 generation = observe(service, target, selected, 2)
