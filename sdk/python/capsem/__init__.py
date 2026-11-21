@@ -8,6 +8,7 @@ from ._mcp import Mcp as Mcp
 from ._mcp import McpServer as McpServer
 from ._mcp import McpTools as McpTools
 from ._ports import Port as Port
+from ._requests import Requests as Requests
 from ._transport import CapsemError as CapsemError
 from ._transport import HttpError as HttpError
 from .discovery import DEFAULT_GATEWAY_PORT as DEFAULT_GATEWAY_PORT

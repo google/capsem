@@ -16,6 +16,7 @@ from ._environments import Environments
 from ._images import Images
 from ._mcp import Mcp
 from ._networks import Networks
+from ._requests import Requests
 from .errors import _create_vm_with_timeout, _exec_with_timeout
 from .execution import (
     ExecResult,
@@ -99,6 +100,7 @@ class Hypervisor(Client):
         self.debug = Debug(self._transport)
         self.images = Images(self._transport)
         self.environments = Environments(self._transport)
+        self.requests = Requests(self._transport)
         self.credentials = Credentials(self._transport)
         self.connections = Connections(self._transport)
 

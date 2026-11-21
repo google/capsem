@@ -84,6 +84,7 @@ from .environment_mutation_response import EnvironmentMutationResponse
 from .environment_packages import EnvironmentPackages
 from .environment_plugins import EnvironmentPlugins
 from .environment_readiness_response import EnvironmentReadinessResponse
+from .environment_review_content import EnvironmentReviewContent
 from .environment_revision_reference import EnvironmentRevisionReference
 from .environment_rule_parameter import EnvironmentRuleParameter
 from .environment_rules__environment_catalog_pin__environment_access_rule import (
@@ -100,9 +101,6 @@ from .environment_rules__environment_catalog_pin__environment_detection_rule_cus
 )
 from .environment_rules__environment_catalog_selection__environment_access_rule import (
     EnvironmentRules_EnvironmentCatalogSelection_EnvironmentAccessRule,
-)
-from .environment_rules__environment_catalog_selection__environment_access_rule_custom_value import (
-    EnvironmentRules_EnvironmentCatalogSelection_EnvironmentAccessRuleCustomValue,
 )
 
 __all__ = [
@@ -178,6 +176,7 @@ __all__ = [
     'EnvironmentPackages',
     'EnvironmentPlugins',
     'EnvironmentReadinessResponse',
+    'EnvironmentReviewContent',
     'EnvironmentRevisionReference',
     'EnvironmentRuleParameter',
     'EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRule',
@@ -185,5 +184,4 @@ __all__ = [
     'EnvironmentRules_EnvironmentCatalogPin_EnvironmentDetectionRule',
     'EnvironmentRules_EnvironmentCatalogPin_EnvironmentDetectionRuleCustomValue',
     'EnvironmentRules_EnvironmentCatalogSelection_EnvironmentAccessRule',
-    'EnvironmentRules_EnvironmentCatalogSelection_EnvironmentAccessRuleCustomValue',
 ]

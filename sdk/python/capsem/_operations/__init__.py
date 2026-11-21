@@ -53,6 +53,7 @@ from .get_mcp_info import get_mcp_info as get_mcp_info
 from .get_network import get_network as get_network
 from .get_network_logs import get_network_logs as get_network_logs
 from .get_panics import get_panics as get_panics
+from .get_request_info import get_request_info as get_request_info
 from .get_triage import get_triage as get_triage
 from .get_update_status import get_update_status as get_update_status
 from .get_vm_container import get_vm_container as get_vm_container
@@ -72,6 +73,7 @@ from .list_images import list_images as list_images
 from .list_mcp_servers import list_mcp_servers as list_mcp_servers
 from .list_mcp_tools import list_mcp_tools as list_mcp_tools
 from .list_networks import list_networks as list_networks
+from .list_requests import list_requests as list_requests
 from .list_security_asks import list_security_asks as list_security_asks
 from .list_session_credential_grants import (
     list_session_credential_grants as list_session_credential_grants,

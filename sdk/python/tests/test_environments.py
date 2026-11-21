@@ -85,6 +85,40 @@ def test_environment_inspection_refuses_substituted_environment_identity():
     asyncio.run(run())
 
 
+def test_request_facade_preserves_review_inputs_and_correlates_identity():
+    async def run():
+        summary = {
+            "request_id": REQUEST, "kind": "environment_change", "environment_id": ENVIRONMENT,
+            "actor": "operator", "reason": "test review", "timestamp_unix_ms": 1,
+            "expires_at_unix_ms": 1000, "decision": "pending", "application": "pending",
+        }
+        response: dict[str, object] = {"requests": [summary], "next_cursor": 9}
+        async with gateway(response=response) as (url, received), Hypervisor(url, "gateway-token") as hv:
+            page = await hv.requests.list(after=7, limit=1, pending_only=True)
+            assert page.next_cursor == 9
+            assert page.requests[0].request_id == REQUEST
+            response.clear()
+            response.update({
+                "summary": summary, "observed_revision": "0123456789ab",
+                "proposed": {
+                    "availability": "complete", "purged_variables": [],
+                    "specification": {"name": "development", "variables": {"EDITOR": "emacs"}},
+                },
+                "targets": [],
+            })
+            detail = await hv.requests.info(REQUEST)
+            assert detail.observed_revision == "0123456789ab"
+            assert detail.proposed.specification is not None
+            assert detail.proposed.specification.variables == {"EDITOR": "emacs"}
+            with pytest.raises(ValueError, match="identity changed"):
+                await hv.requests.info(ENVIRONMENT)
+            assert [path for _, path, _ in received] == [
+                "/requests/list?after=7&limit=1&pending_only=true",
+                f"/requests/{REQUEST}/info", f"/requests/{ENVIRONMENT}/info",
+            ]
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("is_change", [False, True])
 def test_environment_mutations_preserve_explicit_deadline_and_cancellation(is_change):
     async def run():

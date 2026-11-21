@@ -1,5 +1,12 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .request_summary import RequestSummary
+from .resource_summary import ResourceSummary
+from .restart_authentication import RestartAuthentication
+from .restart_response import RestartResponse
+from .restart_status import RestartStatus
+from .revoke_session_grant_response import RevokeSessionGrantResponse
+from .revoked_credential_authority import RevokedCredentialAuthority
 from .run_request import RunRequest
 from .sandbox_environment import SandboxEnvironment
 from .sandbox_info import SandboxInfo
@@ -73,13 +80,15 @@ from .vm_lifecycle_selection import VmLifecycleSelection
 from .vm_lifecycle_state import VmLifecycleState
 from .vm_network_info import VmNetworkInfo
 from .vm_readiness_response import VmReadinessResponse
-from .vm_start_request import VmStartRequest
-from .vm_stats_detail_response import VmStatsDetailResponse
-from .vm_stats_summary_response import VmStatsSummaryResponse
-from .vm_status_response import VmStatusResponse
-from .vm_summary import VmSummary
 
 __all__ = [
+    'RequestSummary',
+    'ResourceSummary',
+    'RestartAuthentication',
+    'RestartResponse',
+    'RestartStatus',
+    'RevokeSessionGrantResponse',
+    'RevokedCredentialAuthority',
     'RunRequest',
     'SandboxEnvironment',
     'SandboxInfo',
@@ -153,9 +162,4 @@ __all__ = [
     'VmLifecycleState',
     'VmNetworkInfo',
     'VmReadinessResponse',
-    'VmStartRequest',
-    'VmStatsDetailResponse',
-    'VmStatsSummaryResponse',
-    'VmStatusResponse',
-    'VmSummary',
 ]

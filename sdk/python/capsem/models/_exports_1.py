@@ -1,5 +1,8 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .environment_rules__environment_catalog_selection__environment_access_rule_custom_value import (
+    EnvironmentRules_EnvironmentCatalogSelection_EnvironmentAccessRuleCustomValue,
+)
 from .environment_rules__environment_catalog_selection__environment_detection_rule import (
     EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRule,
 )
@@ -95,9 +98,9 @@ from .interaction_tool_call_kind import InteractionToolCallKind
 from .interaction_tool_result import InteractionToolResult
 from .interaction_tool_result_kind import InteractionToolResultKind
 from .json_content import JsonContent
-from .json_content_kind import JsonContentKind
 
 __all__ = [
+    'EnvironmentRules_EnvironmentCatalogSelection_EnvironmentAccessRuleCustomValue',
     'EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRule',
     'EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRuleCustomValue',
     'EnvironmentSandboxTarget',
@@ -177,5 +180,4 @@ __all__ = [
     'InteractionToolResult',
     'InteractionToolResultKind',
     'JsonContent',
-    'JsonContentKind',
 ]
