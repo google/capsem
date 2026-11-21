@@ -15,6 +15,7 @@ use capsem_api::{
 use capsem_core::environment::EnvironmentResolutionError;
 use capsem_service::environment_revisions::{EnvironmentMutationCoordinator, EnvironmentMutationError};
 pub(crate) mod proposals;
+pub(crate) mod reviews;
 mod sources;
 use capsem_core::managed_sessions::LeaseClock;
 use capsem_logger::db::EnvironmentReferenceQuery;

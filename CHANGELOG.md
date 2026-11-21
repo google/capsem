@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: The operator can inspect durable environment proposals and their exact historical review content through the gateway.
 - Added: An agent scoped to a running VM can submit an environment change for operator review.
 - Added: Authenticated `/events` clients receive `approval-pending` notifications when a VM’s actionable approval queue changes, even when no client polls `/status` (#404).
 - Changed: The desktop approval center refreshes the affected queue as soon as the gateway reports a change.

@@ -379,7 +379,7 @@ fn expiry(at: i64) -> Result<i64, EnvironmentMutationError> {
         .ok_or(EnvironmentMutationError::WorkerFailed)
 }
 
-fn now() -> Result<i64, EnvironmentMutationError> {
+pub(super) fn now() -> Result<i64, EnvironmentMutationError> {
     i64::try_from(
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -392,7 +392,7 @@ fn event_id() -> String {
     // The ledger's existing event identity is twelve lowercase hexadecimal digits.
     format!("{:012x}", capsem_crypto::random::u64() & 0xffff_ffff_ffff)
 }
-fn view(record: EnvironmentRequestRecord) -> EnvironmentMutationResponse {
+pub(super) fn view(record: EnvironmentRequestRecord) -> EnvironmentMutationResponse {
     let result = record.result.map(|result| EnvironmentRevisionReference {
         environment_id: result.environment_id,
         revision_id: result.revision_id,

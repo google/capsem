@@ -71,7 +71,8 @@ async fn delegated_proposal_freezes_its_original_generation_and_historical_base_
     assert_eq!(pending.record.actor, format!("agent:{access}"));
     assert_eq!(pending.record.base_revision_id, Some(id(2)));
     let requester = pending.record.requester.unwrap();
-    assert_eq!((requester.session_id, requester.generation), (session_id, generation));
+    assert_eq!(requester.session_id, session_id);
+    assert_eq!(requester.generation, generation);
     assert!(matches!(
         *pending.payload,
         capsem_logger::events::environment::request::EnvironmentRequestPayload::Change { specification }
@@ -80,6 +81,48 @@ async fn delegated_proposal_freezes_its_original_generation_and_historical_base_
     assert_eq!(
         state.environments.load_current(&id(1)).await.unwrap().document,
         committed_head
+    );
+
+    let (status, page) = route_request(
+        app.clone(),
+        Method::GET,
+        "/requests/list?limit=1&pending_only=true",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let summary = &page["requests"][0];
+    assert_eq!(summary["request_id"], id(103));
+    assert_eq!(summary["kind"], "environment_change");
+    assert_eq!(summary["requester"]["session_id"], session_id);
+    assert_eq!(summary["requester"]["generation"], generation);
+    assert_eq!(summary["decision"], "pending");
+    assert_eq!(summary["application"], "pending");
+    let cursor = page["next_cursor"].as_i64().unwrap();
+    let (_, next) = route_request(
+        app.clone(),
+        Method::GET,
+        &format!("/requests/list?limit=1&pending_only=true&after={cursor}"),
+        None,
+    )
+    .await;
+    assert_eq!(next, json!({"requests": [], "next_cursor": null}));
+
+    let review_path = format!("/requests/{}/info", id(103));
+    let (status, detail) = route_request(app.clone(), Method::GET, &review_path, None).await;
+    assert_eq!(status, StatusCode::OK, "{detail}");
+    assert_eq!(&detail["summary"], summary);
+    assert_eq!(detail["observed_revision"], pending.record.payload_event_id);
+    assert_eq!(detail["base"]["specification"]["variables"]["EDITOR"], "vim");
+    assert_eq!(detail["proposed"]["specification"]["variables"]["EDITOR"], "emacs");
+    assert_eq!(detail["proposed"]["availability"], "complete");
+    let unauthorized = axum::http::Request::get(&review_path)
+        .header("authorization", &bearer)
+        .body(axum::body::Body::empty())
+        .unwrap();
+    assert_eq!(
+        app.clone().operator_request(unauthorized).await.unwrap().status(),
+        StatusCode::FORBIDDEN
     );
 
     let mut different = intent(103);
