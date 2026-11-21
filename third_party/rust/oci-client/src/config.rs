@@ -4,7 +4,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize, Serializer};
 
 /// The CPU architecture which the binaries in this image are
@@ -28,7 +28,7 @@ pub struct ConfigFile {
     /// formatted as defined by
     /// [RFC 3339, section 5.6](https://tools.ietf.org/html/rfc3339#section-5.6)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub created: Option<DateTime<Utc>>,
+    pub created: Option<Timestamp>,
 
     /// Gives the name and/or email address of the person or entity
     /// which created and is responsible for maintaining the image.
@@ -210,7 +210,7 @@ pub struct History {
     /// A combined date and time at which the layer was created,
     /// formatted as defined by [RFC 3339, section 5.6](https://tools.ietf.org/html/rfc3339#section-5.6).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub created: Option<DateTime<Utc>>,
+    pub created: Option<Timestamp>,
 
     /// The author of the build point.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -236,7 +236,7 @@ pub struct History {
 #[cfg(test)]
 mod tests {
     use assert_json_diff::assert_json_eq;
-    use chrono::DateTime;
+    use jiff::Timestamp;
     use oci_spec::image::Arch;
     use rstest::*;
     use serde_json::Value;
@@ -339,25 +339,21 @@ mod tests {
         };
 
         let history = Some(vec![History {
-            created: Some(DateTime::parse_from_rfc3339("2015-10-31T22:22:54.690851953Z").expect("parse time failed").into()),
+            created: Some("2015-10-31T22:22:54.690851953Z".parse::<Timestamp>().expect("parse time failed")),
             author: None,
             created_by: Some("/bin/sh -c #(nop) ADD file:a3bc1e842b69636f9df5256c49c5374fb4eef1e281fe3f282c65fb853ee171c5 in /".into()),
             comment: None,
             empty_layer: None,
         },
         History {
-            created: Some(DateTime::parse_from_rfc3339("2015-10-31T22:22:55.613815829Z").expect("parse time failed").into()),
+            created: Some("2015-10-31T22:22:55.613815829Z".parse::<Timestamp>().expect("parse time failed")),
             author: None,
             created_by: Some("/bin/sh -c #(nop) CMD [\"sh\"]".into()),
             comment: None,
             empty_layer: Some(true),
         }]);
         ConfigFile {
-            created: Some(
-                DateTime::parse_from_rfc3339("2015-10-31T22:22:56.015925234Z")
-                    .expect("parse time failed")
-                    .into(),
-            ),
+            created: Some("2015-10-31T22:22:56.015925234Z".parse::<Timestamp>().expect("parse time failed")),
             author: Some("Alyssa P. Hacker <alyspdev@example.com>".into()),
             architecture: Arch::Amd64,
             os: Os::Linux,
@@ -431,11 +427,7 @@ mod tests {
             ..Config::default()
         });
         let history = Some(vec![History {
-            created: Some(
-                DateTime::parse_from_rfc3339("2023-04-21T11:53:28.176613804Z")
-                    .expect("parse time failed")
-                    .into(),
-            ),
+            created: Some("2023-04-21T11:53:28.176613804Z".parse::<Timestamp>().expect("parse time failed")),
             author: None,
             created_by: Some("COPY ./src/main.rs / # buildkit".into()),
             comment: Some("buildkit.dockerfile.v0".into()),
@@ -455,11 +447,7 @@ mod tests {
             config,
             rootfs,
             history,
-            created: Some(
-                DateTime::parse_from_rfc3339("2023-04-21T11:53:28.176613804Z")
-                    .expect("parse time failed")
-                    .into(),
-            ),
+            created: Some("2023-04-21T11:53:28.176613804Z".parse::<Timestamp>().expect("parse time failed")),
             author: None,
         }
     }

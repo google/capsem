@@ -80,9 +80,10 @@ version = "0.22"
 [dependencies.bytes]
 version = "1"
 
-[dependencies.chrono]
-version = "0.4"
-features = ["serde"]
+[dependencies.jiff]
+version = "0.2.37"
+features = ["serde", "std"]
+default-features = false
 
 [dependencies.futures-util]
 version = "0.3"

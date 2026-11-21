@@ -38,7 +38,7 @@ test-registry = []
 [dependencies]
 base64 = "0.22"
 bytes = "1"
-chrono = { version = "0.4", features = ["serde"] }
+jiff = { version = "0.2.37", default-features = false, features = ["serde", "std"] }
 futures-util = "0.3"
 hex = "0.4"
 http = "1.3"

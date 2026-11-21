@@ -366,10 +366,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
 dependencies = [
  "iana-time-zone",
- "js-sys",
  "num-traits",
  "serde",
- "wasm-bindgen",
  "windows-link",
 ]
 
@@ -1602,7 +1600,6 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bytes",
- "chrono",
  "clap",
  "docker_credential",
  "futures-util",
@@ -1611,6 +1608,7 @@ dependencies = [
  "http",
  "http-auth",
  "itertools 0.15.0",
+ "jiff",
  "oci-spec",
  "olpc-cjson",
  "regex",
