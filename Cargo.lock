@@ -799,7 +799,6 @@ dependencies = [
  "hickory-proto",
  "http",
  "http-body-util",
- "humantime",
  "hyper",
  "hyper-util",
  "io-uring",

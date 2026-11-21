@@ -30,7 +30,6 @@ capsem-logger = { path = "../capsem-logger" }
 capsem-telemetry = { path = "../capsem-telemetry" }
 libc = "0.2"
 toml = { workspace = true }
-humantime = { workspace = true }
 time = { workspace = true }
 rustls = { workspace = true }
 tokio-rustls = { workspace = true }

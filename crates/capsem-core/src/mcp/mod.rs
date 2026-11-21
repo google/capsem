@@ -303,7 +303,7 @@ pub fn load_tool_cache() -> Vec<ToolCacheEntry> {
 
 /// Build cache entries from current tool catalog.
 pub fn build_cache_entries(tools: &[McpToolDef], existing: &[ToolCacheEntry]) -> Vec<ToolCacheEntry> {
-    let now = humantime::format_rfc3339(std::time::SystemTime::now()).to_string();
+    let now = capsem_foundation::time::format_rfc3339(std::time::SystemTime::now());
     let existing_map: HashMap<&str, &ToolCacheEntry> =
         existing.iter().map(|e| (e.namespaced_name.as_str(), e)).collect();
 
