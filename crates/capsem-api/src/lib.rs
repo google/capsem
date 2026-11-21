@@ -10,7 +10,7 @@ pub use environments::{
 };
 pub mod requests;
 pub use agent_access::*;
-pub use requests::{RequestDetailResponse, RequestListResponse};
+pub use requests::{RequestDetailResponse, RequestListResponse, RequestResolveRequest};
 mod browser;
 pub use browser::*;
 mod credentials;

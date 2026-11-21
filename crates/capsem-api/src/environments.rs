@@ -18,6 +18,9 @@ pub struct EnvironmentMutationResponse {
     pub application: crate::requests::RequestApplicationState,
     pub result: Option<EnvironmentRevisionReference>,
     pub application_error: Option<String>,
+    /// Exact observation available to the scoped requester for cancellation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observed_revision: Option<String>,
 }
 impl std::fmt::Debug for EnvironmentMutationResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

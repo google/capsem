@@ -1817,6 +1817,58 @@
         }
       }
     },
+    "/requests/{id}/resolve": {
+      "post": {
+        "operationId": "resolveRequest",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequestResolveRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentMutationResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/restart": {
       "post": {
         "description": "Restart a managed hypervisor with no active or starting VMs. The gateway rotates its bearer token; obtain fresh credentials and reconnect explicitly. Never replay this mutation.",
@@ -5972,6 +6024,13 @@
             "type": "string",
             "format": "uuid"
           },
+          "observed_revision": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Exact observation available to the scoped requester for cancellation."
+          },
           "request_id": {
             "type": "string",
             "format": "uuid"
@@ -9879,6 +9938,14 @@
           "failed"
         ]
       },
+      "RequestDecision": {
+        "type": "string",
+        "enum": [
+          "approve",
+          "deny",
+          "cancel"
+        ]
+      },
       "RequestDecisionDetails": {
         "type": "object",
         "required": [
@@ -9975,6 +10042,27 @@
             "items": {
               "$ref": "#/components/schemas/RequestSummary"
             }
+          }
+        },
+        "additionalProperties": false
+      },
+      "RequestResolveRequest": {
+        "type": "object",
+        "required": [
+          "observed_revision",
+          "decision",
+          "reason"
+        ],
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/RequestDecision"
+          },
+          "observed_revision": {
+            "type": "string",
+            "description": "Opaque observation returned by request info. A durable request uses its\nimmutable payload event identity; a security ask uses its live generation.\nNeither value conveys approval authority."
+          },
+          "reason": {
+            "type": "string"
           }
         },
         "additionalProperties": false

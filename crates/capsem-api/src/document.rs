@@ -49,6 +49,7 @@ pub fn openapi() -> OpenApi {
         })));
     doc.add("/requests/list", HttpMethod::Get, requests);
     doc.get::<requests::RequestDetailResponse>("/requests/{id}/info", "getRequestInfo");
+    doc.post::<RequestResolveRequest, EnvironmentMutationResponse>("/requests/{id}/resolve", "resolveRequest");
     doc.get::<ListResponse>("/vms/list", "listVms");
     doc.post::<ProvisionRequest, ProvisionResponse>("/vms/create", "createVm");
     doc.post::<ManagedSessionClaimRequest, ManagedSessionClaimResponse>(
