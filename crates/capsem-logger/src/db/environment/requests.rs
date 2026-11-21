@@ -1,6 +1,7 @@
 //! Restart-safe request views through the DB-owned reader and archive lease.
 use super::history::{self, EnvironmentHistoryPayload, EnvironmentVariablePurgeMarker, SnapshotMode};
 use super::*;
+use crate::events::environment::application::EnvironmentApplicationState;
 use crate::events::environment::request::{
     EnvironmentRequestDecision, EnvironmentRequestDecisionKind, EnvironmentRequestInvalidation,
     EnvironmentRequestInvalidationKind, EnvironmentRequestKind, EnvironmentRequestPayload, EnvironmentRequestState,
@@ -73,6 +74,16 @@ pub struct EnvironmentRequestRecord {
     pub decision: Option<EnvironmentRequestDecision>,
     pub invalidation: Option<EnvironmentRequestInvalidation>,
     pub result: Option<crate::events::EnvironmentRevisionParent>,
+    #[serde(default)]
+    pub application: Option<EnvironmentRequestApplication>,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentRequestApplication {
+    pub state: EnvironmentApplicationState,
+    pub pending_restart: bool,
+    pub failure_reason: Option<String>,
 }
 impl std::fmt::Debug for EnvironmentRequestRecord {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -204,8 +215,8 @@ impl DbHandle {
     }
 }
 
-const COLUMNS: &str = "r.id,r.request_id,r.kind,r.environment_id,r.base_revision_id,r.requester_session_id,r.requester_generation,r.timestamp_unix_ms,r.actor,r.reason,r.state,r.payload_event_id,r.replayable,r.result_environment_id,r.result_revision_id,d.timestamp_unix_ms,d.actor,d.decision,d.reason,r.source_environment_id,r.source_revision_id,r.expires_at_unix_ms,i.timestamp_unix_ms,i.actor,i.kind,i.reason";
-const TABLES: &str = "environment_requests r LEFT JOIN environment_request_decisions d ON d.request_id=r.request_id LEFT JOIN environment_request_invalidations i ON i.request_id=r.request_id";
+const COLUMNS: &str = "r.id,r.request_id,r.kind,r.environment_id,r.base_revision_id,r.requester_session_id,r.requester_generation,r.timestamp_unix_ms,r.actor,r.reason,r.state,r.payload_event_id,r.replayable,r.result_environment_id,r.result_revision_id,d.timestamp_unix_ms,d.actor,d.decision,d.reason,r.source_environment_id,r.source_revision_id,r.expires_at_unix_ms,i.timestamp_unix_ms,i.actor,i.kind,i.reason,a.state,a.pending_restart,a.failure_reason";
+const TABLES: &str = "environment_requests r LEFT JOIN environment_request_decisions d ON d.request_id=r.request_id LEFT JOIN environment_request_invalidations i ON i.request_id=r.request_id LEFT JOIN environment_applications a ON a.request_id=r.request_id AND a.session_id=r.requester_session_id AND a.generation=r.requester_generation AND a.desired_environment_id=r.result_environment_id AND a.desired_revision_id=r.result_revision_id";
 const UUID_BYTES: usize = uuid::fmt::Hyphenated::LENGTH;
 // Longest canonical actor is vm:<session UUID>/<generation UUID>.
 const ACTOR_BYTES: usize = 2 * UUID_BYTES + 4;
@@ -418,6 +429,29 @@ fn from_row(row: &rusqlite::Row<'_>) -> DbResult<EnvironmentRequestRecord> {
         1 => true,
         _ => return Err("invalid environment request replayability marker".into()),
     };
+    let pending_restart: Option<i64> = row
+        .get(27)
+        .map_err(|error| format!("invalid environment application restart marker: {error}"))?;
+    let application = match (
+        optional(26, 32)?,
+        pending_restart,
+        optional(28, capsem_proto::APPROVAL_CONTEXT_BYTES)?,
+    ) {
+        (None, None, None) => None,
+        (Some(state), Some(marker @ (0 | 1)), failure_reason) if result.is_some() => {
+            let state =
+                EnvironmentApplicationState::parse_str(&state).ok_or("unknown environment application state")?;
+            if (state == EnvironmentApplicationState::Failed) != failure_reason.is_some() {
+                return Err("environment application failure does not match its state".into());
+            }
+            Some(EnvironmentRequestApplication {
+                state,
+                pending_restart: marker == 1,
+                failure_reason,
+            })
+        }
+        _ => return Err("incomplete environment application evidence".into()),
+    };
     Ok(EnvironmentRequestRecord {
         cursor: row
             .get(0)
@@ -440,6 +474,7 @@ fn from_row(row: &rusqlite::Row<'_>) -> DbResult<EnvironmentRequestRecord> {
         invalidation,
         expires_at_unix_ms,
         result,
+        application,
     })
 }
 

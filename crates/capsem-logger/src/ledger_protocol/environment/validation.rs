@@ -53,6 +53,14 @@ pub(super) fn request(r: &EnvironmentRequestRecord) -> bool {
         || !reason(&r.reason)
         || !valid_event_id(&r.payload_event_id)
         || !r.result.as_ref().is_none_or(parent)
+        || r.application.as_ref().is_some_and(|a| {
+            r.result.is_none()
+                || r.requester.is_none()
+                || match a.state {
+                    EnvironmentApplicationState::Failed => !a.failure_reason.as_deref().is_some_and(reason),
+                    _ => a.failure_reason.is_some(),
+                }
+        })
         || matches!(
             r.kind,
             EnvironmentRequestKind::Promotion | EnvironmentRequestKind::Apply
