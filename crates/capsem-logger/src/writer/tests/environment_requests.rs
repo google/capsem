@@ -173,6 +173,42 @@ async fn committed(writer: &DbWriter, record: &crate::events::PreparedEnvironmen
     durable(writer, WriteOp::PrepareEnvironmentRevision(record.clone())).await;
     durable(writer, commit(record)).await;
 }
+
+#[tokio::test]
+async fn requester_can_cancel_its_pending_environment_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("host.db");
+    let writer = DbWriter::open(&path, 16).unwrap();
+    committed(&writer, &revision(2, 3)).await;
+    let mut request = proposal();
+    request.base_revision_id = Some(id(3));
+    request.timestamp_unix_ms = 30;
+    request.actor = format!("agent:{}", id(4));
+    request.requester = Some(EnvironmentRequestTarget {
+        session_id: id(5),
+        generation: id(6),
+    });
+    durable(&writer, WriteOp::PrepareEnvironmentRequest(request.clone())).await;
+    let mut resolve = decision(EnvironmentRequestDecisionKind::Cancel);
+    resolve.timestamp_unix_ms = 31;
+    resolve.reason = "withdraw this proposal".into();
+    let mut other = resolve.clone();
+    other.actor = format!("agent:{}", id(7));
+    rejected(&writer, WriteOp::EnvironmentRequestDecision(other)).await;
+    let mut own = resolve;
+    own.actor = request.actor.clone();
+    durable(&writer, WriteOp::EnvironmentRequestDecision(own.clone())).await;
+    durable(&writer, WriteOp::EnvironmentRequestDecision(own)).await;
+    let db = crate::DbHandle::open_external_reader(&path).unwrap();
+    let saved = db
+        .environment_request_history(&request.request_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.record.state, EnvironmentRequestState::Cancelled);
+    assert_eq!(saved.record.decision.unwrap().actor, request.actor);
+    assert!(saved.record.result.is_none());
+}
 fn result(environment: u64, revision: u64) -> EnvironmentRequestResult {
     EnvironmentRequestResult {
         request_id: id(1),

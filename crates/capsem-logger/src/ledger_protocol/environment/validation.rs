@@ -65,6 +65,7 @@ pub(super) fn request(r: &EnvironmentRequestRecord) -> bool {
             || d.timestamp_unix_ms < r.timestamp_unix_ms
             || d.timestamp_unix_ms >= r.expires_at_unix_ms
             || !actor(&d.actor)
+            || !d.decision.permits_actor(&d.actor, &r.actor)
             || !reason(&d.reason)
     }) {
         return false;

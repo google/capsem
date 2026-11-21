@@ -268,14 +268,13 @@ pub(super) fn prepare(
 }
 
 pub(super) fn decide(conn: &Connection, record: &EnvironmentRequestDecision) -> rusqlite::Result<()> {
-    if !uuid(&record.request_id)
-        || record.actor != "operator"
-        || !reason(&record.reason)
-        || record.timestamp_unix_ms < 0
-    {
+    if !uuid(&record.request_id) || !actor(&record.actor) || !reason(&record.reason) || record.timestamp_unix_ms < 0 {
         return Err(invalid("invalid environment request decision metadata"));
     }
     let old = existing(conn, &record.request_id)?.ok_or_else(|| invalid("environment request is missing"))?;
+    if !record.decision.permits_actor(&record.actor, &old.actor) {
+        return Err(invalid("environment request decision requires its authorized actor"));
+    }
     if !old.durable {
         return Err(invalid("environment request is not durably prepared for decision"));
     }

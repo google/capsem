@@ -149,6 +149,13 @@ pub enum EnvironmentRequestDecisionKind {
 }
 
 impl EnvironmentRequestDecisionKind {
+    pub(crate) fn permits_actor(self, actor: &str, requester: &str) -> bool {
+        match self {
+            Self::Approve | Self::Deny => actor == "operator",
+            Self::Cancel => actor == requester,
+        }
+    }
+
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Approve => "approve",
