@@ -101,6 +101,11 @@ version = 1
 "tests/conftest.py" = "8ef7d72155eb053bc67da1073f77f81210acfd5439301b59f8abf22afee3cbb3"
 "tests/helpers/mcp.py" = "50c86b7ed8ac2cf95bd48334961bf0530cdc77b5a56f852c5c61b89d735fd711"
 "tests/test_ci_scope_classifier.py" = "610320e99a6f1e7915e151165b9b616e668ee9fb77ed1457178b23709df8090f"
+
+# S01-013: these are upstream rmcp repository references in the vendored
+# README and opt-in live OAuth test, not paths used to resolve Capsem files.
+"third_party/rust/rmcp/README.md" = "72c906ca85a38c4f04218619f52564dc99feb17ce1560e0d30e2ee04c220f4bf"
+"third_party/rust/rmcp/tests/test_live_oauth_refresh.rs" = "bedded65094afcd39e736626ccd35dc59867e6ddba1674dccabf3abb2d2e641d"
 "web/app/src/lib/terminal/themes.ts" = "02ef611c1c30e01252fcb23290c2f91835131eeb032566520268845c3a60eaed"
 "web/docs/src/content/docs/architecture/asset-pipeline.md" = "fc1f5c0bbd5337ef425c691180ceabd5695899b059cc49d7505d9a16552d0aa2"
 "web/docs/src/content/docs/architecture/build-system.md" = "8ef7d72155eb053bc67da1073f77f81210acfd5439301b59f8abf22afee3cbb3"
