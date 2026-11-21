@@ -213,6 +213,7 @@ impl RuntimeSecurityEventType {
             | WriteOp::EnvironmentRequestResult(_)
             | WriteOp::EnvironmentRequestInvalidation(_)
             | WriteOp::EnvironmentApplication(_)
+            | WriteOp::EnvironmentApplicationBoot(_)
             | WriteOp::PrepareEnvironmentVariablePurge(_)
             | WriteOp::ObserveCatalogRevocation(_)
             | WriteOp::EnvironmentSandboxReference(_) => return None,

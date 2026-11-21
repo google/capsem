@@ -240,6 +240,7 @@ pub(super) fn logger_write_credential_ref(op: &WriteOp) -> Option<String> {
         | WriteOp::EnvironmentRequestResult(_)
         | WriteOp::EnvironmentRequestInvalidation(_)
         | WriteOp::EnvironmentApplication(_)
+        | WriteOp::EnvironmentApplicationBoot(_)
         | WriteOp::PrepareEnvironmentVariablePurge(_)
         | WriteOp::ObserveCatalogRevocation(_)
         | WriteOp::EnvironmentSandboxReference(_) => None,
@@ -272,6 +273,7 @@ pub(super) fn logger_write_trace_id(op: &WriteOp) -> Option<String> {
         | WriteOp::EnvironmentRequestResult(_)
         | WriteOp::EnvironmentRequestInvalidation(_)
         | WriteOp::EnvironmentApplication(_)
+        | WriteOp::EnvironmentApplicationBoot(_)
         | WriteOp::PrepareEnvironmentVariablePurge(_)
         | WriteOp::ObserveCatalogRevocation(_)
         | WriteOp::EnvironmentSandboxReference(_) => None,
