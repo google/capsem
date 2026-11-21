@@ -16,5 +16,6 @@ class EnvironmentMutationResponse(Model):
     application_error: StrictStr | None = None
     decision: RequestState
     environment_id: UuidString
+    observed_revision: StrictStr | None = None
     request_id: UuidString
     result: EnvironmentRevisionReference | None = None

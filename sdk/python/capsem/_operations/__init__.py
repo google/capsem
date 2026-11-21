@@ -86,6 +86,7 @@ from .persist_vm import persist_vm as persist_vm
 from .pull_image import pull_image as pull_image
 from .purge_vms import purge_vms as purge_vms
 from .refresh_mcp_server import refresh_mcp_server as refresh_mcp_server
+from .resolve_request import resolve_request as resolve_request
 from .resolve_security_ask import resolve_security_ask as resolve_security_ask
 from .restart_hypervisor import restart_hypervisor as restart_hypervisor
 from .resume_vm import resume_vm as resume_vm

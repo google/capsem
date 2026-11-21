@@ -112,10 +112,20 @@ def test_request_facade_preserves_review_inputs_and_correlates_identity():
             assert detail.proposed.specification.variables == {"EDITOR": "emacs"}
             with pytest.raises(ValueError, match="identity changed"):
                 await hv.requests.info(ENVIRONMENT)
+            response.clear()
+            response.update({**PENDING, "decision": "denied"})
+            decision = models.RequestResolveRequest(
+                observed_revision=detail.observed_revision,
+                decision=models.RequestDecision.DENY,
+                reason="keep the original configuration",
+            )
+            assert (await hv.requests.resolve(REQUEST, decision)).decision == models.RequestState.DENIED
             assert [path for _, path, _ in received] == [
                 "/requests/list?after=7&limit=1&pending_only=true",
                 f"/requests/{REQUEST}/info", f"/requests/{ENVIRONMENT}/info",
+                f"/requests/{REQUEST}/resolve",
             ]
+            assert received[-1][2] == decision.model_dump(mode="json")
     asyncio.run(run())
 
 

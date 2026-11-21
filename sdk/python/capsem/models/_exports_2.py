@@ -112,12 +112,12 @@ from .raw_content_kind import RawContentKind
 from .raw_content_reason import RawContentReason
 from .registry_access import RegistryAccess
 from .request_application_state import RequestApplicationState
+from .request_decision import RequestDecision
 from .request_decision_details import RequestDecisionDetails
 from .request_detail_response import RequestDetailResponse
 from .request_kind import RequestKind
 from .request_list_response import RequestListResponse
-from .request_review_availability import RequestReviewAvailability
-from .request_state import RequestState
+from .request_resolve_request import RequestResolveRequest
 
 __all__ = [
     'JsonContentKind',
@@ -194,10 +194,10 @@ __all__ = [
     'RawContentReason',
     'RegistryAccess',
     'RequestApplicationState',
+    'RequestDecision',
     'RequestDecisionDetails',
     'RequestDetailResponse',
     'RequestKind',
     'RequestListResponse',
-    'RequestReviewAvailability',
-    'RequestState',
+    'RequestResolveRequest',
 ]

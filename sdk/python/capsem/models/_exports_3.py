@@ -1,5 +1,7 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .request_review_availability import RequestReviewAvailability
+from .request_state import RequestState
 from .request_summary import RequestSummary
 from .resource_summary import ResourceSummary
 from .restart_authentication import RestartAuthentication
@@ -78,10 +80,10 @@ from .vm_files_info import VmFilesInfo
 from .vm_lifecycle_intent import VmLifecycleIntent
 from .vm_lifecycle_selection import VmLifecycleSelection
 from .vm_lifecycle_state import VmLifecycleState
-from .vm_network_info import VmNetworkInfo
-from .vm_readiness_response import VmReadinessResponse
 
 __all__ = [
+    'RequestReviewAvailability',
+    'RequestState',
     'RequestSummary',
     'ResourceSummary',
     'RestartAuthentication',
@@ -160,6 +162,4 @@ __all__ = [
     'VmLifecycleIntent',
     'VmLifecycleSelection',
     'VmLifecycleState',
-    'VmNetworkInfo',
-    'VmReadinessResponse',
 ]

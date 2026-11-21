@@ -24,3 +24,11 @@ class Requests:
         if result.summary.request_id != id:
             raise ValueError("review request identity changed")
         return result
+
+    async def resolve(
+        self, id: str, request: models.RequestResolveRequest, *, request_timeout: float | None = None,
+    ) -> models.EnvironmentMutationResponse:
+        result = await api.resolve_request(self._transport, id=id, body=request, request_timeout=request_timeout)
+        if result.request_id != id:
+            raise ValueError("resolved request identity changed")
+        return result
