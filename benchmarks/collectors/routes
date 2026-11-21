@@ -7,7 +7,9 @@ as an internal control route.
 
 Warm latency reuses connections like the UI and gateway pool; cold latency
 includes setup. Every response must be successful JSON. Managed lifecycle
-POSTs use an idempotently closed tombstone. Prints raw milliseconds plus service
+POSTs use an idempotently closed tombstone. Environment POSTs measure replay of
+the original applied receipt for two mutations performed before timing.
+Prints raw milliseconds plus service
 and gateway CPU deltas; `capsem-bench` computes every statistic. Gateway latency
 includes the authenticated service hop. The retired `service.*` latency series
 measured anonymous public-UDS access, which is no longer an authorized ingress;
@@ -23,6 +25,7 @@ import sys
 import threading
 import time
 import tomllib
+import uuid
 from collections.abc import Callable
 from contextlib import ExitStack, redirect_stdout
 from dataclasses import dataclass
@@ -36,6 +39,7 @@ import psutil
 from helpers.benchmark_assets import clone_benchmark_assets
 from helpers.constants import ASSETS_DIR
 from helpers.debug_session import debug_session
+from helpers.gateway import TcpHttpClient
 from helpers.http_transport import Transport
 from helpers.process_cpu import process_cpu_seconds
 from helpers.service import ServiceInstance
@@ -57,6 +61,50 @@ MANAGED_TOKEN = "af" * 32
 AGENT_ISSUE_ID = "d61cc17c-d5c7-410f-b2f8-767a2f8d5405"
 AGENT_REVOKE_ID = "2bba540e-c785-43f7-9c9b-e19225426132"
 LIVE_ROUTES = {"/vms/{id}/exposures", "/vms/{id}/security/status"}
+VM_READINESS = "/vms/{id}/readiness"
+VM_READINESS_URL = f"/vms/{VM_ID}/readiness?intent=start"
+ENV_CREATE = "/environments/create"
+ENV_CHANGE = "/environments/{id}/changes"
+ENV_INFO = "/environments/{id}/info"
+ENV_READINESS = "/environments/{id}/revisions/{revision_id}/readiness"
+ENV_ROUTES = {ENV_CREATE, ENV_CHANGE, ENV_INFO, ENV_READINESS}
+
+
+@dataclass(frozen=True)
+class EnvironmentFixture:
+    original: dict[str, str]
+    current_revision_id: str
+    replays: dict[str, tuple[bytes, dict]]
+
+
+def seed_environment(client: TcpHttpClient) -> EnvironmentFixture:
+    """Use the operator gateway to commit an environment and then advance it."""
+    create = {
+        "request_id": str(uuid.uuid4()),
+        "specification": {"name": "route-benchmark"},
+        "reason": "create the route benchmark environment",
+    }
+    created = client.post(ENV_CREATE, create)
+    if created["application"] != "applied" or created["request_id"] != create["request_id"]:
+        raise RuntimeError("benchmark environment creation did not apply")
+    original = created["result"]
+    change_path = ENV_CHANGE.format(id=original["environment_id"])
+    change = {
+        "request_id": str(uuid.uuid4()),
+        "base_revision_id": original["revision_id"],
+        "specification": {"name": "route-benchmark", "description": "second revision"},
+        "reason": "advance the route benchmark environment",
+    }
+    changed = client.post(change_path, change)
+    if changed["application"] != "applied" or changed["request_id"] != change["request_id"]:
+        raise RuntimeError("benchmark environment change did not apply")
+    revised = changed["result"]
+    if revised["environment_id"] != original["environment_id"] or revised["revision_id"] == original["revision_id"]:
+        raise RuntimeError("benchmark environment did not advance to a new revision")
+    return EnvironmentFixture(original, revised["revision_id"], {
+        ENV_CREATE: (json.dumps(create).encode(), created),
+        change_path: (json.dumps(change).encode(), changed),
+    })
 
 
 def measured_routes() -> list[str]:
@@ -69,8 +117,18 @@ def route_load_config() -> dict[str, int]:
     return dict(config["benchmark"]["route_load"])
 
 
-def request_path(route: str, live_session_id: str | None = None) -> str:
-    """Resolve a configured route template against the stopped VM fixture."""
+def request_path(
+    route: str, live_session_id: str | None = None, *, environment: EnvironmentFixture | None = None
+) -> str:
+    """Resolve a configured route template against its exact fixture."""
+    if route == VM_READINESS:
+        return VM_READINESS_URL
+    if route in ENV_ROUTES:
+        if environment is None:
+            raise ValueError(f"measured route requires an environment fixture: {route}")
+        return route.format(
+            id=environment.original["environment_id"], revision_id=environment.original["revision_id"]
+        )
     if route == "/agent-access/{id}":
         return f"/agent-access/{AGENT_REVOKE_ID}"
     if route == BODY_ROUTE:
@@ -107,11 +165,16 @@ class Target:
     transport_factory: Callable[[], Transport]
     headers: dict[str, str]
     cpu_processes: dict[str, psutil.Process]
+    environment: EnvironmentFixture | None = None
 
 
 def request(transport: Transport, target: Target, path: str) -> None:
     """Require one successful JSON response."""
     method, request_body = request_input(path)
+    environment = target.environment
+    replay = environment.replays.get(path) if environment is not None else None
+    if replay is not None:
+        method, request_body = "POST", replay[0]
     headers = dict(target.headers)
     if request_body is not None:
         headers["Content-Type"] = "application/json"
@@ -130,6 +193,17 @@ def request(transport: Transport, target: Target, path: str) -> None:
         ) from error
     if path == BODY_URL:
         assert_event_bodies(payload)
+    if path == VM_READINESS_URL and payload["selection"]["id"] != VM_ID:
+        raise RuntimeError("benchmark VM readiness selected a different VM")
+    if replay is not None and payload != replay[1]:
+        raise RuntimeError(f"{path} did not return the original applied receipt")
+    if environment is not None:
+        if path == request_path(ENV_INFO, environment=environment):
+            identity = payload["document"]["identity"]
+            if identity["id"] != environment.original["environment_id"] or identity["revision_id"] != environment.current_revision_id:
+                raise RuntimeError("benchmark environment info did not return the committed head")
+        if path == request_path(ENV_READINESS, environment=environment) and payload["environment"] != environment.original:
+            raise RuntimeError("benchmark environment readiness did not return the requested historical revision")
 
 
 def sample_warm_route(
@@ -241,6 +315,7 @@ def main() -> int:
     metrics: dict[str, dict] = {}
     try:
         seed_stopped_workspace(service.tmp_dir, service.assets_dir)
+        environment = None
         with redirect_stdout(sys.stderr):
             service.start()
             gateway.start()
@@ -249,6 +324,12 @@ def main() -> int:
                 grant = json.loads(body)
                 grant["request_id"] = AGENT_REVOKE_ID
                 service.client().post("/agent-access", grant)
+            if ENV_ROUTES.intersection(routes):
+                client = TcpHttpClient(gateway.base_url, gateway.token)
+                try:
+                    environment = seed_environment(client)
+                finally:
+                    client.close()
         service_proc = psutil.Process(service.proc.pid)
         gateway_proc = psutil.Process(gateway.proc.pid)
         target = Target(
@@ -261,6 +342,7 @@ def main() -> int:
                 "gateway": gateway_proc,
                 "downstream_service": service_proc,
             },
+            environment=environment,
         )
         with ExitStack() as fixtures:
             live_id = None
@@ -269,7 +351,7 @@ def main() -> int:
                     debug_session(service, service.home_dir / "route-registry", "route-live-owner")
                 )
             for path in routes:
-                concrete_path = request_path(path, live_id)
+                concrete_path = request_path(path, live_id, environment=environment)
                 print(f"{target.label} {path}", file=sys.stderr)
                 latencies, cpu = sample_warm_route(target, concrete_path, samples)
                 cold_latencies = sample_cold_route(target, concrete_path, samples)

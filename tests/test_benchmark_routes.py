@@ -28,6 +28,7 @@ loader.exec_module(collector)
         ("/connections", "/connections"),
         ("/status", "/status"),
         ("/vms/{id}/status", f"/vms/{collector.VM_ID}/status"),
+        ("/vms/{id}/readiness", f"/vms/{collector.VM_ID}/readiness?intent=start"),
         ("/vms/{id}/credential-grants", f"/vms/{collector.VM_ID}/credential-grants"),
         (collector.BODY_ROUTE, collector.BODY_URL),
     ],
@@ -40,6 +41,33 @@ def test_measured_paths_use_the_actual_fixture(pattern: str, expected: str) -> N
 def test_a_route_without_a_successful_fixture_is_refused(pattern: str) -> None:
     with pytest.raises(ValueError, match="fixture"):
         collector.request_path(pattern)
+
+
+def test_environment_readiness_targets_the_original_revision():
+    revision = {"environment_id": "environment", "revision_id": "original"}
+    fixture = collector.EnvironmentFixture(revision, "changed", {})
+    route = "/environments/{id}/revisions/{revision_id}/readiness"
+    with pytest.raises(ValueError, match="environment fixture"):
+        collector.request_path(route)
+    assert collector.request_path(route, environment=fixture) == (
+        "/environments/environment/revisions/original/readiness"
+    )
+
+
+def test_a_successful_http_replay_must_return_the_original_applied_receipt():
+    receipt = {"application": "applied", "result": {"revision_id": "original"}}
+    path = "/environments/create"
+    fixture = collector.EnvironmentFixture({}, "changed", {path: (b"{}", receipt)})
+
+    class Transport:
+        def request(self, method, url, *, headers, body):
+            assert (method, url, body) == ("POST", path, b"{}")
+            assert headers["Content-Type"] == "application/json"
+            return 200, {}, b'{"application":"pending"}'
+
+    target = collector.Target("gateway", Transport, {}, {}, fixture)
+    with pytest.raises(RuntimeError, match="original applied receipt"):
+        collector.request(Transport(), target, path)
 
 
 @pytest.mark.parametrize("pattern", ["/vms/{id}/exposures", "/vms/{id}/security/status"])

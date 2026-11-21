@@ -3291,6 +3291,13 @@ measured = [
     "/vms/managed/{request_id}/close",
     "/vms/managed/{request_id}/claim",
     "/connections",
+    # Mutations time replay of an original applied receipt. Seeding creates
+    # both revisions over the authenticated gateway before the timed reads.
+    "/environments/create",
+    "/environments/{id}/changes",
+    "/environments/{id}/info",
+    "/environments/{id}/revisions/{revision_id}/readiness",
+    "/vms/{id}/readiness",
     "/vms/{id}/credential-grants",
     "/vms/{id}/bodies/{event_id}",
     "/vms/{id}/status",
