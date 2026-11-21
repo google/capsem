@@ -18,6 +18,7 @@ mod application;
 pub(crate) mod decisions;
 pub(crate) mod history;
 pub(crate) mod library;
+pub(crate) mod plugins;
 pub(crate) mod proposals;
 pub(crate) mod reviews;
 mod sources;

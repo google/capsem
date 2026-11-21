@@ -250,7 +250,7 @@
         <button type="button" class="text-primary hover:underline" onclick={loadToml}>Retry canonical TOML</button>
       {/if}
     {:else if phase === 'editing'}
-      <EnvironmentFields bind:fields pin={current?.document.specification.image?.resolved_digest} />
+      <EnvironmentFields bind:fields reference={base} pin={current?.document.specification.image?.resolved_digest} />
     {:else if draft && phase !== 'saved'}
       <div class="space-y-3" aria-label="Changed settings" role="region">
         {#each changes as change (change.label)}

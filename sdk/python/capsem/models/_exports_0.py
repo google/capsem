@@ -86,12 +86,12 @@ from .environment_mcps__environment_catalog_selection import (
 )
 from .environment_mutation_response import EnvironmentMutationResponse
 from .environment_packages import EnvironmentPackages
-from .environment_plugins import EnvironmentPlugins
-from .environment_readiness_response import EnvironmentReadinessResponse
-from .environment_review_content import EnvironmentReviewContent
-from .environment_revision_detail_response import EnvironmentRevisionDetailResponse
-from .environment_revision_list_response import EnvironmentRevisionListResponse
-from .environment_revision_reference import EnvironmentRevisionReference
+from .environment_plugin_descriptor import EnvironmentPluginDescriptor
+from .environment_plugin_direction_state import EnvironmentPluginDirectionState
+from .environment_plugin_entry import EnvironmentPluginEntry
+from .environment_plugin_field import EnvironmentPluginField
+from .environment_plugin_field_dependency import EnvironmentPluginFieldDependency
+from .environment_plugin_field_value import EnvironmentPluginFieldValue
 
 __all__ = [
     'AgentAccessScope',
@@ -168,10 +168,10 @@ __all__ = [
     'EnvironmentMcps_EnvironmentCatalogSelection',
     'EnvironmentMutationResponse',
     'EnvironmentPackages',
-    'EnvironmentPlugins',
-    'EnvironmentReadinessResponse',
-    'EnvironmentReviewContent',
-    'EnvironmentRevisionDetailResponse',
-    'EnvironmentRevisionListResponse',
-    'EnvironmentRevisionReference',
+    'EnvironmentPluginDescriptor',
+    'EnvironmentPluginDirectionState',
+    'EnvironmentPluginEntry',
+    'EnvironmentPluginField',
+    'EnvironmentPluginFieldDependency',
+    'EnvironmentPluginFieldValue',
 ]

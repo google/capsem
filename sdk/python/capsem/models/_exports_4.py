@@ -1,5 +1,20 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .tool_decision import ToolDecision
+from .tool_event import ToolEvent
+from .tool_origin import ToolOrigin
+from .transaction_state import TransactionState
+from .triage_response import TriageResponse
+from .update_action_response import UpdateActionResponse
+from .update_action_status import UpdateActionStatus
+from .update_apply_request import UpdateApplyRequest
+from .update_check_request import UpdateCheckRequest
+from .update_command_plan import UpdateCommandPlan
+from .update_compatibility_state import UpdateCompatibilityState
+from .update_status_response import UpdateStatusResponse
+from .update_track_state import UpdateTrackState
+from .update_track_status import UpdateTrackStatus
+from .upload_response import UploadResponse
 from .validation_status import ValidationStatus
 from .value import Value
 from .vm_action import VmAction
@@ -16,8 +31,24 @@ from .vm_stats_detail_response import VmStatsDetailResponse
 from .vm_stats_summary_response import VmStatsSummaryResponse
 from .vm_status_response import VmStatusResponse
 from .vm_summary import VmSummary
+from .widget import Widget
 
 __all__ = [
+    'ToolDecision',
+    'ToolEvent',
+    'ToolOrigin',
+    'TransactionState',
+    'TriageResponse',
+    'UpdateActionResponse',
+    'UpdateActionStatus',
+    'UpdateApplyRequest',
+    'UpdateCheckRequest',
+    'UpdateCommandPlan',
+    'UpdateCompatibilityState',
+    'UpdateStatusResponse',
+    'UpdateTrackState',
+    'UpdateTrackStatus',
+    'UploadResponse',
     'ValidationStatus',
     'Value',
     'VmAction',
@@ -34,4 +65,5 @@ __all__ = [
     'VmStatsSummaryResponse',
     'VmStatusResponse',
     'VmSummary',
+    'Widget',
 ]

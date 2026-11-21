@@ -72,6 +72,9 @@ from .get_vm_timeline import get_vm_timeline as get_vm_timeline
 from .heartbeat_proxy import heartbeat_proxy as heartbeat_proxy
 from .inject_credential import inject_credential as inject_credential
 from .list_connections import list_connections as list_connections
+from .list_environment_plugins import (
+    list_environment_plugins as list_environment_plugins,
+)
 from .list_environment_revisions import (
     list_environment_revisions as list_environment_revisions,
 )
@@ -80,6 +83,9 @@ from .list_images import list_images as list_images
 from .list_mcp_servers import list_mcp_servers as list_mcp_servers
 from .list_mcp_tools import list_mcp_tools as list_mcp_tools
 from .list_networks import list_networks as list_networks
+from .list_new_environment_plugins import (
+    list_new_environment_plugins as list_new_environment_plugins,
+)
 from .list_requests import list_requests as list_requests
 from .list_security_asks import list_security_asks as list_security_asks
 from .list_session_credential_grants import (

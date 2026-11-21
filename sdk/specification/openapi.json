@@ -532,6 +532,38 @@
         }
       }
     },
+    "/environments/plugins/list": {
+      "get": {
+        "operationId": "listNewEnvironmentPlugins",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentPluginListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/environments/{id}/changes": {
       "post": {
         "description": "An operator publishes a blueprint revision. A scoped agent queues a proposal at the exact base revision of its running sandbox. Reconcile the same request ID after interruption. Running sandboxes require separate application.",
@@ -606,6 +638,62 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/EnvironmentCurrentResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/environments/{id}/plugins/list": {
+      "get": {
+        "description": "Inspect configured and effective plugins for a saved environment under current corporate policy. Supply revision_id to require the exact current revision.",
+        "operationId": "listEnvironmentPlugins",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "revision_id",
+            "in": "query",
+            "description": "Require the current environment to match this saved revision.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentPluginListResponse"
                 }
               }
             }
@@ -6405,6 +6493,284 @@
         },
         "additionalProperties": false
       },
+      "EnvironmentPluginDescriptor": {
+        "type": "object",
+        "required": [
+          "id",
+          "version",
+          "name",
+          "description",
+          "stage",
+          "event_families",
+          "directions",
+          "modes",
+          "required",
+          "diagnostic",
+          "groups",
+          "fields",
+          "limitations",
+          "detail_capabilities"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "detail_capabilities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PluginDetailCapability"
+            }
+          },
+          "diagnostic": {
+            "type": "boolean"
+          },
+          "directions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PluginDirection"
+            }
+          },
+          "event_families": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PluginEventFamily"
+            }
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentPluginField"
+            }
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PluginControlGroup"
+            }
+          },
+          "id": {
+            "$ref": "#/components/schemas/PluginId"
+          },
+          "limitations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "modes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SecurityPluginMode"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/PluginStage"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentPluginDirectionState": {
+        "type": "object",
+        "required": [
+          "direction",
+          "mode",
+          "detection_level"
+        ],
+        "properties": {
+          "detection_level": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DetectionLevel"
+              }
+            ]
+          },
+          "direction": {
+            "$ref": "#/components/schemas/PluginDirection"
+          },
+          "mode": {
+            "$ref": "#/components/schemas/SecurityPluginMode"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentPluginEntry": {
+        "type": "object",
+        "required": [
+          "descriptor",
+          "source",
+          "locked",
+          "configured",
+          "effective",
+          "directions"
+        ],
+        "properties": {
+          "configured": {
+            "type": "object",
+            "description": "Fields from the saved entry, keyed by descriptor field ID. Empty when inherited.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/EnvironmentPluginFieldValue"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "descriptor": {
+            "$ref": "#/components/schemas/EnvironmentPluginDescriptor"
+          },
+          "directions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentPluginDirectionState"
+            }
+          },
+          "effective": {
+            "type": "object",
+            "description": "Fields selected by the runtime's whole-entry precedence.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/EnvironmentPluginFieldValue"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "locked": {
+            "type": "boolean"
+          },
+          "source": {
+            "$ref": "#/components/schemas/EnvironmentPluginSource"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentPluginField": {
+        "type": "object",
+        "required": [
+          "id",
+          "category",
+          "name",
+          "description",
+          "default_value",
+          "choices",
+          "dependencies"
+        ],
+        "properties": {
+          "category": {
+            "type": "string"
+          },
+          "choices": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "default_value": {
+            "$ref": "#/components/schemas/EnvironmentPluginFieldValue"
+          },
+          "dependencies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentPluginFieldDependency"
+            }
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "widget": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Widget"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentPluginFieldDependency": {
+        "type": "object",
+        "required": [
+          "field",
+          "not_equals"
+        ],
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "not_equals": {
+            "$ref": "#/components/schemas/EnvironmentPluginFieldValue"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentPluginFieldValue": {
+        "oneOf": [
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "string"
+          }
+        ],
+        "description": "The descriptor projection used by standard plugin controls. General settings\nsupport file and collection values that no built-in plugin field accepts."
+      },
+      "EnvironmentPluginListResponse": {
+        "type": "object",
+        "description": "Policy inputs for a new or saved environment under current corporate policy.",
+        "required": [
+          "revision",
+          "plugins"
+        ],
+        "properties": {
+          "plugins": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentPluginEntry"
+            }
+          },
+          "revision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EnvironmentRevisionReference",
+                "description": "Null for a new environment. Reading plugins never applies policy to a running sandbox."
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentPluginSource": {
+        "type": "string",
+        "enum": [
+          "builtin",
+          "environment",
+          "corporate"
+        ]
+      },
       "EnvironmentPlugins": {
         "type": "object",
         "description": "Absent entries inherit built-in/corporate resolution; an explicit entry\nreplaces the whole plugin configuration, preserving existing precedence.",
@@ -9997,6 +10363,69 @@
         },
         "additionalProperties": false
       },
+      "PluginControlGroup": {
+        "type": "object",
+        "required": [
+          "path",
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string",
+            "description": "Configuration path prefix; empty means the plugin's root entry."
+          }
+        }
+      },
+      "PluginDetailCapability": {
+        "type": "string",
+        "enum": [
+          "credential_inventory"
+        ]
+      },
+      "PluginDirection": {
+        "type": "string",
+        "enum": [
+          "inbound",
+          "outbound"
+        ]
+      },
+      "PluginEventFamily": {
+        "type": "string",
+        "enum": [
+          "http",
+          "model",
+          "mcp",
+          "file",
+          "credential",
+          "network",
+          "dns",
+          "process",
+          "security"
+        ]
+      },
+      "PluginId": {
+        "type": "string",
+        "enum": [
+          "pii_filter",
+          "secret_exfiltration",
+          "utf8_guard",
+          "credential_broker",
+          "log_sanitizer",
+          "dummy_pre_eicar",
+          "dummy_post_allow"
+        ]
+      },
+      "PluginStage": {
+        "type": "string",
+        "enum": [
+          "preprocess",
+          "postprocess",
+          "logging"
+        ]
+      },
       "PreviewSessionResponse": {
         "type": "object",
         "description": "A single-use browser bootstrap. The token is submitted in a POST body to\n`url`; it must never be appended to that URL.",
@@ -11326,6 +11755,16 @@
           "denied",
           "expired",
           "cancelled"
+        ]
+      },
+      "SecurityPluginMode": {
+        "type": "string",
+        "enum": [
+          "disable",
+          "allow",
+          "ask",
+          "block",
+          "rewrite"
         ]
       },
       "ServiceAvailability": {
@@ -13268,6 +13707,22 @@
             "minimum": 0
           }
         }
+      },
+      "Widget": {
+        "type": "string",
+        "description": "Explicit UI widget override. When set on a setting's metadata,\nthe frontend renders this widget instead of inferring from SettingType.",
+        "enum": [
+          "toggle",
+          "text_input",
+          "number_input",
+          "password_input",
+          "select",
+          "file_editor",
+          "domain_chips",
+          "string_chips",
+          "slider",
+          "kv_editor"
+        ]
       }
     },
     "securitySchemes": {

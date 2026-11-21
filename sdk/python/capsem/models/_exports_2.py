@@ -1,5 +1,13 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .image_tool import ImageTool
+from .interaction import Interaction
+from .interaction_block import InteractionBlock
+from .interaction_block_kind import InteractionBlockKind
+from .interaction_body import InteractionBody
+from .interaction_content import InteractionContent
+from .interaction_message import InteractionMessage
+from .interaction_message_kind import InteractionMessageKind
 from .interaction_report import InteractionReport
 from .interaction_request import InteractionRequest
 from .interaction_request_kind import InteractionRequestKind
@@ -106,20 +114,20 @@ from .plugin_configuration__utf8_guard_options_mode import (
 from .plugin_configuration__utf8_guard_options_options import (
     PluginConfiguration_Utf8GuardOptionsOptions,
 )
-from .preview_session_response import PreviewSessionResponse
-from .preview_sessions_revoked_response import PreviewSessionsRevokedResponse
-from .process_event import ProcessEvent
-from .provider_revocation_state import ProviderRevocationState
-from .provision_request import ProvisionRequest
-from .provision_response import ProvisionResponse
-from .proxy_heartbeat_response import ProxyHeartbeatResponse
-from .proxy_lease_request import ProxyLeaseRequest
-from .purge_request import PurgeRequest
-from .purge_response import PurgeResponse
-from .raw_content import RawContent
-from .raw_content_kind import RawContentKind
+from .plugin_control_group import PluginControlGroup
+from .plugin_detail_capability import PluginDetailCapability
+from .plugin_direction import PluginDirection
+from .plugin_event_family import PluginEventFamily
 
 __all__ = [
+    'ImageTool',
+    'Interaction',
+    'InteractionBlock',
+    'InteractionBlockKind',
+    'InteractionBody',
+    'InteractionContent',
+    'InteractionMessage',
+    'InteractionMessageKind',
     'InteractionReport',
     'InteractionRequest',
     'InteractionRequestKind',
@@ -188,16 +196,8 @@ __all__ = [
     'PluginConfiguration_Utf8GuardOptions',
     'PluginConfiguration_Utf8GuardOptionsMode',
     'PluginConfiguration_Utf8GuardOptionsOptions',
-    'PreviewSessionResponse',
-    'PreviewSessionsRevokedResponse',
-    'ProcessEvent',
-    'ProviderRevocationState',
-    'ProvisionRequest',
-    'ProvisionResponse',
-    'ProxyHeartbeatResponse',
-    'ProxyLeaseRequest',
-    'PurgeRequest',
-    'PurgeResponse',
-    'RawContent',
-    'RawContentKind',
+    'PluginControlGroup',
+    'PluginDetailCapability',
+    'PluginDirection',
+    'PluginEventFamily',
 ]

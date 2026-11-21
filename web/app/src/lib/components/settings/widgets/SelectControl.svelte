@@ -21,6 +21,7 @@
     {/if}
   </div>
   <select
+    aria-label={leaf.name}
     class="py-2 px-3 text-sm rounded-lg border border-line-2 bg-layer text-foreground
       focus:outline-hidden focus:border-primary w-40 shrink-0
       {disabled ? 'opacity-50 cursor-not-allowed' : ''}"

@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Edit environment plugins from built-in descriptors and inspect effective settings, supported directions, and corporate locks in the desktop and SDKs.
 - Fixed: The exact Debian install gate accepts packages from a worktree's shared cache and uses the configured package path inside the test container.
 - Added: Review edits to canonical TOML and inspect previous environment revisions in the desktop, including purge markers.
 - Added: Operators can inspect committed environment revisions and validate canonical TOML edits against the exact saved base through the gateway and SDKs.

@@ -93,6 +93,27 @@ impl Environments<'_> {
         Ok(result)
     }
 
+    /// Read effective plugins for an exact current revision, or defaults for creation.
+    pub async fn plugins(
+        &self,
+        reference: Option<&EnvironmentRevisionReference>,
+    ) -> Result<models::EnvironmentPluginListResponse> {
+        let result = if let Some(reference) = reference {
+            reference.validate().map_err(Error::InvalidInput)?;
+            let input = api::ListEnvironmentPluginsParams {
+                id: reference.environment_id.clone(),
+                revision_id: Some(reference.revision_id.clone()),
+            };
+            api::list_environment_plugins(&self.0.transport, &input, self.0.options).await?
+        } else {
+            api::list_new_environment_plugins(&self.0.transport, self.0.options).await?
+        };
+        if result.revision.as_ref() != reference {
+            return Err(Error::InvalidResponse("environment plugin revision identity changed"));
+        }
+        Ok(result)
+    }
+
     pub async fn validate_toml(
         &self,
         base: &EnvironmentRevisionReference,

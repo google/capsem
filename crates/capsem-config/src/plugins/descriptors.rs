@@ -29,7 +29,15 @@ pub enum PluginDirection {
     Outbound,
 }
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvironmentPluginSource {
+    Builtin,
+    Environment,
+    Corporate,
+}
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginEventFamily {
     Http,
@@ -43,7 +51,7 @@ pub enum PluginEventFamily {
     Security,
 }
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PluginDetailCapability {
     CredentialInventory,
@@ -63,7 +71,7 @@ pub struct PluginField {
     pub dependencies: Vec<PluginFieldDependency>,
 }
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PluginControlGroup {
     /// Configuration path prefix; empty means the plugin's root entry.
     pub path: String,

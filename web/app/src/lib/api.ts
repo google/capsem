@@ -77,6 +77,10 @@ export function getSavedEnvironment(id: string, signal: AbortSignal) {
   return _sdk.call(transport => new Environments(transport).info(id, { signal }));
 }
 
+export function listEnvironmentPlugins(reference: EnvironmentRevisionReference | null, signal: AbortSignal) {
+  return _sdk.call(transport => new Environments(transport).plugins(reference, { signal }));
+}
+
 export function listSavedEnvironmentRevisions(id: string, options: EnvironmentRevisionListOptions) {
   return _sdk.call(transport => new Environments(transport).listRevisions(id, options));
 }

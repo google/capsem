@@ -104,7 +104,9 @@ pub(crate) async fn restrict_owner_routes(
                     .is_some_and(|path| {
                         matches!(
                             path.as_str(),
-                            "/environments/{id}/info" | "/environments/{id}/revisions/{revision_id}/readiness"
+                            "/environments/{id}/info"
+                                | "/environments/{id}/plugins/list"
+                                | "/environments/{id}/revisions/{revision_id}/readiness"
                         )
                     })
                 && request

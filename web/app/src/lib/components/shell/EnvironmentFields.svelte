@@ -1,6 +1,8 @@
 <script lang="ts">
+  import type { EnvironmentRevisionReference } from '@capsem/sdk';
   import { environmentSectionKeys, environmentSections, type EnvironmentFields } from '../../models/environment-editor';
-  let { fields = $bindable(), pin }: { fields: EnvironmentFields; pin?: string } = $props();
+  import EnvironmentPluginFields from './EnvironmentPluginFields.svelte';
+  let { fields = $bindable(), pin, reference }: { fields: EnvironmentFields; pin?: string; reference: EnvironmentRevisionReference | null } = $props();
   const id = $props.id();
   const input = 'w-full rounded-lg border border-line-2 bg-background-1 px-3 py-2 text-sm text-foreground outline-hidden focus:border-primary';
 </script>
@@ -49,6 +51,9 @@
 
   <div class="space-y-2">
     {#each environmentSectionKeys as key (key)}
+      {#if key === 'plugins'}
+      <EnvironmentPluginFields {reference} bind:value={fields.sections.plugins} />
+      {:else}
       <details class="rounded-lg border border-line-2">
         <summary class="cursor-pointer px-3 py-2 text-sm font-medium">{environmentSections[key]}</summary>
         <div class="space-y-1 p-3 pt-0">
@@ -57,6 +62,7 @@
           <textarea id={`${id}-${key}`} class={`${input} font-mono`} bind:value={fields.sections[key]} rows="5" spellcheck="false"></textarea>
         </div>
       </details>
+      {/if}
     {/each}
   </div>
 </div>

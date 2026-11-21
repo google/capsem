@@ -4,13 +4,7 @@
 use capsem_config::{plugins::*, DetectionLevel, SecurityPluginMode};
 use std::collections::BTreeMap;
 
-pub use capsem_config::plugins::PluginDirection;
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EnvironmentPluginSource {
-    Builtin,
-    Environment,
-    Corporate,
-}
+pub use capsem_config::plugins::{EnvironmentPluginSource, PluginDirection};
 
 /// Each plugin owns its option contract; unrelated plugins never receive a
 /// PII-shaped configuration bag. More complex plugins can compile their own
@@ -78,6 +72,15 @@ fn compiled<O: PluginOptions>(
 }
 
 impl CompiledEnvironmentPlugins {
+    pub fn with_corporate(environment: &EnvironmentPlugins, corporate: &capsem_config::SettingsFile) -> Result<Self, String> {
+        corporate.validate_metadata_contract()?;
+        if !corporate.plugins.is_empty() {
+            return Err("environment policy requires typed corporate environment_plugins, not legacy plugin modes".into());
+        }
+        let defaults = EnvironmentPlugins::default();
+        Self::resolve(environment, corporate.environment_plugins.as_ref().unwrap_or(&defaults))
+    }
+
     /// Resolve whole plugin entries, never merge corporate fields into an
     /// environment's entry. The source/lock metadata describes this resolution;
     /// it is not caller authority or a policy publication acknowledgement.
@@ -176,16 +179,6 @@ mod tests;
 
 impl super::EnvironmentPolicyInputs<'_> {
     pub fn compile_plugins(&self) -> Result<CompiledEnvironmentPlugins, String> {
-        self.corporate().validate_metadata_contract()?;
-        if !self.corporate().plugins.is_empty() {
-            return Err(
-                "environment policy requires typed corporate environment_plugins, not legacy plugin modes".into(),
-            );
-        }
-        let defaults = EnvironmentPlugins::default();
-        CompiledEnvironmentPlugins::resolve(
-            self.plugins(),
-            self.corporate().environment_plugins.as_ref().unwrap_or(&defaults),
-        )
+        CompiledEnvironmentPlugins::with_corporate(self.plugins(), self.corporate())
     }
 }

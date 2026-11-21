@@ -1,5 +1,13 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+export type { McpToolsListResponse } from "./McpToolsListResponse.js";
+export type { McpUsage } from "./McpUsage.js";
+export type { ModelEvent } from "./ModelEvent.js";
+export type { ModelUsage } from "./ModelUsage.js";
+export { NetworkDecision } from "./NetworkDecision.js";
+export type { NetworkInfo } from "./NetworkInfo.js";
+export type { NetworkListResponse } from "./NetworkListResponse.js";
+export type { NetworkLogEvent } from "./NetworkLogEvent.js";
 export type { NetworkLogsResponse } from "./NetworkLogsResponse.js";
 export type { NetworkMemberInfo } from "./NetworkMemberInfo.js";
 export { NetworkMemberState } from "./NetworkMemberState.js";
@@ -28,6 +36,12 @@ export type { PluginConfiguration_SecretExfiltrationOptionsOptions } from "./Plu
 export type { PluginConfiguration_Utf8GuardOptions } from "./PluginConfiguration_Utf8GuardOptions.js";
 export { PluginConfiguration_Utf8GuardOptionsMode } from "./PluginConfiguration_Utf8GuardOptionsMode.js";
 export type { PluginConfiguration_Utf8GuardOptionsOptions } from "./PluginConfiguration_Utf8GuardOptionsOptions.js";
+export type { PluginControlGroup } from "./PluginControlGroup.js";
+export { PluginDetailCapability } from "./PluginDetailCapability.js";
+export { PluginDirection } from "./PluginDirection.js";
+export { PluginEventFamily } from "./PluginEventFamily.js";
+export { PluginId } from "./PluginId.js";
+export { PluginStage } from "./PluginStage.js";
 export type { PreviewSessionResponse } from "./PreviewSessionResponse.js";
 export type { PreviewSessionsRevokedResponse } from "./PreviewSessionsRevokedResponse.js";
 export type { ProcessEvent } from "./ProcessEvent.js";
@@ -67,6 +81,7 @@ export type { SecurityAskListResponse } from "./SecurityAskListResponse.js";
 export type { SecurityAskRequest } from "./SecurityAskRequest.js";
 export type { SecurityAskResolveRequest } from "./SecurityAskResolveRequest.js";
 export { SecurityAskStatus } from "./SecurityAskStatus.js";
+export { SecurityPluginMode } from "./SecurityPluginMode.js";
 export { ServiceAvailability } from "./ServiceAvailability.js";
 export { ServiceManager } from "./ServiceManager.js";
 export type { SessionDbStatus } from "./SessionDbStatus.js";
@@ -136,3 +151,4 @@ export type { VmStatsDetailResponse } from "./VmStatsDetailResponse.js";
 export type { VmStatsSummaryResponse } from "./VmStatsSummaryResponse.js";
 export type { VmStatusResponse } from "./VmStatusResponse.js";
 export type { VmSummary } from "./VmSummary.js";
+export { Widget } from "./Widget.js";

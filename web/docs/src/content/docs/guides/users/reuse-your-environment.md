@@ -70,6 +70,13 @@ Select **Review changes**, check the settings, enter a reason, and select
 **Save environment**. Running sessions keep their existing revisions. If the
 saved revision changes before you save, reload it before starting a new edit.
 
+Open **Plugins** to inspect the settings that Capsem will use when this
+environment starts. The editor shows the effective modes for each supported
+direction and locks entries owned by corporate policy. Expand a plugin to
+inspect its options, protocol coverage, and any saved values overridden by
+corporate policy. Editable options are included in the same review before
+saving.
+
 To edit a saved revision as text, open **TOML** in its editor. Keep the
 revision identity fields as shown. When changing an image, repository, or
 catalog selector, remove its old resolution fields so Capsem can resolve the

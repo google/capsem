@@ -53,6 +53,18 @@ export class Environments {
     return result;
   }
 
+  /** Read plugins for an exact current revision, or defaults for creation. */
+  async plugins(reference: models.EnvironmentRevisionReference | null = null, options: CallOptions = {}): Promise<models.EnvironmentPluginListResponse> {
+    const result = reference
+      ? await api.listEnvironmentPlugins(this.transport, {id: reference.environment_id, revision_id: reference.revision_id}, options)
+      : await api.listNewEnvironmentPlugins(this.transport, options);
+    if (reference === null ? result.revision !== null : result.revision === null) {
+      throw new Error('Environment plugin revision identity changed');
+    }
+    if (reference && result.revision) verifyRevision(reference, result.revision);
+    return result;
+  }
+
   async validateToml(base: models.EnvironmentRevisionReference, toml: string, options: CallOptions = {}): Promise<models.EnvironmentTomlValidationResponse> {
     const result = await api.validateEnvironmentToml(this.transport, {id: base.environment_id, revision_id: base.revision_id, body: {toml}}, options);
     verifyRevision(base, result.base);

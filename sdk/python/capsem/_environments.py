@@ -73,6 +73,22 @@ class Environments:
             raise ValueError("environment revision identity changed")
         return result
 
+    async def plugins(
+        self, reference: models.EnvironmentRevisionReference | None = None, *,
+        request_timeout: float | None = None,
+    ) -> models.EnvironmentPluginListResponse:
+        """Read plugins against an exact current revision, or defaults for creation."""
+        if reference is None:
+            result = await api.list_new_environment_plugins(self._transport, request_timeout=request_timeout)
+        else:
+            result = await api.list_environment_plugins(
+                self._transport, id=reference.environment_id, revision_id=reference.revision_id,
+                request_timeout=request_timeout,
+            )
+        if result.revision != reference:
+            raise ValueError("environment plugin revision identity changed")
+        return result
+
     async def validate_toml(
         self, base: models.EnvironmentRevisionReference, toml: str, *, request_timeout: float | None = None,
     ) -> models.EnvironmentTomlValidationResponse:
