@@ -71,6 +71,26 @@ def test_gateway_submission_preserves_the_committed_head_and_running_sibling(ser
             "application_error": None,
         }
         assert agent.call_json("POST", path, payload) == (200, proposal)
+        inbox_path = "/requests/list?pending_only=true"
+        review_path = f"/requests/{payload['request_id']}/info"
+        assert agent.call_json("GET", inbox_path)[0] == 403
+        assert agent.call_json("GET", review_path)[0] == 403
+        inbox_status, inbox = operator.call_json("GET", inbox_path)
+        assert inbox_status == 200, inbox
+        assert len(inbox["requests"]) == 1
+        review_status, review = operator.call_json("GET", review_path)
+        assert review_status == 200, review
+        assert review["summary"] == inbox["requests"][0]
+        assert review["summary"]["base"] == base
+        assert review["summary"]["requester"] == {
+            "session_id": owner,
+            "generation": targets[owner]["owner_generation"],
+        }
+        assert review["summary"]["decision"] == "pending"
+        assert review["disposition"] is None
+        assert review["base"]["specification"]["variables"] == {"EDITOR": "vim"}
+        assert review["proposed"]["specification"]["variables"] == {"EDITOR": "emacs"}
+
         head = operator.get(f"/environments/{base['environment_id']}/info")["document"]
         assert head["identity"]["revision_id"] == base["revision_id"]
         assert head["specification"]["variables"] == {"EDITOR": "vim"}
@@ -93,4 +113,15 @@ def test_gateway_submission_preserves_the_committed_head_and_running_sibling(ser
         if ambiguous is not None:
             ambiguous.close()
         operator.close()
+        gateway.stop()
+
+    service.stop(cleanup=False)
+    service.start()
+    gateway.start()
+    recovered_operator = TcpHttpClient(gateway.base_url, gateway.token)
+    try:
+        assert recovered_operator.call_json("GET", review_path) == (200, review)
+        assert recovered_operator.call_json("GET", inbox_path) == (200, inbox)
+    finally:
+        recovered_operator.close()
         gateway.stop()
