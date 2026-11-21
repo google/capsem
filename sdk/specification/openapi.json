@@ -470,7 +470,7 @@
     },
     "/environments/{id}/changes": {
       "post": {
-        "description": "Publish an operator change to a blueprint at its exact observed base revision. Reconcile the same request ID after interruption without replaying the change. Running sandboxes require separate application.",
+        "description": "An operator publishes a blueprint revision. A scoped agent queues a proposal at the exact base revision of its running sandbox. Reconcile the same request ID after interruption. Running sandboxes require separate application.",
         "operationId": "changeEnvironment",
         "parameters": [
           {
@@ -1690,6 +1690,111 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PurgeResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/requests/list": {
+      "get": {
+        "description": "List durable environment requests visible to the operator.",
+        "operationId": "listRequests",
+        "parameters": [
+          {
+            "name": "after",
+            "in": "query",
+            "description": "Continue after the cursor returned by the previous page.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "pending_only",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/requests/{id}/info": {
+      "get": {
+        "operationId": "getRequestInfo",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestDetailResponse"
                 }
               }
             }
@@ -6003,6 +6108,35 @@
         },
         "additionalProperties": false
       },
+      "EnvironmentReviewContent": {
+        "type": "object",
+        "required": [
+          "availability",
+          "purged_variables"
+        ],
+        "properties": {
+          "availability": {
+            "$ref": "#/components/schemas/RequestReviewAvailability"
+          },
+          "purged_variables": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "specification": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
       "EnvironmentRevisionReference": {
         "type": "object",
         "required": [
@@ -9745,6 +9879,114 @@
           "failed"
         ]
       },
+      "RequestDecisionDetails": {
+        "type": "object",
+        "required": [
+          "actor",
+          "reason",
+          "timestamp_unix_ms"
+        ],
+        "properties": {
+          "actor": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "timestamp_unix_ms": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RequestDetailResponse": {
+        "type": "object",
+        "required": [
+          "summary",
+          "observed_revision",
+          "proposed",
+          "targets"
+        ],
+        "properties": {
+          "base": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EnvironmentReviewContent"
+              }
+            ]
+          },
+          "disposition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RequestDecisionDetails"
+              }
+            ]
+          },
+          "observed_revision": {
+            "type": "string",
+            "description": "Immutable observation required when resolving the reviewed request."
+          },
+          "proposed": {
+            "$ref": "#/components/schemas/EnvironmentReviewContent"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/RequestSummary"
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentSandboxTarget"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "RequestKind": {
+        "type": "string",
+        "enum": [
+          "environment_change",
+          "environment_image_update",
+          "environment_promotion",
+          "environment_apply"
+        ]
+      },
+      "RequestListResponse": {
+        "type": "object",
+        "required": [
+          "requests"
+        ],
+        "properties": {
+          "next_cursor": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "requests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RequestSummary"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "RequestReviewAvailability": {
+        "type": "string",
+        "enum": [
+          "complete",
+          "purged",
+          "unavailable"
+        ]
+      },
       "RequestState": {
         "type": "string",
         "description": "A durable decision never implies that its approved effect has been applied.",
@@ -9756,6 +9998,94 @@
           "expired",
           "stale"
         ]
+      },
+      "RequestSummary": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "kind",
+          "environment_id",
+          "actor",
+          "reason",
+          "timestamp_unix_ms",
+          "expires_at_unix_ms",
+          "decision",
+          "application"
+        ],
+        "properties": {
+          "actor": {
+            "type": "string"
+          },
+          "application": {
+            "$ref": "#/components/schemas/RequestApplicationState"
+          },
+          "base": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EnvironmentRevisionReference"
+              }
+            ]
+          },
+          "decision": {
+            "$ref": "#/components/schemas/RequestState"
+          },
+          "environment_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "expires_at_unix_ms": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/RequestKind"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "requester": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EnvironmentSandboxTarget"
+              }
+            ]
+          },
+          "result": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EnvironmentRevisionReference"
+              }
+            ]
+          },
+          "source": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EnvironmentRevisionReference"
+              }
+            ]
+          },
+          "timestamp_unix_ms": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "additionalProperties": false
       },
       "ResourceSummary": {
         "type": "object",

@@ -1,7 +1,10 @@
 //! Decisions are intent. Authentication and the observed request's current
 //! eligibility remain mandatory service checks, independent of these DTOs.
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
+
+pub use review::*;
+mod review;
 
 /// A durable decision never implies that its approved effect has been applied.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]

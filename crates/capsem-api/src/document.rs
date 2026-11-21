@@ -36,11 +36,19 @@ pub fn openapi() -> OpenApi {
     doc.add("/environments/create", HttpMethod::Post, create);
     let request = doc.schema::<environments::EnvironmentChangeRequest>();
     let change = doc.operation::<EnvironmentMutationResponse>("/environments/{id}/changes", "changeEnvironment")
-        .description(Some("Publish an operator change to a blueprint at its exact observed base revision. Reconcile the same request ID after interruption without replaying the change. Running sandboxes require separate application."))
+        .description(Some("An operator publishes a blueprint revision. A scoped agent queues a proposal at the exact base revision of its running sandbox. Reconcile the same request ID after interruption. Running sandboxes require separate application."))
         .request_body(Some(RequestBodyBuilder::new().required(Some(Required::True))
             .content("application/json", Content::new(Some(request))).build()))
         .extensions(Some([("x-capsem-request-timeout-ms", IMAGE_PULL_REQUEST_TIMEOUT_MS)].into_iter().collect()));
     doc.add("/environments/{id}/changes", HttpMethod::Post, change);
+    let requests = doc
+        .operation::<requests::RequestListResponse>("/requests/list", "listRequests")
+        .description(Some("List durable environment requests visible to the operator."))
+        .parameters(Some(requests::RequestListQuery::into_params(|| {
+            Some(ParameterIn::Query)
+        })));
+    doc.add("/requests/list", HttpMethod::Get, requests);
+    doc.get::<requests::RequestDetailResponse>("/requests/{id}/info", "getRequestInfo");
     doc.get::<ListResponse>("/vms/list", "listVms");
     doc.post::<ProvisionRequest, ProvisionResponse>("/vms/create", "createVm");
     doc.post::<ManagedSessionClaimRequest, ManagedSessionClaimResponse>(
