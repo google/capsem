@@ -60,6 +60,7 @@ pub const ROUTES: &[&str] = &[
     "/purge",
     "/requests/list",
     "/requests/{id}/info",
+    "/requests/{id}/resolve",
     "/restart",
     "/run",
     "/security/latest",
