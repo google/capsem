@@ -56,6 +56,18 @@ export function resolveSecurityAsk(vmId:string,askId:string,generation:string,de
   return _sdk.call(transport=>gateway.resolveSecurityAsk(transport,{id:vmId,ask_id:askId,body:{generation,decision}}),false);
 }
 
+export async function listEnvironmentRequests() {
+  return (await _sdk.call(transport => gateway.listRequests(transport, { pending_only: true }))).requests;
+}
+
+export function getEnvironmentRequest(id: string) {
+  return _sdk.call(transport => gateway.getRequestInfo(transport, { id }));
+}
+
+export function resolveEnvironmentRequest(id: string, body: import('@capsem/sdk').RequestResolveRequest) {
+  return _sdk.call(transport => gateway.resolveRequest(transport, { id, body }), false);
+}
+
 // -- Public getters --
 
 export function isConnected(): boolean {

@@ -1,18 +1,22 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { SecurityAskStatus, type SecurityAskDecision } from '@capsem/sdk';
-  import { listSecurityAsks, onApprovalQueueChanged, resolveSecurityAsk } from '../../api';
+  import { SecurityAskStatus, type RequestSummary, type SecurityAskDecision } from '@capsem/sdk';
+  import { listEnvironmentRequests, listSecurityAsks, onApprovalQueueChanged, resolveSecurityAsk } from '../../api';
   import { ApiError } from '../../gateway-sdk';
   import { vmStore } from '../../stores/vms.svelte';
   import { watchVisibleRefresh } from '../../models/visible-refresh';
   import { ApprovalQueue, ApprovalNotices, ApprovalRefresh, type ApprovalState } from '../../models/security-asks';
   import ApprovalPanel from './ApprovalPanel.svelte';
+  import EnvironmentApprovalPanel from './EnvironmentApprovalPanel.svelte';
 
   let activeVm = $state<string | null>(null);
   let focusAsk = $state<string | null>(null);
   let view = $state<ApprovalState>({ response: null, loading: false, resolving: null, error: null });
   let notice = $state<{ vmId: string; askId: string; generation: string } | null>(null);
   let queueCounts = $state(new Map<string, number>());
+  let environmentRequests = $state<RequestSummary[]>([]);
+  let environmentOpen = $state(false);
+  let environmentEpoch = 0;
   const notices = new ApprovalNotices();
   const queue = new ApprovalQueue(listSecurityAsks, resolveSecurityAsk, value => view = value);
   let names = $derived(new Map(vmStore.vms.map(vm => [vm.id, vm.name])));
@@ -26,10 +30,25 @@
   let noticeLabel = $derived(notice ? `Approval requested by ${names.get(notice.vmId) ?? notice.vmId}` : '');
 
   function open(vmId: string, askId: string | null = null) {
+    environmentOpen = false;
     activeVm = vmId;
     focusAsk = askId;
     notice = null;
     void queue.load(vmId);
+  }
+  function openEnvironment() {
+    close();
+    environmentOpen = true;
+  }
+
+  async function refreshEnvironment() {
+    const epoch = ++environmentEpoch;
+    try {
+      const listed = await listEnvironmentRequests();
+      if (epoch === environmentEpoch) environmentRequests = listed;
+    } catch {
+      // Keep the last confirmed queue while the service reconnects.
+    }
   }
   function close() {
     activeVm = null;
@@ -85,24 +104,31 @@
 
   onMount(() => {
     const unsubscribe = onApprovalQueueChanged(
-      id => { void refresh.enqueue([id], true); },
-      () => { void vmStore.refresh().then(() => reconcile(true)); },
+      id => { void refresh.enqueue([id], true); void refreshEnvironment(); },
+      () => { void vmStore.refresh().then(() => reconcile(true)); void refreshEnvironment(); },
     );
     void reconcile();
-    const stop = watchVisibleRefresh(reconcile, 2000);
+    void refreshEnvironment();
+    const stop = watchVisibleRefresh(async () => { await Promise.all([reconcile(), refreshEnvironment()]); }, 2000);
     return () => {
       unsubscribe();
       stop();
       refresh.dispose();
       queue.dispose();
+      environmentEpoch++;
     };
   });
 </script>
-{#if count>0 || activeVm}
+{#if count>0 || activeVm || environmentRequests.length>0}
   <div class="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-line-2 bg-background-1 px-4 py-2 text-sm">
     <div class="flex flex-wrap items-center gap-2">
-      <span class="font-medium text-primary">{count} pending {count===1?'approval':'approvals'}</span>
+      {#if count>0 || activeVm}<span class="font-medium text-primary">{count} pending {count===1?'approval':'approvals'}</span>{/if}
       {#each pending as [id] (id)}<button type="button" class="rounded-md px-2 py-1 text-primary hover:bg-muted-hover" onclick={()=>open(id)}>Review {names.get(id)??id}</button>{/each}
+      {#if environmentRequests.length>0}
+        <button type="button" class="rounded-md px-2 py-1 text-primary hover:bg-muted-hover" onclick={openEnvironment}>
+          Review environment changes ({environmentRequests.length})
+        </button>
+      {/if}
     </div>
     {#if notice}
       <button type="button" class="text-primary hover:underline" aria-label={noticeLabel} onclick={() => notice && open(notice.vmId, notice.askId)}>
@@ -112,3 +138,7 @@
   </div>
 {/if}
 {#if activeVm}<ApprovalPanel state={view} vmName={activeName} {focusAsk} onclose={close} onretry={()=>{if(activeVm)void queue.load(activeVm);}} ondecide={decide}/>{/if}
+{#if environmentOpen}
+  <EnvironmentApprovalPanel requests={environmentRequests} {names}
+    onclose={() => environmentOpen = false} onresolved={refreshEnvironment} />
+{/if}
