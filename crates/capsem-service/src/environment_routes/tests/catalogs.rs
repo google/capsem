@@ -85,6 +85,7 @@ async fn launch_policy_uses_pinned_rule_content_and_current_catalog_admission() 
 
 struct Source {
     ca_pem: String,
+    cache: capsem_assets::oci::ImageCache,
     corporate: Arc<Mutex<SettingsFile>>,
     broken: Arc<Mutex<bool>>,
 }
@@ -96,11 +97,12 @@ impl ImageSource for Source {
         Box::pin(async { anyhow::bail!("unexpected image catalog request") })
     }
     fn environment_catalog_puller(&self) -> anyhow::Result<capsem_assets::oci::Puller> {
-        capsem_assets::oci::Puller::new_with_root_certificate(
+        Ok(capsem_assets::oci::Puller::new_with_root_certificate(
             capsem_core::container::stage::oci_architecture()?,
             capsem_assets::oci::RegistryAuth::Anonymous,
             Some(self.ca_pem.as_bytes()),
-        )
+        )?
+        .with_cache(&self.cache))
     }
     fn environment_catalog_policy(&self) -> CatalogPolicyFuture {
         let corporate = self.corporate.lock().unwrap().clone();
@@ -123,8 +125,10 @@ impl Fixture {
         let corporate = Arc::new(Mutex::new(SettingsFile::default()));
         let broken = Arc::new(Mutex::new(false));
         let mut state = crate::tests::make_test_state_owned();
+        let cache = capsem_assets::oci::ImageCache::at(&state.run_dir.join("catalog-cache")).unwrap();
         state.containers = ContainerSetups::with_source(Box::new(Source {
             ca_pem: registry.ca_pem.clone(),
+            cache,
             corporate: corporate.clone(),
             broken: broken.clone(),
         }));
