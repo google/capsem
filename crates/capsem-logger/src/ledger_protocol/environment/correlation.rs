@@ -25,6 +25,7 @@ pub(super) fn matches(reply: &LedgerEnvironmentReply, query: &LedgerEnvironmentQ
         (LedgerEnvironmentReply::References {records},LedgerEnvironmentQuery::References {query})=>match query {
             EnvironmentReferenceQuery::CurrentEnvironment {environment_id}=>records.len()<=1&&records.iter().all(|r|matches!(r,EnvironmentReferenceRecord::CurrentEnvironment {revision} if revision.environment_id==*environment_id)),
             EnvironmentReferenceQuery::Sandbox {..}=>records.len()<=3&&records.iter().all(|r|matches!(r,EnvironmentReferenceRecord::Sandbox {..})),
+            EnvironmentReferenceQuery::CurrentEnvironments {after,limit} => records.len() <= usize::from(*limit) && validation::current_heads(records, after.as_deref()),
         },
         (LedgerEnvironmentReply::Applications {records},LedgerEnvironmentQuery::Applications {query})=>match query {
             EnvironmentApplicationQuery::Get {request_id,target}=>records.len()<=1&&records.iter().all(|r|r.request_id==*request_id&&r.target==*target),

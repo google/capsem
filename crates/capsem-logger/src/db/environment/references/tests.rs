@@ -40,6 +40,43 @@ fn sandbox(generation: u64) -> EnvironmentReferenceQuery {
 }
 
 #[tokio::test]
+async fn current_environment_head_pages_sort_bound_and_resume_after_the_exact_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = DbHandle::open(&dir.path().join("host.db")).unwrap();
+    for (environment, revision) in [(3, 13), (1, 11), (2, 12)] {
+        committed(&db, environment, revision).await;
+    }
+    let page = |after, limit| EnvironmentReferenceQuery::CurrentEnvironments { after, limit };
+    let record = |owner, revision| EnvironmentReferenceRecord::CurrentEnvironment {
+        revision: EnvironmentRevisionParent {
+            environment_id: id(owner),
+            revision_id: id(revision),
+        },
+    };
+    assert_eq!(
+        db.environment_references(page(None, 2)).await.unwrap(),
+        [record(1, 11), record(2, 12)]
+    );
+    assert_eq!(
+        db.environment_references(page(Some(id(2)), 2)).await.unwrap(),
+        [record(3, 13)]
+    );
+    assert!(db
+        .environment_references(page(Some(id(3)), 2))
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(db
+        .environment_references(page(Some("invalid".into()), 2))
+        .await
+        .is_err());
+    assert!(db
+        .environment_references(page(None, ENVIRONMENT_HEAD_PAGE_MAX + 1))
+        .await
+        .is_err());
+}
+
+#[tokio::test]
 async fn references_read_exact_current_and_independent_sandbox_dimensions() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("host.db");

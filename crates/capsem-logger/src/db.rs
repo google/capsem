@@ -885,7 +885,7 @@ pub(crate) use environment::applications::{decode_application_row, APPLICATION_C
 pub use environment::history::{EnvironmentHistoryPayload, EnvironmentVariablePurgeMarker};
 pub use environment::purges::EnvironmentVariablePurgeQuery;
 pub(crate) use environment::purges::{decode_purge_row, PURGE_COLUMNS};
-pub use environment::references::{EnvironmentReferenceQuery, EnvironmentReferenceRecord};
+pub use environment::references::{EnvironmentReferenceQuery, EnvironmentReferenceRecord, ENVIRONMENT_HEAD_PAGE_MAX};
 pub use environment::requests::{
     EnvironmentRequestHistory, EnvironmentRequestQuery, EnvironmentRequestRecord, EnvironmentRequestSnapshot,
 };

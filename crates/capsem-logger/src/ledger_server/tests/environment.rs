@@ -97,6 +97,15 @@ async fn environment_reads_use_the_owning_ledger_client_and_typed_db_queries() {
         .unwrap();
     assert!(matches!(reply,LedgerEnvironmentReply::References {records} if records.len()==1));
     let reply = client
+        .environment_read(LedgerEnvironmentQuery::References {
+            query: EnvironmentReferenceQuery::CurrentEnvironments { after: None, limit: 2 },
+        })
+        .await
+        .unwrap();
+    assert!(matches!(reply, LedgerEnvironmentReply::References { records }
+        if matches!(&records[..], [crate::db::EnvironmentReferenceRecord::CurrentEnvironment { revision }]
+            if revision.environment_id == id(2) && revision.revision_id == id(3))));
+    let reply = client
         .environment_read(LedgerEnvironmentQuery::Applications {
             query: EnvironmentApplicationQuery::Page {
                 request_id: None,

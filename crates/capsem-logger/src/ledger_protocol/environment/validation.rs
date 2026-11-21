@@ -185,27 +185,46 @@ fn markers(markers: &[crate::db::EnvironmentVariablePurgeMarker]) -> bool {
         })
 }
 
+pub(super) fn current_heads<'a>(records: &'a [EnvironmentReferenceRecord], after: Option<&'a str>) -> bool {
+    if records.len() > usize::from(crate::db::ENVIRONMENT_HEAD_PAGE_MAX) {
+        return false;
+    }
+    let mut previous = after.unwrap_or_default();
+    records.iter().all(|record| {
+        let EnvironmentReferenceRecord::CurrentEnvironment { revision } = record else {
+            return false;
+        };
+        let current = revision.environment_id.as_str();
+        let valid = current > previous && parent(revision);
+        previous = current;
+        valid
+    })
+}
+
 pub(super) fn references(records: &[EnvironmentReferenceRecord]) -> bool {
+    if matches!(
+        records.first(),
+        Some(EnvironmentReferenceRecord::CurrentEnvironment { .. })
+    ) {
+        return current_heads(records, None);
+    }
     if records.len() > 3 {
         return false;
     }
-    let mut dimensions = [false; 4];
-    records.iter().all(|r| {
-        let (index, revision) = match r {
-            EnvironmentReferenceRecord::CurrentEnvironment { revision } => (0, revision),
-            EnvironmentReferenceRecord::Sandbox { dimension, revision } => {
-                let index = match dimension {
-                    EnvironmentSandboxReferenceKind::Boot => 1,
-                    EnvironmentSandboxReferenceKind::LivePolicy => 2,
-                    EnvironmentSandboxReferenceKind::Desired => 3,
-                };
-                (index, revision)
-            }
+    let mut dimensions = [false; 3];
+    records.iter().all(|record| {
+        let EnvironmentReferenceRecord::Sandbox { dimension, revision } = record else {
+            return false;
+        };
+        let index = match dimension {
+            EnvironmentSandboxReferenceKind::Boot => 0,
+            EnvironmentSandboxReferenceKind::LivePolicy => 1,
+            EnvironmentSandboxReferenceKind::Desired => 2,
         };
         let unique = !dimensions[index];
         dimensions[index] = true;
         unique && parent(revision)
-    }) && !(dimensions[0] && dimensions[1..].iter().any(|seen| *seen))
+    })
 }
 
 pub(super) fn application(r: &EnvironmentApplicationRecord) -> bool {
