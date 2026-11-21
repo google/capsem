@@ -5,6 +5,7 @@
 //! coordinator derives and authenticates from its registry.
 
 pub mod auth;
+pub mod events;
 pub mod metrics;
 
 use anyhow::{bail, Result};
