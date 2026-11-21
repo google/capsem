@@ -25,4 +25,10 @@ export class Requests {
     if (result.summary.request_id !== id) throw new Error('Review request identity changed');
     return result;
   }
+
+  async resolve(id: string, request: models.RequestResolveRequest, options: CallOptions = {}): Promise<models.EnvironmentMutationResponse> {
+    const result = await api.resolveRequest(this.transport, {id, body: request}, options);
+    if (result.request_id !== id) throw new Error('Resolved request identity changed');
+    return result;
+  }
 }

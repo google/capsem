@@ -11,6 +11,7 @@ export const EnvironmentMutationResponseSchema: z.ZodType<EnvironmentMutationRes
   "application_error": z.string().nullable().exactOptional(),
   "decision": z.lazy(() => RequestStateSchema),
   "environment_id": z.uuid(),
+  "observed_revision": z.string().nullable().exactOptional(),
   "request_id": z.uuid(),
   "result": z.union([z.null(), z.lazy(() => EnvironmentRevisionReferenceSchema)]).exactOptional(),
 });

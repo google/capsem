@@ -9,6 +9,7 @@ export interface EnvironmentMutationResponse {
   "application_error"?: string | null;
   "decision": RequestState;
   "environment_id": string;
+  "observed_revision"?: string | null;
   "request_id": string;
   "result"?: null | EnvironmentRevisionReference;
 }

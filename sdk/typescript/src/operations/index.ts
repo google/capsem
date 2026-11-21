@@ -70,6 +70,7 @@ export {persistVm} from "./persistVm.js";
 export {pullImage} from "./pullImage.js";
 export {purgeVms} from "./purgeVms.js";
 export {refreshMcpServer} from "./refreshMcpServer.js";
+export {resolveRequest} from "./resolveRequest.js";
 export {resolveSecurityAsk} from "./resolveSecurityAsk.js";
 export {restartHypervisor} from "./restartHypervisor.js";
 export {resumeVm} from "./resumeVm.js";

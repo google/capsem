@@ -1,5 +1,5 @@
 import {expect, it} from 'vitest';
-import {Hypervisor, HttpError, RequestApplicationState, RequestState, type EnvironmentCreateRequest, type CallOptions} from '../src/index.js';
+import {Hypervisor, HttpError, RequestApplicationState, RequestDecision, RequestState, type EnvironmentCreateRequest, type CallOptions} from '../src/index.js';
 import {gateway} from './gateway.js';
 
 const requestId = '00000000-0000-4000-8000-000000000001';
@@ -79,16 +79,21 @@ it('reads review provenance and refuses a changed request identity', async () =>
     targets: [],
   };
   await gateway((request, response) => response.end(JSON.stringify(
-    request.url?.startsWith('/requests/list') ? {requests: [summary], next_cursor: 9} : detail,
+    request.method === 'POST' ? {...pending, decision: 'denied'} :
+      request.url?.startsWith('/requests/list') ? {requests: [summary], next_cursor: 9} : detail,
   )), async (url, received) => {
     const hv = new Hypervisor(url, 'token');
     try {
       expect(await hv.requests.list({after: 7, limit: 1, pendingOnly: true})).toMatchObject({next_cursor: 9});
       expect(await hv.requests.info(requestId)).toEqual(detail);
       await expect(hv.requests.info(environmentId)).rejects.toThrow('identity changed');
+      const decision = {decision: RequestDecision.DENY, observed_revision: detail.observed_revision, reason: 'keep the original configuration'};
+      expect((await hv.requests.resolve(requestId, decision)).decision).toBe(RequestState.DENIED);
       expect(received.map(request => request.url)).toEqual([
         '/requests/list?after=7&limit=1&pending_only=true', `/requests/${requestId}/info`, `/requests/${environmentId}/info`,
+        `/requests/${requestId}/resolve`,
       ]);
+      expect(JSON.parse(received.at(-1)?.body.toString() ?? '')).toEqual(decision);
     } finally { hv.close(); }
   });
 });
