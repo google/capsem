@@ -1,5 +1,10 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .interaction_report import InteractionReport
+from .interaction_request import InteractionRequest
+from .interaction_request_kind import InteractionRequestKind
+from .interaction_role import InteractionRole
+from .interaction_tool_call import InteractionToolCall
 from .interaction_tool_call_kind import InteractionToolCallKind
 from .interaction_tool_result import InteractionToolResult
 from .interaction_tool_result_kind import InteractionToolResultKind
@@ -113,13 +118,13 @@ from .purge_request import PurgeRequest
 from .purge_response import PurgeResponse
 from .raw_content import RawContent
 from .raw_content_kind import RawContentKind
-from .raw_content_reason import RawContentReason
-from .registry_access import RegistryAccess
-from .request_application_state import RequestApplicationState
-from .request_decision import RequestDecision
-from .request_decision_details import RequestDecisionDetails
 
 __all__ = [
+    'InteractionReport',
+    'InteractionRequest',
+    'InteractionRequestKind',
+    'InteractionRole',
+    'InteractionToolCall',
     'InteractionToolCallKind',
     'InteractionToolResult',
     'InteractionToolResultKind',
@@ -195,9 +200,4 @@ __all__ = [
     'PurgeResponse',
     'RawContent',
     'RawContentKind',
-    'RawContentReason',
-    'RegistryAccess',
-    'RequestApplicationState',
-    'RequestDecision',
-    'RequestDecisionDetails',
 ]

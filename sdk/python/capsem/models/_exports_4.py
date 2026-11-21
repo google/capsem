@@ -1,5 +1,10 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .validation_status import ValidationStatus
+from .value import Value
+from .vm_action import VmAction
+from .vm_action_response import VmActionResponse
+from .vm_ai_info import VmAiInfo
 from .vm_files_info import VmFilesInfo
 from .vm_lifecycle_intent import VmLifecycleIntent
 from .vm_lifecycle_selection import VmLifecycleSelection
@@ -13,6 +18,11 @@ from .vm_status_response import VmStatusResponse
 from .vm_summary import VmSummary
 
 __all__ = [
+    'ValidationStatus',
+    'Value',
+    'VmAction',
+    'VmActionResponse',
+    'VmAiInfo',
     'VmFilesInfo',
     'VmLifecycleIntent',
     'VmLifecycleSelection',

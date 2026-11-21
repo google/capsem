@@ -89,11 +89,9 @@ from .environment_packages import EnvironmentPackages
 from .environment_plugins import EnvironmentPlugins
 from .environment_readiness_response import EnvironmentReadinessResponse
 from .environment_review_content import EnvironmentReviewContent
+from .environment_revision_detail_response import EnvironmentRevisionDetailResponse
+from .environment_revision_list_response import EnvironmentRevisionListResponse
 from .environment_revision_reference import EnvironmentRevisionReference
-from .environment_rule_parameter import EnvironmentRuleParameter
-from .environment_rules__environment_catalog_pin__environment_access_rule import (
-    EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRule,
-)
 
 __all__ = [
     'AgentAccessScope',
@@ -173,7 +171,7 @@ __all__ = [
     'EnvironmentPlugins',
     'EnvironmentReadinessResponse',
     'EnvironmentReviewContent',
+    'EnvironmentRevisionDetailResponse',
+    'EnvironmentRevisionListResponse',
     'EnvironmentRevisionReference',
-    'EnvironmentRuleParameter',
-    'EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRule',
 ]

@@ -45,6 +45,9 @@ from .get_environment_info import get_environment_info as get_environment_info
 from .get_environment_readiness import (
     get_environment_readiness as get_environment_readiness,
 )
+from .get_environment_revision import (
+    get_environment_revision as get_environment_revision,
+)
 from .get_hypervisor_info import get_hypervisor_info as get_hypervisor_info
 from .get_hypervisor_logs import get_hypervisor_logs as get_hypervisor_logs
 from .get_image_inventory import get_image_inventory as get_image_inventory
@@ -69,6 +72,9 @@ from .get_vm_timeline import get_vm_timeline as get_vm_timeline
 from .heartbeat_proxy import heartbeat_proxy as heartbeat_proxy
 from .inject_credential import inject_credential as inject_credential
 from .list_connections import list_connections as list_connections
+from .list_environment_revisions import (
+    list_environment_revisions as list_environment_revisions,
+)
 from .list_environments import list_environments as list_environments
 from .list_images import list_images as list_images
 from .list_mcp_servers import list_mcp_servers as list_mcp_servers
@@ -104,3 +110,6 @@ from .stop_proxy import stop_proxy as stop_proxy
 from .stop_vm import stop_vm as stop_vm
 from .update_hypervisor import update_hypervisor as update_hypervisor
 from .upload_vm_file import upload_vm_file as upload_vm_file
+from .validate_environment_toml import (
+    validate_environment_toml as validate_environment_toml,
+)

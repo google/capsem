@@ -1,5 +1,10 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .environment_revision_summary import EnvironmentRevisionSummary
+from .environment_rule_parameter import EnvironmentRuleParameter
+from .environment_rules__environment_catalog_pin__environment_access_rule import (
+    EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRule,
+)
 from .environment_rules__environment_catalog_pin__environment_access_rule_custom_value import (
     EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRuleCustomValue,
 )
@@ -42,6 +47,8 @@ from .environment_specification__environment_image_selection__environment_reposi
     EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelectionRepositoriesItem,
 )
 from .environment_startup import EnvironmentStartup
+from .environment_toml_validation_request import EnvironmentTomlValidationRequest
+from .environment_toml_validation_response import EnvironmentTomlValidationResponse
 from .error_code import ErrorCode
 from .error_event import ErrorEvent
 from .error_response import ErrorResponse
@@ -101,13 +108,11 @@ from .interaction_body import InteractionBody
 from .interaction_content import InteractionContent
 from .interaction_message import InteractionMessage
 from .interaction_message_kind import InteractionMessageKind
-from .interaction_report import InteractionReport
-from .interaction_request import InteractionRequest
-from .interaction_request_kind import InteractionRequestKind
-from .interaction_role import InteractionRole
-from .interaction_tool_call import InteractionToolCall
 
 __all__ = [
+    'EnvironmentRevisionSummary',
+    'EnvironmentRuleParameter',
+    'EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRule',
     'EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRuleCustomValue',
     'EnvironmentRules_EnvironmentCatalogPin_EnvironmentDetectionRule',
     'EnvironmentRules_EnvironmentCatalogPin_EnvironmentDetectionRuleCustomValue',
@@ -124,6 +129,8 @@ __all__ = [
     'EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPinImage',
     'EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPinRepositoriesItem',
     'EnvironmentStartup',
+    'EnvironmentTomlValidationRequest',
+    'EnvironmentTomlValidationResponse',
     'ErrorCode',
     'ErrorEvent',
     'ErrorResponse',
@@ -183,9 +190,4 @@ __all__ = [
     'InteractionContent',
     'InteractionMessage',
     'InteractionMessageKind',
-    'InteractionReport',
-    'InteractionRequest',
-    'InteractionRequestKind',
-    'InteractionRole',
-    'InteractionToolCall',
 ]
