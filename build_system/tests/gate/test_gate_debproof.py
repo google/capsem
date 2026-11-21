@@ -124,6 +124,33 @@ def test_only_a_package_this_checkout_built_is_accepted(
         )
 
 
+def test_shared_cache_package_is_installed_at_the_configured_container_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("capsem_builder.gate.host.device_available", lambda _path: True)
+    root = _checkout(tmp_path / "checkout")
+    _content(root)
+    target = root / PACKAGE_ROOT.parent
+    shared = tmp_path / "shared-target"
+    target.rename(shared)
+    target.symlink_to(shared, target_is_directory=True)
+
+    config = gate_config.load(root)
+    runner = RecordingRunner(root, replies=_replies())
+    basename = f"Capsem_{VERSION}_arm64.deb"
+    proof = DebProof(
+        runner,
+        package=shared / "packages" / basename,
+        content=RuntimeContent.isolated(config, shared),
+        manifest_url="file:///src/m.json",
+        channel="nightly",
+        source_commit=SOURCE_COMMIT,
+    )
+    proof.run()
+
+    assert f'{config.install.mount}/{PACKAGE_ROOT}/{basename}' in runner.matching(r"dpkg -i")[0]
+
+
 def test_an_unknown_channel_is_refused(tmp_path: Path) -> None:
     root = _checkout(tmp_path)
 

@@ -72,7 +72,7 @@ class DebProof:
         package whose provenance this proof cannot speak for.
         """
         resolved = Path(package).resolve()
-        expected = self._config.path(self._config.outputs.packages)
+        expected = self._config.path(self._config.outputs.packages).resolve()
         suffix = self._config.package.package_suffix
         if resolved.parent != expected or resolved.suffix != suffix:
             raise GateError(
@@ -92,7 +92,9 @@ class DebProof:
             self._install,
             purpose="the exact Debian package proof needs KVM and vhost-vsock",
         )
-        container_deb = f"{self._install.mount}/{self.package.relative_to(self.root)}"
+        # Docker mounts the configured output directory at its checkout-relative path,
+        # even when the worktree shares its physical cache with another checkout.
+        container_deb = f"{self._install.mount}/{self._config.outputs.packages}/{self.package.name}"
         expected = self._runner.capture(["dpkg-deb", "-f", str(self.package), "Version"])
         if not expected:
             raise GateError(f"{self.package.name} declares no Version field")
