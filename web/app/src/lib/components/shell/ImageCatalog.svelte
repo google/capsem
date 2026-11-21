@@ -106,10 +106,14 @@
 <section class="mb-6" aria-labelledby="image-catalog-title" aria-busy={loading}>
   <div class="flex items-center justify-between mb-3 gap-3">
     <h3 id="image-catalog-title" class="text-lg font-medium text-foreground">New session</h3>
+    <div class="flex items-center gap-3">
+      <button type="button" class="text-sm text-primary hover:underline"
+        onclick={() => vmStore.openEnvironmentCreateModal()}>Saved environments</button>
     {#if error}
       <button type="button" class="text-xs text-primary hover:underline disabled:opacity-50"
         disabled={loading} onclick={() => load(true)}>Retry</button>
     {/if}
+    </div>
   </div>
   {#if loading}
     <p class="text-sm text-muted-foreground-1" role="status">Loading image catalog...</p>

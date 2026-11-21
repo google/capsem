@@ -1,7 +1,8 @@
 // Gateway API client. Token is module-scoped -- never in localStorage, DOM, logs, or URLs.
 
 import * as gateway from '@capsem/sdk/operations';
-import { Connections, CredentialGrants, HostLogSource, NetworkError, ServiceAvailability } from '@capsem/sdk';
+import { Connections, CredentialGrants, Environments, HostLogSource, NetworkError, ServiceAvailability, creationDeadlineMs } from '@capsem/sdk';
+import type { EnvironmentListOptions } from '@capsem/sdk';
 import type { AuthorizeGoogleRequest, CreateSessionGrantRequest } from '@capsem/sdk';
 import type { StopResponse, VmActionResponse, LogsResponse, VmStatsDetailResponse, EventBodiesResponse } from '@capsem/sdk';
 import type { ContainerStatusResponse, ImageListResponse, ImagePullResponse, CredentialInjectProvider, CredentialInjectResponse, CredentialStorage } from '@capsem/sdk';
@@ -66,6 +67,10 @@ export function getEnvironmentRequest(id: string) {
 
 export function resolveEnvironmentRequest(id: string, body: import('@capsem/sdk').RequestResolveRequest) {
   return _sdk.call(transport => gateway.resolveRequest(transport, { id, body }), false);
+}
+
+export function listSavedEnvironments(options: EnvironmentListOptions) {
+  return _sdk.call(transport => new Environments(transport).list(options));
 }
 
 // -- Public getters --
@@ -485,6 +490,12 @@ function emptyStatus(): StatusResponse {
 // -- VM lifecycle --
 
 export async function provisionVm(opts: ProvisionRequest): Promise<ProvisionResponse> {
+  if (opts.environment) {
+    return _sdk.call(async transport => {
+      const timeoutMs = await creationDeadlineMs(transport, opts);
+      return gateway.createVm(transport, { body: opts }, { timeoutMs });
+    }, false);
+  }
   return _sdk.call(transport => gateway.createVm(transport, { body: opts }));
 }
 

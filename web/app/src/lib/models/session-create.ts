@@ -1,4 +1,4 @@
-import type { ImageInfo, ProvisionRequest } from '@capsem/sdk';
+import type { EnvironmentRevisionReference, ImageInfo, ProvisionRequest } from '@capsem/sdk';
 
 export function selectedSessionImage(images: ImageInfo[], name: string): ImageInfo | null {
   if (!name) return null;
@@ -8,12 +8,15 @@ export function selectedSessionImage(images: ImageInfo[], name: string): ImageIn
   return image;
 }
 
-export function sessionCreateRequest(name: string, ramMb: number, cpus: number, image: ImageInfo | null): ProvisionRequest {
+export function sessionCreateRequest(name: string, ramMb: number, cpus: number, image: ImageInfo | null,
+  environment?: EnvironmentRevisionReference): ProvisionRequest {
   const trimmedName = name.trim();
   if (!trimmedName) throw new Error('Name is required');
   if (image && !image.image) throw new Error('This image is incompatible with the host architecture or runtime');
+  if (image && environment) throw new Error('Choose either a saved environment or an image');
   return {
     name: trimmedName, persistent: true, ram_mb: ramMb, cpus,
+    ...(environment ? { environment } : {}),
     ...(image ? { container: { image: image.image!, args: [], env: {}, attach: false } } : {}),
   };
 }

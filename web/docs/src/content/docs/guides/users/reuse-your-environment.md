@@ -49,6 +49,17 @@ For an image on Docker Hub, use `docker://`, for example `docker://alpine:3`.
 Custom images are blocked by default, and your administrator may also limit
 the images available in the catalog.
 
+## Start from a saved environment
+
+In Capsem 0.7.3, open **Saved environments** in the desktop's new-session
+view. Search by name, description, or image, then choose **Use** beside the
+environment you want. Enter a session name, choose resources, and select
+**Create**.
+
+The dialog shows the revision it will boot. Refreshing the library keeps the
+selected revision. Choose **Change environment** and select the newer revision
+if you want to use it.
+
 ## Temporary VMs
 
 For a quick experiment you do not need to keep, omit `-n`:

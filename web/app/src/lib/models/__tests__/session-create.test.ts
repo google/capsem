@@ -19,4 +19,11 @@ describe('desktop session creation', () => {
     expect(() => sessionCreateRequest('other', 2048, 2, { ...image, image: null })).toThrow('incompatible');
     expect(() => sessionCreateRequest('  ', 2048, 2, image)).toThrow('Name is required');
   });
+  it('uses the selected saved revision without a competing inline image', () => {
+    const environment = { environment_id: 'environment-id', revision_id: 'selected-revision' };
+    expect(sessionCreateRequest('saved', 2048, 2, null, environment)).toEqual({
+      name: 'saved', persistent: true, ram_mb: 2048, cpus: 2, environment,
+    });
+    expect(() => sessionCreateRequest('saved', 2048, 2, image, environment)).toThrow('either a saved environment or an image');
+  });
 });

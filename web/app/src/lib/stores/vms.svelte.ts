@@ -20,6 +20,7 @@ class VmStore {
   polled = $state(false);
   showCreateModal = $state(false);
   createImageName = $state('');
+  createFromEnvironment = $state(false);
   activeStatsId = $state<string | null>(null);
   activeStats = $state<VmStatsSummary | null>(null);
 
@@ -182,12 +183,19 @@ class VmStore {
 
   openCreateModal(imageName = ''): void {
     this.createImageName = imageName;
+    this.createFromEnvironment = false;
     this.showCreateModal = true;
+  }
+
+  openEnvironmentCreateModal(): void {
+    this.openCreateModal();
+    this.createFromEnvironment = true;
   }
 
   closeCreateModal(): void {
     this.showCreateModal = false;
     this.createImageName = '';
+    this.createFromEnvironment = false;
   }
 
   async fork(id: string, opts: ForkRequest): Promise<ForkResponse> {

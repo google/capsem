@@ -2,7 +2,9 @@
   import { vmStore } from '../../stores/vms.svelte.ts';
   import { tabStore } from '../../stores/tabs.svelte.ts';
   import Modal from './Modal.svelte';
-  import { ImageSurface, type ImageInfo } from '@capsem/sdk';
+  import EnvironmentPicker from './EnvironmentPicker.svelte';
+  import { tick } from 'svelte';
+  import { ImageSurface, type EnvironmentListItem, type ImageInfo } from '@capsem/sdk';
   import { getImages } from '../../api';
   import { selectedSessionImage, sessionCreateRequest } from '../../models/session-create';
   import { sessionActionError } from '../../models/session-action-error';
@@ -22,15 +24,24 @@
   let imagesLoading = $state(false);
   let imagesError = $state<string | null>(null);
   let catalogRefresh = $state(0);
+  let savedMode = $state(false);
+  let browsingEnvironments = $state(false);
+  let selectedEnvironment = $state<EnvironmentListItem | null>(null);
+  let nameInput: HTMLInputElement;
+  let opener: HTMLElement | null = null;
   let selectedImage = $derived(images.find(image => image.name === imageName) ?? null);
 
   $effect(() => {
     if (!vmStore.showCreateModal) return;
     imageName = vmStore.createImageName;
+    const initiallySaved = vmStore.createFromEnvironment;
+    savedMode = initiallySaved;
+    browsingEnvironments = initiallySaved;
+    if (document.activeElement instanceof HTMLElement) opener = document.activeElement;
   });
 
   $effect(() => {
-    if (!vmStore.showCreateModal) return;
+    if (!vmStore.showCreateModal || savedMode) return;
     const refresh = catalogRefresh > 0;
     const controller = new AbortController();
     imagesLoading = true;
@@ -45,7 +56,7 @@
     return () => controller.abort();
   });
 
-  function close() {
+  function close(restoreFocus = true) {
     if (creating) return;
     vmStore.closeCreateModal();
     name = '';
@@ -55,10 +66,28 @@
     images = [];
     imageName = '';
     imagesError = null;
+    imagesLoading = false;
+    savedMode = false;
+    browsingEnvironments = false;
+    selectedEnvironment = null;
+    const trigger = opener;
+    opener = null;
+    if (restoreFocus && trigger) void tick().then(() => trigger.focus());
+  }
+
+  function ownEnter(event: KeyboardEvent) {
+    if (event.key === 'Enter') event.stopPropagation();
+  }
+
+  function selectEnvironment(item: EnvironmentListItem) {
+    if (!item.summary) return;
+    selectedEnvironment = item;
+    browsingEnvironments = false;
+    void tick().then(() => nameInput.focus());
   }
 
   async function handleSubmit() {
-    if (creating || imagesLoading) return;
+    if (creating || (savedMode ? !selectedEnvironment : imagesLoading)) return;
     error = null;
     const trimmedName = name.trim();
     if (!trimmedName) {
@@ -67,12 +96,13 @@
     }
     creating = true;
     try {
-      if (imageName && imagesError) throw new Error('Refresh the image catalog before creating this session.');
-      const image = selectedSessionImage(images, imageName);
-      const { id, name: finalName } = await vmStore.provision(sessionCreateRequest(trimmedName, ramMb, cpus, image));
+      if (!savedMode && imageName && imagesError) throw new Error('Refresh the image catalog before creating this session.');
+      const image = savedMode ? null : selectedSessionImage(images, imageName);
+      const environment = savedMode ? selectedEnvironment?.environment : undefined;
+      const { id, name: finalName } = await vmStore.provision(sessionCreateRequest(trimmedName, ramMb, cpus, image, environment));
       tabStore.openVM(id, finalName, image ? (image.surface === ImageSurface.XPRA ? 'ui' : 'terminal') : undefined);
       creating = false;
-      close();
+      close(false);
     } catch (e: unknown) {
       error = sessionActionError(e);
     } finally {
@@ -87,7 +117,7 @@
   confirmLabel={creating ? 'Creating...' : 'Create'}
   onconfirm={handleSubmit}
   oncancel={close}
-  disabled={creating || imagesLoading}
+  disabled={creating || (savedMode ? !selectedEnvironment : imagesLoading)}
 >
   <div class="space-y-4 py-2">
     {#if error}
@@ -101,6 +131,7 @@
       <input
         id="sb-name"
         type="text"
+        bind:this={nameInput}
         bind:value={name}
         placeholder="coding-agent"
         class="w-full px-3 py-2 rounded-lg bg-background-1 border border-line-2 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-hidden transition-all text-sm text-foreground"
@@ -108,6 +139,23 @@
       />
     </div>
 
+    {#if savedMode}
+      <div class="space-y-2">
+        {#if selectedEnvironment?.summary}
+          <div class="rounded-lg border border-line-2 p-3">
+            <p class="text-sm font-medium text-foreground">{selectedEnvironment.summary.name}</p>
+            <p class="text-xs text-muted-foreground-1 break-all">Revision {selectedEnvironment.environment.revision_id}</p>
+          </div>
+          {#if !browsingEnvironments}
+            <button type="button" class="text-xs text-primary hover:underline disabled:opacity-50" disabled={creating}
+              onkeydown={ownEnter} onclick={() => { browsingEnvironments = true; }}>Change environment</button>
+          {/if}
+        {/if}
+        {#if browsingEnvironments}<EnvironmentPicker onselect={selectEnvironment} disabled={creating} />{/if}
+        <button type="button" class="text-xs text-primary hover:underline disabled:opacity-50" disabled={creating}
+          onkeydown={ownEnter} onclick={() => { savedMode = false; browsingEnvironments = false; }}>Use an image instead</button>
+      </div>
+    {:else}
     <div class="space-y-1.5">
       <label for="sb-image" class="text-sm font-medium text-foreground">Image</label>
       <select id="sb-image" bind:value={imageName} disabled={creating || imagesLoading}
@@ -135,7 +183,10 @@
         disabled={creating || imagesLoading} onclick={() => { catalogRefresh++; }}>
         {imagesError ? 'Retry image catalog' : 'Refresh image catalog'}
       </button>
+      <button type="button" class="ms-3 text-xs text-primary hover:underline disabled:opacity-50" disabled={creating}
+        onkeydown={ownEnter} onclick={() => { savedMode = true; browsingEnvironments = true; }}>Use a saved environment</button>
     </div>
+    {/if}
 
     <div class="grid grid-cols-2 gap-4">
       <div class="space-y-1.5">
