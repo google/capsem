@@ -69,6 +69,7 @@ def test_gateway_submission_preserves_the_committed_head_and_running_sibling(ser
             "application": "pending",
             "result": None,
             "application_error": None,
+            "observed_revision": proposal["observed_revision"],
         }
         assert agent.call_json("POST", path, payload) == (200, proposal)
         inbox_path = "/requests/list?pending_only=true"
@@ -81,6 +82,7 @@ def test_gateway_submission_preserves_the_committed_head_and_running_sibling(ser
         review_status, review = operator.call_json("GET", review_path)
         assert review_status == 200, review
         assert review["summary"] == inbox["requests"][0]
+        assert review["observed_revision"] == proposal["observed_revision"]
         assert review["summary"]["base"] == base
         assert review["summary"]["requester"] == {
             "session_id": owner,
@@ -122,6 +124,15 @@ def test_gateway_submission_preserves_the_committed_head_and_running_sibling(ser
     try:
         assert recovered_operator.call_json("GET", review_path) == (200, review)
         assert recovered_operator.call_json("GET", inbox_path) == (200, inbox)
+        resolve_path = f"/requests/{payload['request_id']}/resolve"
+        status, resolution = recovered_operator.call_json("POST", resolve_path, {
+            "observed_revision": review["observed_revision"],
+            "decision": "approve",
+            "reason": "try to apply to the reviewed generation",
+        })
+        assert status == 200, resolution
+        assert resolution["decision"] == "stale" and resolution["result"] is None
+        assert recovered_operator.get(inbox_path)["requests"] == []
     finally:
         recovered_operator.close()
         gateway.stop()
