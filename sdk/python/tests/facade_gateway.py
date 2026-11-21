@@ -27,6 +27,7 @@ class GatewayState:
     container_states: list[str] = field(default_factory=lambda: ["running"])
     preview_session_status: int | None = None
     delays: dict[str, float] = field(default_factory=dict)
+    vm_readiness: dict[str, dict[str, Any]] = field(default_factory=dict)
     create_error: tuple[int, str] | None = None
     sandboxes: dict[str, str] = field(default_factory=dict)
     created_vms: dict[str, tuple[str, bool]] = field(default_factory=dict)
@@ -49,7 +50,13 @@ async def gateway() -> AsyncIterator[tuple[str, GatewayState]]:
         assert request.headers["Authorization"] == "Bearer token"
         if request.path in state.delays:
             await asyncio.sleep(state.delays[request.path])
-        if request.path.endswith("/readiness"):
+        if request.path.startswith("/vms/") and request.path.endswith("/readiness"):
+            vm_id = request.path.split("/")[2]
+            return web.json_response(state.vm_readiness.get(vm_id, {
+                "selection": {"id": vm_id, "running": False, "generation": None, "environment": None},
+                "startup_timeout_seconds": 0,
+            }))
+        if request.path.startswith("/environments/") and request.path.endswith("/readiness"):
             parts = request.path.split('/')
             return web.json_response({'environment': {'environment_id': parts[2], 'revision_id': parts[4]},
                                       'startup_timeout_seconds': 600})

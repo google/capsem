@@ -122,7 +122,7 @@ def test_timing_refusal_precedes_create_and_managed_ownership(managed, metadata)
 @pytest.mark.parametrize('seconds', [0, 600, 2**32 - 1])
 def test_creation_wait_keeps_the_exact_approved_deadline(seconds):
     from capsem._transport import Transport
-    from capsem.readiness import creation_timeout
+    from capsem.readiness import prepare_creation
 
     async def run():
         selected = models.EnvironmentRevisionReference(
@@ -130,9 +130,9 @@ def test_creation_wait_keeps_the_exact_approved_deadline(seconds):
             revision_id='00000000-0000-4000-8000-000000000002')
         async with target_gateway(True, startup_seconds=seconds) as (url, requests):
             async with Transport(url, 'token') as transport:
-                assert await creation_timeout(transport, models.ProvisionRequest(environment=selected)) == 230 + seconds
+                assert await prepare_creation(transport, models.ProvisionRequest(environment=selected)) == 230 + seconds
             async with Transport(url, 'token', timeout=10_000_000_000) as transport:
-                assert await creation_timeout(transport, models.ProvisionRequest(environment=selected)) == 10_000_000_000
+                assert await prepare_creation(transport, models.ProvisionRequest(environment=selected)) == 10_000_000_000
             assert len(requests) == 2 and all(path.endswith('/readiness') for path, _ in requests)
     asyncio.run(run())
 

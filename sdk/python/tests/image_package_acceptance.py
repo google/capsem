@@ -101,12 +101,22 @@ def main() -> None:
         "status": "Running",
         "available_actions": [],
     }
+    readiness_path = "/vms/restore-vm/readiness?intent=start"
+    selection = {
+        "id": "restore-vm",
+        "generation": "00000000-0000-4000-8000-000000000001",
+        "running": False,
+        "environment": None,
+    }
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, format: str, *args: object) -> None:
             pass
 
         def do_GET(self) -> None:
+            if self.path == readiness_path:
+                self.reply({"selection": selection, "startup_timeout_seconds": 0})
+                return
             if self.path in {"/vms/restore-vm/info", "/vms/slow/info"}:
                 self.reply({**provision, "pid": 1})
                 return
@@ -249,11 +259,15 @@ def main() -> None:
         ("POST", "/images/pull"),
     ]
     assert lifecycle_requests == [
-        ("POST", "/vms/restore-vm/start", None),
-        ("POST", "/vms/restore-vm/resume", None),
-        ("POST", "/vms/restore-vm/start", None),
+        ("GET", readiness_path, None),
+        ("POST", "/vms/restore-vm/start", {"expected": selection}),
+        ("GET", readiness_path, None),
+        ("POST", "/vms/restore-vm/resume", {"expected": selection}),
+        ("GET", readiness_path, None),
+        ("POST", "/vms/restore-vm/start", {"expected": selection}),
         ("GET", "/vms/restore-vm/info", None),
-        ("POST", "/vms/restore-vm/resume", None),
+        ("GET", readiness_path, None),
+        ("POST", "/vms/restore-vm/resume", {"expected": selection}),
         ("GET", "/vms/restore-vm/info", None),
         ("GET", "/vms/slow/info", None),
     ]

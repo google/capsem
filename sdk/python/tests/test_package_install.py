@@ -158,10 +158,14 @@ def test_built_distribution_installs_and_runs_in_an_isolated_runtime(kind: str) 
             "/images/pull",
         ]
         assert report["lifecycle_paths"] == [
+            "/vms/restore-vm/readiness?intent=start",
             "/vms/restore-vm/start",
+            "/vms/restore-vm/readiness?intent=start",
             "/vms/restore-vm/resume",
+            "/vms/restore-vm/readiness?intent=start",
             "/vms/restore-vm/start",
             "/vms/restore-vm/info",
+            "/vms/restore-vm/readiness?intent=start",
             "/vms/restore-vm/resume",
             "/vms/restore-vm/info",
             "/vms/slow/info",

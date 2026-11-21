@@ -18,7 +18,8 @@ from ._ports import Ports
 from ._resources import Files, Stats
 from ._transport import HttpError, Transport
 from .errors import VmNotFoundError, _ErrorContext, _exec_with_timeout, _map_http_error
-from .execution import CREATE_READY_SECS, ExecResult, command_deadline
+from .execution import ExecResult, command_deadline
+from .readiness import lifecycle_readiness, prepare_start
 
 _T = TypeVar("_T")
 
@@ -123,11 +124,11 @@ class VM(Client):
 
     async def start(self) -> models.ProvisionResponse:
         vm_id = await self._resolve()
+        body, timeout = await self._call(vm_id, prepare_start(self._transport, vm_id))
         return await self._call(
             vm_id,
             api.start_vm(
-                self._transport, id=vm_id,
-                request_timeout=command_deadline(self._transport.timeout, CREATE_READY_SECS),
+                self._transport, id=vm_id, body=body, request_timeout=timeout,
             ),
         )
 
@@ -147,11 +148,11 @@ class VM(Client):
 
     async def resume(self) -> models.ProvisionResponse:
         vm_id = await self._resolve()
+        body, timeout = await self._call(vm_id, prepare_start(self._transport, vm_id))
         return await self._call(
             vm_id,
             api.resume_vm(
-                self._transport, id=vm_id,
-                request_timeout=command_deadline(self._transport.timeout, CREATE_READY_SECS),
+                self._transport, id=vm_id, body=body, request_timeout=timeout,
             ),
         )
 
@@ -173,12 +174,16 @@ class VM(Client):
             description: Optional description for the forked VM.
             labels: Optional labels overriding the source VM's labels (`{}` clears).
         """
+        body = models.ForkRequest(name=name, description=description, labels=labels)
         vm_id = await self._resolve()
-        response = await self._call(vm_id, api.fork_vm(self._transport, id=vm_id, body=models.ForkRequest(
-            name=name, description=description, labels=labels,
-        )))
+        readiness = await self._call(vm_id, lifecycle_readiness(
+            self._transport, vm_id, models.VmLifecycleIntent.FORK,
+        ))
+        body.expected = readiness.selection
+        response = await self._call(vm_id, api.fork_vm(self._transport, id=vm_id, body=body))
         return VM._bind(
-            self._transport, id=response.id, name=response.name, container=self._has_container,
+            self._transport, id=response.id, name=response.name,
+            container=None if readiness.selection.environment is not None else self._has_container,
         )
 
     async def log(self, *, grep: str | None = None, tail: int | None = None,

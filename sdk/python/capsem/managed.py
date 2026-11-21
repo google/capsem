@@ -12,7 +12,7 @@ from . import _operations as api
 from . import models
 from ._transport import HttpError, Transport
 from .execution import CREATE_READY_SECS, GATEWAY_REQUEST_BUDGET_SECS
-from .readiness import creation_timeout
+from .readiness import prepare_creation
 from .vm import VM
 
 
@@ -91,7 +91,7 @@ class ManagedSession:
             raise RuntimeError("managed ownership scope cannot be entered again")
         self.__started = True
         try:
-            self.__timeout = await creation_timeout(self.__transport, self.__request)
+            self.__timeout = await prepare_creation(self.__transport, self.__request)
         except BaseException:
             self.__finished = True
             raise
@@ -111,7 +111,7 @@ class ManagedSession:
             self.__active = True
             self.__vm = VM._bind(self.__transport, id=response.id, name=response.name,
                                  container=(True if self.__request.attach or self.__request.container is not None
-                                            else None if self.__request.environment is not None else False))
+                                            else None if self.__request.environment is not None or self.__request.from_ is not None else False))
             return self.__vm
         except BaseException as error:
             outcome = models.ManagedSessionOutcome.CANCELLED if isinstance(error, asyncio.CancelledError) else models.ManagedSessionOutcome.FAILED

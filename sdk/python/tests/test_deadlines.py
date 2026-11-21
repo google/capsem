@@ -16,6 +16,16 @@ from capsem.execution import (
 
 from .facade_gateway import gateway
 
+RETAINED_SELECTION = {
+    "id": "vm-0",
+    "running": False,
+    "generation": "00000000-0000-4000-8000-000000000003",
+    "environment": {
+        "environment_id": "00000000-0000-4000-8000-000000000001",
+        "revision_id": "00000000-0000-4000-8000-000000000002",
+    },
+}
+
 
 def test_exec_outlives_the_default_deadline_without_replaying_it() -> None:
     async def run() -> None:
@@ -71,6 +81,7 @@ def test_restore_covers_workload_readiness_without_replay(
         async with gateway() as (url, state), VM(url, "token", id="vm-0", timeout=fallback) as vm:
             path = f"/vms/vm-0/{operation}"
             state.delays[path] = 0.3
+            state.vm_readiness["vm-0"] = {"selection": RETAINED_SELECTION, "startup_timeout_seconds": 600}
             seen: list[float | None] = []
             request = vm._transport.request
 
@@ -81,8 +92,10 @@ def test_restore_covers_workload_readiness_without_replay(
 
             monkeypatch.setattr(vm._transport, "request", spy)
             assert isinstance(await getattr(vm, operation)(), models.ProvisionResponse)
-            assert seen == [max(fallback, CREATE_READY_SECS + GATEWAY_REQUEST_BUDGET_SECS)]
-            assert state.requests == [("POST", path, b"")]
+            assert seen == [fallback, max(fallback, CREATE_READY_SECS + GATEWAY_REQUEST_BUDGET_SECS + 600)]
+            assert state.requests[0] == ("GET", "/vms/vm-0/readiness?intent=start", b"")
+            assert len(state.requests) == 2 and state.requests[1][:2] == ("POST", path)
+            assert json.loads(state.requests[1][2]) == {"expected": RETAINED_SELECTION}
     asyncio.run(run())
 
 
@@ -93,13 +106,29 @@ def test_restore_cancellation_does_not_replay_or_close_the_parent(operation: str
             path = f"/vms/vm-0/{operation}"
             state.delays[path] = 0.3
             pending = asyncio.create_task(getattr(vm, operation)())
-            while not state.requests:
+            while not any(entry[:2] == ("POST", path) for entry in state.requests):
                 await asyncio.sleep(0)
             pending.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await pending
             assert isinstance(await vm.info(), models.SandboxInfo)
-            assert state.requests == [("POST", path, b""), ("GET", "/vms/vm-0/info", b"")]
+            assert [entry[:2] for entry in state.requests] == [
+                ("GET", "/vms/vm-0/readiness?intent=start"),
+                ("POST", path), ("GET", "/vms/vm-0/info"),
+            ]
+    asyncio.run(run())
+
+
+def test_mismatched_lifecycle_metadata_does_not_start_the_vm() -> None:
+    async def run() -> None:
+        async with gateway() as (url, state), VM(url, "token", id="vm-0") as vm:
+            state.vm_readiness["vm-0"] = {
+                "selection": {**RETAINED_SELECTION, "id": "another-vm"},
+                "startup_timeout_seconds": 600,
+            }
+            with pytest.raises(ValueError, match="lifecycle readiness targets a different VM"):
+                await vm.resume()
+            assert state.requests == [("GET", "/vms/vm-0/readiness?intent=start", b"")]
     asyncio.run(run())
 
 
