@@ -10,6 +10,10 @@ pub(crate) struct RecordedImage {
 
 pub(crate) fn recorded_image(state: &ServiceState, id: &str) -> Result<Option<RecordedImage>, String> {
     let session = resolve_session_dir(state, id).map_err(AppError::into_message)?;
+    recorded_image_at(&session)
+}
+
+pub(crate) fn recorded_image_at(session: &std::path::Path) -> Result<Option<RecordedImage>, String> {
     if !session
         .join(LAUNCH_RECORD)
         .try_exists()
@@ -17,7 +21,7 @@ pub(crate) fn recorded_image(state: &ServiceState, id: &str) -> Result<Option<Re
     {
         return Ok(None);
     }
-    let record = read_launch_record(&session).ok_or("invalid recorded workload identity")?;
+    let record = read_launch_record(session).ok_or("invalid recorded workload identity")?;
     Ok(Some(RecordedImage {
         resolved: record
             .resolved

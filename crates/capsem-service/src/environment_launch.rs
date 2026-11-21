@@ -7,7 +7,7 @@ use capsem_core::environment::EnvironmentPolicyInputs;
 use capsem_logger::events::EnvironmentRevisionParent;
 use std::{collections::HashMap, path::Path};
 mod image;
-pub(crate) use image::{preparation_timeout, prepare_image, SelectedImage};
+pub(crate) use image::{matches_carried_image, preparation_timeout, prepare_image, SelectedImage};
 
 #[derive(Clone, Debug)]
 pub(crate) struct EnvironmentBinding {

@@ -23,7 +23,7 @@ use launch::run;
 pub(crate) use launch::{stage_carried_plan, start, start_selected};
 mod cache_owners;
 mod metadata;
-pub(crate) use metadata::{recorded_image, source_app};
+pub(crate) use metadata::{recorded_image, recorded_image_at, source_app};
 mod progress;
 mod registry;
 use registry::RegistryImages;

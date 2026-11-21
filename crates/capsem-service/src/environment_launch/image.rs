@@ -21,6 +21,38 @@ impl SelectedImage {
     }
 }
 
+/// An explicit clone destination can retain carried bytes if its exact saved
+/// revision currently admits the same immutable image and repository.
+pub(crate) async fn matches_carried_image(
+    state: &ServiceState,
+    session: &Path,
+    destination: &EnvironmentRevisionParent,
+) -> bool {
+    let Ok(Some(recorded)) = crate::container_setup::recorded_image_at(session) else {
+        return false;
+    };
+    let Ok(revision) = state
+        .environments
+        .load_revision(&destination.environment_id, &destination.revision_id)
+        .await
+    else {
+        return false;
+    };
+    let Some(image) = revision.specification.image else {
+        return false;
+    };
+    let Ok(mut decision) = crate::container_setup::images::Decision::new(state).await else {
+        return false;
+    };
+    let Ok(requested) = decision.resolve_saved(&image).await else {
+        return false;
+    };
+    decision
+        .admit_saved(&requested)
+        .await
+        .is_ok_and(|admitted| admitted.to_string() == recorded.resolved)
+}
+
 /// Returns true when a fresh image setup was started. Recorded workloads are
 /// re-admitted and rebound here, then restored by the existing lifecycle owner.
 pub(crate) async fn prepare_image(state: &Arc<ServiceState>, id: &str, attach: bool) -> Result<bool, crate::AppError> {
