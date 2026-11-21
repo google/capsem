@@ -314,7 +314,7 @@ pub(super) fn validate_asset_manifest_file(path: &StdPath) -> AssetManifestValid
 }
 
 pub(super) fn format_system_time_rfc3339(time: std::time::SystemTime) -> String {
-    humantime::format_rfc3339_seconds(time).to_string()
+    capsem_foundation::time::format_rfc3339_seconds(time)
 }
 
 pub(super) fn update_status_response(state: &ServiceState) -> api::UpdateStatusResponse {

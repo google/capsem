@@ -1256,7 +1256,6 @@ dependencies = [
  "futures",
  "http",
  "http-body-util",
- "humantime",
  "hyper",
  "hyper-util",
  "metrics",

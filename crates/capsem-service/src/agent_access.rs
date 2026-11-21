@@ -65,7 +65,7 @@ fn summary(grant: &Grant) -> Result<CreateAgentAccessResponse, AppError> {
         access: AgentAccessSummary {
             id: grant.id().to_string(),
             scope: grant.scope().clone(),
-            expires_at: humantime::format_rfc3339_millis(expiry).to_string(),
+            expires_at: capsem_foundation::time::format_rfc3339_millis(expiry),
         },
     })
 }

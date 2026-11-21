@@ -204,7 +204,7 @@ fn ownership(snapshot: &Snapshot, policy: ManagedSessionPolicy) -> Result<api::M
     Ok(api::ManagedSessionOwnership {
         request_id: snapshot.request().to_string(),
         generation: snapshot.generation().to_string(),
-        expires_at: humantime::format_rfc3339_millis(expiry).to_string(),
+        expires_at: capsem_foundation::time::format_rfc3339_millis(expiry),
         lease_seconds,
         renew_after_seconds: policy.renew_after_seconds.min(lease_seconds - 1),
     })
