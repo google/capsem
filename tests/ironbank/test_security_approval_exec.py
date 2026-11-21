@@ -1,5 +1,6 @@
 """Native public exec waits before any guest command effect."""
 
+import json
 import shlex
 import time
 import uuid
@@ -16,6 +17,7 @@ from ironbank.approval_native import (
     assert_approval_audit,
     native_approval_session,
 )
+from websockets.sync.client import connect
 
 pytestmark = pytest.mark.integration
 EFFECT = "/tmp/approval-exec-effects"
@@ -49,6 +51,46 @@ def effects(client, vm_id):
 @pytest.mark.parametrize("decision", ["approve", "deny"])
 def test_exec_original_command_resolves_once(decision):
     resolve_exec(decision, hold_seconds=0)
+
+
+@pytest.mark.parametrize("decision", ["approve", "deny"])
+def test_exec_approval_events_arrive_without_status_polling(decision):
+    with native_approval_session(POLICY) as (service, client, api, vm_id, _):
+        endpoint = api.base_url.replace("http://", "ws://", 1) + "/events"
+        route = f"/vms/{vm_id}/security/asks"
+        event = {"type": "approval-pending", "payload": {"id": vm_id}}
+        nonce = uuid.uuid4().hex
+        with (
+            connect(
+                endpoint,
+                additional_headers={"Authorization": f"Bearer {api.token}"},
+                open_timeout=5,
+                close_timeout=2,
+            ) as socket,
+            ThreadPoolExecutor(max_workers=1) as executor,
+        ):
+            original = executor.submit(
+                api.post,
+                f"/vms/{vm_id}/exec",
+                {"command": command(nonce), "target": "vm", "timeout_secs": 15},
+                timeout=30,
+            )
+            assert json.loads(socket.recv(timeout=5)) == event
+            listing = api.get(route)
+            assert listing["pending_count"] == 1
+            ask = next(row for row in listing["requests"] if row["status"] == "pending")
+            assert effects(client, vm_id) == []
+            receipt = api.post(
+                f"{route}/{ask['ask_id']}/resolve",
+                {"generation": listing["generation"], "decision": decision},
+            )
+            assert json.loads(socket.recv(timeout=5)) == event
+            assert api.get(route)["pending_count"] == 0
+            assert (original.result(timeout=10)["exit_code"] == 0) == (
+                decision == "approve"
+            )
+        assert effects(client, vm_id) == ([nonce] if decision == "approve" else [])
+        assert_approval_audit(service, client, vm_id, receipt, table="exec_events")
 
 
 @pytest.mark.parametrize("decision", ["approve", "deny"])
