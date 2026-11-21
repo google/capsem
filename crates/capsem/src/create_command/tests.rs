@@ -75,7 +75,15 @@ mod against_the_service {
     #[tokio::test]
     async fn create_asks_for_what_was_given_and_leaves_the_rest_to_the_service() {
         let service = FakeService::start();
-        service.route("POST", "/vms/create", 200, created("vm-1"));
+        let selection = json!({"id":"vm-1","generation":null,"running":false,"environment":null});
+        service
+            .route(
+                "GET",
+                "/vms/keep/readiness",
+                200,
+                json!({"selection":selection,"startup_timeout_seconds":0}),
+            )
+            .route("POST", "/vms/create", 200, created("vm-1"));
 
         create(
             &service.client,
@@ -102,6 +110,7 @@ mod against_the_service {
             json!({"name": "keep", "ram_mb": 2048, "cpus": 3, "persistent": true})
         );
         assert_eq!(bodies[2]["persistent"], true, "a clone keeps its source's state");
+        assert_eq!(bodies[2]["expected_source"], selection);
     }
 
     #[tokio::test]
@@ -195,8 +204,15 @@ mod against_the_service {
         let service = FakeService::start();
         let mut sandbox = capsem_api::SandboxInfo::new("vm-1".into(), 1, capsem_api::VmLifecycleState::Running, true);
         sandbox.name = Some("vm-1".into());
+        let selection = json!({"id":"vm-1","generation":null,"running":false,"environment":null});
         service
             .route("GET", "/vms/list", 200, json!({"sandboxes": [sandbox]}))
+            .route(
+                "GET",
+                "/vms/vm-1/readiness",
+                200,
+                json!({"selection":selection,"startup_timeout_seconds":0}),
+            )
             .route(
                 "POST",
                 "/vms/vm-1/fork",
@@ -228,7 +244,8 @@ mod against_the_service {
             json!({
                 "name": "img-1",
                 "description": "eval snapshot",
-                "labels": {"suite": "eval", "tier": "fast"}
+                "labels": {"suite": "eval", "tier": "fast"},
+                "expected": selection
             })
         );
     }

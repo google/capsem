@@ -206,3 +206,54 @@ async fn saved_creation_checks_exact_startup_timing_before_gateway_mutation() {
         }
     }
 }
+
+#[tokio::test]
+async fn lifecycle_requests_carry_the_original_gateway_selection() {
+    let selection = json!({
+        "id": "vm-1", "generation": "00000000-0000-4000-8000-000000000003",
+        "running": false, "environment": null,
+    });
+    for (path, metadata, input, field) in [
+        (
+            "/vms/vm-1/start",
+            "/vms/vm-1/readiness?intent=start",
+            json!({}),
+            "expected",
+        ),
+        (
+            "/vms/vm-1/resume",
+            "/vms/vm-1/readiness?intent=start",
+            json!({}),
+            "expected",
+        ),
+        (
+            "/vms/vm-1/fork",
+            "/vms/vm-1/readiness?intent=fork",
+            json!({"name":"copy"}),
+            "expected",
+        ),
+        (
+            "/vms/create",
+            "/vms/source-name/readiness?intent=clone",
+            json!({"from":"source-name"}),
+            "expected_source",
+        ),
+    ] {
+        let service = FakeService::start();
+        service
+            .route(
+                "GET",
+                metadata.split_once('?').unwrap().0,
+                200,
+                json!({"selection":selection,"startup_timeout_seconds":0}),
+            )
+            .route("POST", path, 200, json!({"id":"vm-1"}));
+        service.client.post::<_, serde_json::Value>(path, input).await.unwrap();
+        let calls = service.recorded();
+        assert_eq!(calls.len(), 2);
+        assert!(calls.iter().all(|request| request.via_gateway));
+        assert_eq!(calls[0].path, metadata);
+        assert_eq!(calls[1].path, path);
+        assert_eq!(calls[1].json()[field], selection);
+    }
+}

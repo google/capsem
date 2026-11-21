@@ -132,7 +132,7 @@ impl GatewayClient {
         &self,
         method: &str,
         path: &str,
-        body: Option<Vec<u8>>,
+        mut body: Option<Vec<u8>>,
         content_type: Option<&str>,
     ) -> Result<(Vec<u8>, Option<String>)> {
         let method = reqwest::Method::from_bytes(method.as_bytes())?;
@@ -169,30 +169,56 @@ impl GatewayClient {
             Some("application/gzip") => MediaType::Gzip,
             Some(_) => anyhow::bail!("unsupported CLI request content type"),
         };
-        let options = if method == reqwest::Method::POST && path == "/vms/create" {
-            let request: capsem_api::ProvisionRequest =
-                serde_json::from_slice(body.as_deref().context("creation request requires a body")?)?;
-            capsem_sdk::create_call_options(self.transport().await?, &request, CallOptions::default()).await?
-        } else if method == reqwest::Method::GET {
-            CallOptions {
+        let transport = self.transport().await?;
+        let default = CallOptions::default();
+        let options = match parameters.as_slice() {
+            [(_, "vms"), (_, "create")] if method == reqwest::Method::POST && path == "/vms/create" => {
+                let mut request: capsem_api::ProvisionRequest =
+                    serde_json::from_slice(body.as_deref().context("creation request requires a body")?)?;
+                let options = capsem_sdk::prepare_create(transport, &mut request, default)
+                    .await
+                    .map_err(gateway_error)?;
+                if request.from.is_some() {
+                    body = Some(serde_json::to_vec(&request)?);
+                }
+                options
+            }
+            [(_, "vms"), (_, id), (_, "start" | "resume")] if method == reqwest::Method::POST => {
+                let mut request = match body.as_deref() {
+                    None | Some([]) => capsem_api::VmStartRequest::default(),
+                    Some(bytes) => serde_json::from_slice(bytes)?,
+                };
+                let options = capsem_sdk::prepare_start(transport, id, &mut request, default)
+                    .await
+                    .map_err(gateway_error)?;
+                body = Some(serde_json::to_vec(&request)?);
+                options
+            }
+            [(_, "vms"), (_, id), (_, "fork")] if method == reqwest::Method::POST => {
+                let mut request = serde_json::from_slice(body.as_deref().context("fork request requires a body")?)?;
+                capsem_sdk::prepare_fork(transport, id, &mut request, default)
+                    .await
+                    .map_err(gateway_error)?;
+                body = Some(serde_json::to_vec(&request)?);
+                default
+            }
+            _ if method == reqwest::Method::GET => CallOptions {
                 timeout: Some(Duration::from_secs(30)),
+            },
+            _ if path == "/run" || path.ends_with("/exec") => {
+                let bytes = body.as_deref().context("command request requires a body")?;
+                let timeout_secs = if path == "/run" {
+                    serde_json::from_slice::<capsem_api::RunRequest>(bytes)?.timeout_secs
+                } else {
+                    serde_json::from_slice::<capsem_api::ExecRequest>(bytes)?.timeout_secs
+                };
+                CallOptions {
+                    timeout: Some(CallOptions::command_timeout(timeout_secs)),
+                }
             }
-        } else if path == "/run" || path.ends_with("/exec") {
-            let bytes = body.as_deref().context("command request requires a body")?;
-            let timeout_secs = if path == "/run" {
-                serde_json::from_slice::<capsem_api::RunRequest>(bytes)?.timeout_secs
-            } else {
-                serde_json::from_slice::<capsem_api::ExecRequest>(bytes)?.timeout_secs
-            };
-            CallOptions {
-                timeout: Some(CallOptions::command_timeout(timeout_secs)),
-            }
-        } else {
-            CallOptions::default()
+            _ => default,
         };
-        let response = self
-            .transport()
-            .await?
+        let response = transport
             .request_response(
                 method,
                 &template,
