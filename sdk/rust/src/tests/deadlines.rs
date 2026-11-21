@@ -38,15 +38,22 @@ async fn slow_gateway(delay: Duration) -> (String, tokio::sync::mpsc::UnboundedR
                 let mut body = vec![0; length];
                 socket.read_exact(&mut body).await.unwrap();
                 let _ = seen.send(path.clone());
-                tokio::time::sleep(delay).await;
-                let operation = match path.as_str() {
-                    "/vms/vm-1/info" => "getVmInfo",
-                    "/vms/create" => "createVm",
-                    "/vms/vm-1/start" => "startVm",
-                    "/vms/vm-1/resume" => "resumeVm",
-                    _ => "execVm",
+                let payload = if path == "/vms/vm-1/readiness?intent=start" {
+                    serde_json::json!({
+                        "selection": {"id":"vm-1","generation":null,"running":false,"environment":null},
+                        "startup_timeout_seconds": 0,
+                    })
+                } else {
+                    tokio::time::sleep(delay).await;
+                    reply(match path.as_str() {
+                        "/vms/vm-1/info" => "getVmInfo",
+                        "/vms/create" => "createVm",
+                        "/vms/vm-1/start" => "startVm",
+                        "/vms/vm-1/resume" => "resumeVm",
+                        _ => "execVm",
+                    })
                 };
-                let payload = serde_json::to_vec(&reply(operation)).unwrap();
+                let payload = serde_json::to_vec(&payload).unwrap();
                 let response = format!(
                     "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
                     payload.len()
@@ -91,17 +98,25 @@ async fn restore_outlives_the_transport_deadline_without_replaying() {
         started.is_ok() && resumed.is_ok(),
         "readiness results: {started:?} / {resumed:?}"
     );
-    assert_eq!(requests.recv().await.as_deref(), Some("/vms/vm-1/start"));
-    assert_eq!(requests.recv().await.as_deref(), Some("/vms/vm-1/resume"));
+    for action in ["start", "resume"] {
+        assert_eq!(
+            requests.recv().await.as_deref(),
+            Some("/vms/vm-1/readiness?intent=start")
+        );
+        assert_eq!(requests.recv().await.unwrap(), format!("/vms/vm-1/{action}"));
+    }
     assert!(requests.try_recv().is_err(), "neither mutation is replayed");
 }
 
 #[test]
-fn create_options_preserve_readiness_and_a_larger_client_deadline() {
-    for (configured, expected) in [(30, 230), (500, 500)] {
-        let mut client = crate::client::Client::new("http://127.0.0.1:1", "token").unwrap();
-        client.set_timeout(Duration::from_secs(configured)).unwrap();
-        assert_eq!(client.create_options().timeout, Some(Duration::from_secs(expected)));
+fn preparation_options_preserve_approved_startup_and_a_larger_client_deadline() {
+    let transport = crate::transport::Transport::new("http://127.0.0.1:1", "token", Duration::from_secs(30)).unwrap();
+    for (configured, startup, expected) in [(None, 0, 230), (Some(500), 0, 500), (Some(500), 600, 830)] {
+        let options = crate::transport::CallOptions {
+            timeout: configured.map(Duration::from_secs),
+        };
+        let actual = crate::client::preparation_call_options(&transport, startup, options);
+        assert_eq!(actual.timeout, Some(Duration::from_secs(expected)));
     }
 }
 

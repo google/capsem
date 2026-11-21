@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use capsem_api::{VmLifecycleIntent, VmReadinessResponse};
+
 use crate::transport::{CallOptions, Transport};
 use crate::{Error, Result};
 
@@ -25,18 +27,45 @@ pub async fn create_call_options(
             if response.environment != *environment {
                 return Err(Error::InvalidResponse("environment readiness identity changed"));
             }
-            u64::from(response.startup_timeout_seconds)
+            response.startup_timeout_seconds
         }
         None => 0,
     };
-    Ok(CallOptions {
+    Ok(preparation_call_options(transport, startup, options))
+}
+
+pub(crate) fn preparation_call_options(
+    transport: &Transport,
+    startup_seconds: u32,
+    options: CallOptions,
+) -> CallOptions {
+    CallOptions {
         timeout: Some(
             options
                 .timeout
                 .unwrap_or_else(|| transport.timeout())
-                .max(Duration::from_secs(110 + 120 + startup)),
+                .max(CallOptions::command_timeout(Some(110 + u64::from(startup_seconds)))),
         ),
-    })
+    }
+}
+
+pub(crate) async fn lifecycle_readiness(
+    transport: &Transport,
+    id: &str,
+    intent: VmLifecycleIntent,
+    options: CallOptions,
+) -> Result<VmReadinessResponse> {
+    let readiness = crate::operations::get_vm_readiness(
+        transport,
+        &crate::operations::GetVmReadinessParams { id: id.into(), intent },
+        options,
+    )
+    .await?;
+    readiness
+        .selection
+        .validate_target(id)
+        .map_err(Error::InvalidResponse)?;
+    Ok(readiness)
 }
 
 #[derive(Debug, Clone)]
@@ -67,9 +96,9 @@ impl Client {
         }
     }
 
-    /// Create/start/resume allow 110 seconds for workload readiness.
+    /// Default wait for workload preparation without a saved startup script.
     pub fn create_options(&self) -> CallOptions {
-        self.command_options(Some(110))
+        preparation_call_options(&self.transport, 0, self.options)
     }
 
     pub fn set_timeout(&mut self, timeout: Duration) -> Result<()> {

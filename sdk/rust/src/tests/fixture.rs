@@ -78,6 +78,15 @@ pub async fn gateway() -> Server {
             "/networks/vm-1" if parts.method == "DELETE" => "deleteNetwork",
             "/networks/vm-1" => "getNetwork",
             "/vms/vm-1/info" => "getVmInfo",
+            "/vms/vm-1/readiness" => {
+                return Response::new(Body::from(
+                    json!({
+                        "selection": {"id":"vm-1","generation":null,"running":false,"environment":null},
+                        "startup_timeout_seconds":0,
+                    })
+                    .to_string(),
+                ));
+            }
             "/vms/vm-1/exec" => "execVm",
             "/vms/vm-1/start" => "startVm",
             "/vms/vm-1/stop" => "stopVm",

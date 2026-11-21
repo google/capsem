@@ -195,10 +195,12 @@ async fn controls_and_resources_use_the_canonical_vm_routes() {
         json!({"command":"printf hello","timeout_secs":4})
     );
     vm.start().await.unwrap();
+    request(&mut server, "/vms/vm-1/readiness").await;
     request(&mut server, "/vms/vm-1/start").await;
     vm.pause().await.unwrap();
     request(&mut server, "/vms/vm-1/pause").await;
     vm.resume().await.unwrap();
+    request(&mut server, "/vms/vm-1/readiness").await;
     request(&mut server, "/vms/vm-1/resume").await;
     vm.stop().await.unwrap();
     request(&mut server, "/vms/vm-1/stop").await;
@@ -212,9 +214,11 @@ async fn controls_and_resources_use_the_canonical_vm_routes() {
         )
         .await
         .unwrap();
+    request(&mut server, "/vms/vm-1/readiness").await;
     assert_eq!(
         request(&mut server, "/vms/vm-1/fork").await,
-        json!({"name":"branch","description":"notes","labels":{"suite":"eval"}})
+        json!({"name":"branch","description":"notes","labels":{"suite":"eval"},
+            "expected":{"id":"vm-1","generation":null,"running":false,"environment":null}})
     );
     drop(vm);
     fork.info().await.unwrap();

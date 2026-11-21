@@ -1,6 +1,67 @@
 use super::*;
 
 #[tokio::test]
+async fn lifecycle_mutations_carry_the_original_selection_from_the_requested_intent() {
+    use axum::{body::Body, http::Response};
+
+    let selected = json!({
+        "id": "vm-1",
+        "generation": "00000000-0000-4000-8000-000000000003",
+        "running": false,
+        "environment": {
+            "environment_id": "00000000-0000-4000-8000-000000000001",
+            "revision_id": "00000000-0000-4000-8000-000000000002",
+        },
+    });
+    let metadata = json!({"selection": selected, "startup_timeout_seconds": 600});
+    let mut server = Server::respond(move |parts| {
+        let result = match parts.uri.path() {
+            "/vms/vm-1/readiness" => metadata.clone(),
+            "/vms/vm-1/start" => reply("startVm"),
+            "/vms/vm-1/resume" => reply("resumeVm"),
+            "/vms/vm-1/fork" => reply("forkVm"),
+            path => panic!("unexpected request: {path}"),
+        };
+        Response::new(Body::from(result.to_string()))
+    })
+    .await;
+    let vm = VM::new(&server.url, "private-token", VmSelector::Id("vm-1".into())).unwrap();
+    vm.start().await.unwrap();
+    vm.resume().await.unwrap();
+    vm.fork("copy", None, None).await.unwrap();
+    for (operation, intent) in [("start", "start"), ("resume", "start"), ("fork", "fork")] {
+        let (metadata, body) = server.received.recv().await.unwrap();
+        assert_eq!(metadata.method, "GET");
+        assert_eq!(metadata.headers["authorization"], "Bearer private-token");
+        assert_eq!(metadata.uri.to_string(), format!("/vms/vm-1/readiness?intent={intent}"));
+        assert!(body.is_empty());
+        let request = request(&mut server, &format!("/vms/vm-1/{operation}")).await;
+        assert_eq!(request["expected"], selected);
+    }
+    assert!(server.received.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn invalid_lifecycle_selection_does_not_dispatch_a_mutation() {
+    use axum::{body::Body, http::Response};
+
+    let mut server = Server::respond(|_| {
+        Response::new(Body::from(
+            json!({
+                "selection": {"id":"other-vm","generation":null,"running":false,"environment":null},
+                "startup_timeout_seconds":600,
+            })
+            .to_string(),
+        ))
+    })
+    .await;
+    let vm = VM::new(&server.url, "private-token", VmSelector::Id("vm-1".into())).unwrap();
+    assert!(matches!(vm.resume().await, Err(Error::InvalidResponse(_))));
+    request(&mut server, "/vms/vm-1/readiness").await;
+    assert!(server.received.try_recv().is_err());
+}
+
+#[tokio::test]
 async fn environment_launch_preserves_revision_and_refuses_inline_overrides_before_http() {
     let mut server = gateway().await;
     let hv = Hypervisor::new(&server.url, "private-token").unwrap();
