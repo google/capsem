@@ -87,7 +87,7 @@ async fn session(
                 // The stream protocol names no target yet, so a streamed exec
                 // goes where an untargeted POST exec goes.
                 let target = capsem_api::exec_target(None, container_setup::runs_container(&state, &id).await)?;
-                exec(
+                let exit = exec(
                     &state,
                     &grant,
                     owner?,
@@ -96,8 +96,8 @@ async fn session(
                     &mut client_tx,
                     &mut client_rx,
                 )
-                .await
-                .map(drop)
+                .await?;
+                send_exit_status(&mut client_tx, exit).await
             }
             (StreamKind::Container, claim) => {
                 let Some(generation) = claim else {
@@ -129,11 +129,12 @@ async fn session(
                     }
                     Err(error) => Err(error),
                 };
-                let ended = result
-                    .clone()
-                    .and_then(|exit| exit.ok_or_else(|| "attached client left".to_string()));
+                let ended = result.as_ref().map_err(Clone::clone).and_then(|exit| {
+                    exit.map(|exit| exit.code)
+                        .ok_or_else(|| "attached client left".to_string())
+                });
                 container_setup::finish_attach(&state, &id, generation, ended).await;
-                result.map(drop)
+                send_exit_status(&mut client_tx, result?).await
             }
         }
     }
@@ -152,6 +153,31 @@ async fn session(
             reason: "".into(),
         })))
         .await;
+}
+
+#[derive(Clone, Copy)]
+struct ExecExit {
+    code: i32,
+    truncated: bool,
+}
+
+async fn send_exit_status(
+    client_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
+    exit: Option<ExecExit>,
+) -> Result<(), String> {
+    match exit {
+        Some(exit) => {
+            send_status(
+                client_tx,
+                &StreamStatus::Exit {
+                    code: exit.code,
+                    truncated: exit.truncated,
+                },
+            )
+            .await
+        }
+        None => Ok(()),
+    }
 }
 
 async fn first_start(
@@ -269,8 +295,9 @@ async fn terminal(
     result
 }
 
-/// Run `command` attached. `Ok(Some(code))` is its exit; `Ok(None)` means the
-/// client left first and the command was cancelled.
+/// Run `command` attached. `Ok(Some(exit))` is its exit; `Ok(None)` means the
+/// client left first and the command was cancelled. The caller publishes the
+/// exit status after committing any state the client may observe next.
 async fn exec(
     state: &ServiceState,
     grant: &crate::owner_connection::OwnerConnection,
@@ -279,7 +306,7 @@ async fn exec(
     preparation: Option<crate::policy_mutation::PolicyMutation<'_>>,
     client_tx: &mut futures::stream::SplitSink<WebSocket, Message>,
     client_rx: &mut futures::stream::SplitStream<WebSocket>,
-) -> Result<Option<i32>, String> {
+) -> Result<Option<ExecExit>, String> {
     let owner_closed = |e: std::io::Error| format!("VM owner closed: {e}");
     let job = state.next_job_id();
     grant.validate(state, false)?;
@@ -345,8 +372,7 @@ async fn exec(
                     if exit_code < 0 && !stderr.is_empty() {
                         break Err(String::from_utf8_lossy(&stderr).into_owned());
                     }
-                    send_status(client_tx, &StreamStatus::Exit { code: exit_code, truncated }).await?;
-                    break Ok(Some(exit_code));
+                    break Ok(Some(ExecExit { code: exit_code, truncated }));
                 }
                 _ => {}
                 }
