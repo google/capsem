@@ -1,5 +1,6 @@
 mod auth;
 mod cors;
+mod events;
 mod listener;
 mod metric_export;
 mod preview;
@@ -74,7 +75,7 @@ pub struct AppState {
     pub status_cache: StatusCache,
     pub auth_failures: AuthFailureTracker,
     /// Broadcast channel for real-time events to WebSocket /events clients.
-    pub events_tx: tokio::sync::broadcast::Sender<String>,
+    pub(crate) events_tx: tokio::sync::broadcast::Sender<events::Event>,
     pub previews: preview::PreviewState,
 }
 
@@ -132,7 +133,7 @@ async fn run(args: Args) -> Result<()> {
     let token = auth::generate_token();
     let mut auth_state = AuthState::prepare(&run_dir)?;
 
-    let (events_tx, _) = tokio::sync::broadcast::channel::<String>(64);
+    let (events_tx, _) = tokio::sync::broadcast::channel(64);
     // SAFETY: the service gives this child sole ownership of stdin as its
     // descriptor grant socket. No standard-input owner has been created.
     let grant_socket = unsafe { std::os::unix::net::UnixStream::from_raw_fd(0) };
@@ -178,6 +179,10 @@ async fn run(args: Args) -> Result<()> {
 
     let app = gateway_router(state.clone());
 
+    // Subscribe before advertising the gateway so early clients can receive
+    // queue changes as soon as their WebSocket opens.
+    let event_relay = events::start(&state).await;
+
     auth_state.publish(&state.token, bound_port, preview_port)?;
 
     info!(
@@ -198,6 +203,7 @@ async fn run(args: Args) -> Result<()> {
         info!("shutting down");
     })
     .await;
+    event_relay.abort();
     metric_export::stop(metric_export).await;
     result.context("server error")?;
 
@@ -451,9 +457,7 @@ async fn handle_health(State(state): State<Arc<AppState>>) -> impl IntoResponse 
 
 /// WebSocket endpoint for real-time events (VM state changes, progress, etc.).
 ///
-/// Clients receive JSON messages: `{"type":"vm-state-changed","payload":{...}}`
-/// Events are broadcast when consecutive authoritative status reads detect VM
-/// state transitions.
+/// Clients receive an event type and its minimal invalidation payload.
 async fn handle_events_ws(
     ws: axum::extract::WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
@@ -465,13 +469,12 @@ async fn handle_events_ws(
             tokio::select! {
                 msg = rx.recv() => {
                     match msg {
-                        Ok(text) => {
-                            if socket.send(Message::Text(text.into())).await.is_err() {
+                        Ok(events::Event::Message(text)) => {
+                            if !matches!(tokio::time::timeout(events::IO_TIMEOUT, socket.send(Message::Text(text.into()))).await, Ok(Ok(()))) {
                                 break;
                             }
                         }
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                        Err(_) => break,
+                        Ok(events::Event::Discontinuity) | Err(_) => break,
                     }
                 }
                 frame = socket.recv() => {

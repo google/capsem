@@ -86,7 +86,7 @@ async fn broadcast_transitions(state: &AppState, resp: &StatusResponse) {
                     "trigger": "status_poll",
                 }
             });
-            let _ = state.events_tx.send(event.to_string());
+            let _ = state.events_tx.send(crate::events::Event::Message(event.to_string()));
         }
     }
 }

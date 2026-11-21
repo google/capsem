@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Authenticated `/events` clients receive `approval-pending` notifications when a VM’s actionable approval queue changes, even when no client polls `/status` (#404).
+
 - Fixed: Restore Inspect adapter PyPI publication and its clean public-registry consumer check now that the publisher is authorized for `inspect-capsem-sandbox` (#392).
 
 - Fixed: Draw the terminal in the font chosen in Settings. The terminal iframe now declares and loads bundled fonts before measuring terminal cells, avoiding proportional-font gaps on Linux.
