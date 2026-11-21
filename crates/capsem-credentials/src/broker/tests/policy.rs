@@ -39,11 +39,11 @@ fn grant_payload_normalization_preserves_instants_and_rejects_duplicates() {
         capability_ids: vec!["b".into(), "a".into()],
         expires_at: Some("2026-10-14T01:00:00.000001+01:00".into()),
     };
-    let original = humantime::parse_rfc3339("2026-10-14T00:00:00.000001Z").unwrap();
+    let original = capsem_foundation::time::parse_rfc3339("2026-10-14T00:00:00.000001Z").unwrap();
     normalize_grant_request(&mut request, BrokerLimits::bundled().unwrap()).unwrap();
     assert_eq!(request.capability_ids, vec!["a", "b"]);
     assert_eq!(
-        humantime::parse_rfc3339(request.expires_at.as_ref().unwrap()).unwrap(),
+        capsem_foundation::time::parse_rfc3339(request.expires_at.as_ref().unwrap()).unwrap(),
         original
     );
     let mut equivalent = request.clone();

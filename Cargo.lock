@@ -849,7 +849,6 @@ dependencies = [
  "capsem-proto",
  "futures",
  "http-body-util",
- "humantime",
  "hyper",
  "hyper-util",
  "reqwest 0.12.28",

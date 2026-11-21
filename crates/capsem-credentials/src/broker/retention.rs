@@ -22,7 +22,7 @@ impl ConnectionBroker {
         let mut changed = false;
         let mut remove = vec![];
         for (id, entry) in &mut state.grants {
-            let expires = humantime::parse_rfc3339(&entry.record.summary.expires_at)
+            let expires = capsem_foundation::time::parse_rfc3339(&entry.record.summary.expires_at)
                 .map_err(|_| api::CredentialErrorCode::StorageUnavailable)?;
             if entry.record.summary.state == api::GrantState::Active && expires > now {
                 if let (Some(handle), Some(binding)) = (entry.handle, entry.binding) {
@@ -57,7 +57,7 @@ impl ConnectionBroker {
             let terminal = match entry.record.summary.state {
                 api::GrantState::Active => continue,
                 api::GrantState::Expired => expires,
-                api::GrantState::Revoked => humantime::parse_rfc3339(
+                api::GrantState::Revoked => capsem_foundation::time::parse_rfc3339(
                     entry
                         .record
                         .summary
@@ -86,7 +86,7 @@ impl ConnectionBroker {
             // Old private records predate terminal_at. Their expiry is a
             // conservative anchor, preserving at least the promised window.
             let terminal = entry.record.terminal_at.unwrap_or(
-                humantime::parse_rfc3339(&entry.record.transaction.expires_at)
+                capsem_foundation::time::parse_rfc3339(&entry.record.transaction.expires_at)
                     .map_err(|_| api::CredentialErrorCode::StorageUnavailable)?,
             );
             if terminal <= cutoff {

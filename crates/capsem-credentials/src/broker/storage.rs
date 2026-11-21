@@ -84,7 +84,7 @@ impl Snapshot {
                 if !catalog_id(&record.request.scope_profile_id)
                     || !transactions.insert(&record.transaction.id)
                     || !requests.insert(&record.request.request_id)
-                    || humantime::parse_rfc3339(&record.transaction.expires_at).is_err()
+                    || capsem_foundation::time::parse_rfc3339(&record.transaction.expires_at).is_err()
                     || record
                         .transaction
                         .connection_id
@@ -109,8 +109,8 @@ impl Snapshot {
                     || record.request.expected_owner_generation != record.summary.owner_generation
                     || record.request.connection_id != record.summary.connection_id
                     || record.request.capability_ids != record.summary.capability_ids
-                    || humantime::parse_rfc3339(&record.summary.expires_at).is_err()
-                    || humantime::parse_rfc3339(&record.summary.created_at).is_err()
+                    || capsem_foundation::time::parse_rfc3339(&record.summary.expires_at).is_err()
+                    || capsem_foundation::time::parse_rfc3339(&record.summary.created_at).is_err()
                 {
                     return Err(api::CredentialErrorCode::StorageUnavailable);
                 }

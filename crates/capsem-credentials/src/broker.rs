@@ -422,7 +422,7 @@ fn timestamp(time: SystemTime) -> BrokerResult<String> {
     time.duration_since(UNIX_EPOCH)
         .map_err(|_| api::CredentialErrorCode::StorageUnavailable)?;
     let mut result = String::new();
-    std::fmt::write(&mut result, format_args!("{}", humantime::format_rfc3339_millis(time)))
+    std::fmt::write(&mut result, format_args!("{}", capsem_foundation::time::format_rfc3339_millis(time)))
         .map_err(|_| api::CredentialErrorCode::StorageUnavailable)?;
     Ok(result)
 }

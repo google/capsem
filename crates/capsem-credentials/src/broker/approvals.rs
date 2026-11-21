@@ -32,7 +32,7 @@ impl ConnectionBroker {
             entry.record.summary.session_id == session_id && entry.record.summary.owner_generation == owner_generation
         }) {
             if entry.record.summary.state == api::GrantState::Active {
-                let expiry = humantime::parse_rfc3339(&entry.record.summary.expires_at)
+                let expiry = capsem_foundation::time::parse_rfc3339(&entry.record.summary.expires_at)
                     .map_err(|_| api::CredentialErrorCode::StorageUnavailable)?;
                 if expiry <= SystemTime::now() {
                     self.expire_entry(entry)?;

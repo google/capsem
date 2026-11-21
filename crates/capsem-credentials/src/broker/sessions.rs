@@ -184,7 +184,7 @@ impl ConnectionBroker {
         let expires = request
             .expires_at
             .as_ref()
-            .map(|value| humantime::parse_rfc3339(value).map_err(|_| api::CredentialErrorCode::RequestConflict))
+            .map(|value| capsem_foundation::time::parse_rfc3339(value).map_err(|_| api::CredentialErrorCode::RequestConflict))
             .transpose()?
             .unwrap_or(default.min(binding.expires));
         if expires > default || expires > binding.expires || expires <= now {
@@ -339,7 +339,7 @@ impl ConnectionBroker {
         if entry.record.summary.state != api::GrantState::Active {
             return Ok(());
         }
-        let expiry = humantime::parse_rfc3339(&entry.record.summary.expires_at)
+        let expiry = capsem_foundation::time::parse_rfc3339(&entry.record.summary.expires_at)
             .map_err(|_| api::CredentialErrorCode::StorageUnavailable)?;
         let now = SystemTime::now();
         if expiry <= now {

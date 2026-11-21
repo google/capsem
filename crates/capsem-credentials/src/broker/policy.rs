@@ -103,7 +103,7 @@ pub(super) fn normalize_grant_request(
         let mut normalized = String::new();
         std::fmt::write(
             &mut normalized,
-            format_args!("{}", humantime::format_rfc3339_nanos(instant)),
+            format_args!("{}", capsem_foundation::time::format_rfc3339_nanos(instant)),
         )
         .map_err(|_| api::CredentialErrorCode::RequestConflict)?;
         *value = normalized;

@@ -238,7 +238,7 @@ async fn default_grant_expiry_fits_equal_and_shorter_trusted_owner_deadlines() {
         tokio::time::sleep(Duration::from_millis(1)).await;
         let request = grant_request(bound, existing.connection_id.clone());
         let result = broker.create_grant(bound, request.clone(), |_, _| true).await.unwrap();
-        let expiry = humantime::parse_rfc3339(&result.expires_at).unwrap();
+        let expiry = capsem_foundation::time::parse_rfc3339(&result.expires_at).unwrap();
         assert!(expiry <= bound.expires);
         assert!(expiry > SystemTime::now());
         let mut overrun = request;

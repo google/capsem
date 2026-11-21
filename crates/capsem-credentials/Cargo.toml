@@ -25,7 +25,6 @@ futures = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-humantime = { workspace = true }
 time = { workspace = true, features = ["parsing"] }
 uuid = "1"
 tracing = { workspace = true }
