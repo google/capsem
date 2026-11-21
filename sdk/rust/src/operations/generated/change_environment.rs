@@ -6,7 +6,7 @@ use crate::transport::{CallOptions, Request, Transport};
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct ChangeEnvironmentParams {
     pub id: String,
-    pub body: capsem_api::EnvironmentChangeRequest,
+    pub body: capsem_api::EnvironmentChangeIntent,
 }
 
 pub async fn change_environment(

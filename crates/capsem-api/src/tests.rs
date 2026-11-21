@@ -558,7 +558,7 @@ fn environment_changes_contract_carries_observed_base_and_resolution_budget() {
     assert_eq!(change["x-capsem-request-timeout-ms"], IMAGE_PULL_REQUEST_TIMEOUT_MS);
     assert_eq!(
         change["requestBody"]["content"]["application/json"]["schema"]["$ref"],
-        "#/components/schemas/EnvironmentChangeRequest"
+        "#/components/schemas/EnvironmentChangeIntent"
     );
     assert!(
         document["components"]["schemas"]["EnvironmentChangeRequest"]["required"]

@@ -14,7 +14,7 @@ PENDING: dict[str, object] = {"request_id": REQUEST, "environment_id": ENVIRONME
            "application": "pending", "result": None, "application_error": None}
 CURRENT: dict[str, object] = {"document": {"identity": {"schema_version": 1, "id": ENVIRONMENT, "revision_id": REQUEST},
                         "specification": {"name": "development"}},
-           "timestamp_unix_ms": 1, "actor": "operator", "reason": "approved", "request_id": REQUEST}
+           "archived": False, "timestamp_unix_ms": 1, "actor": "operator", "reason": "approved", "request_id": REQUEST}
 
 
 def request():

@@ -30,7 +30,7 @@ export class Environments {
     return result;
   }
 
-  async change(id: string, request: models.EnvironmentChangeRequest, options: CallOptions = {}): Promise<models.EnvironmentMutationResponse> {
+  async change(id: string, request: models.EnvironmentChangeIntent, options: CallOptions = {}): Promise<models.EnvironmentMutationResponse> {
     const requestId = request.request_id;
     const result = await api.changeEnvironment(this.transport, {id, body: request}, options);
     if (result.request_id !== requestId || result.environment_id !== id) throw new Error('Environment change identity changed');

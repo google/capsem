@@ -34,6 +34,7 @@ pub(super) fn matches(reply: &LedgerEnvironmentReply, query: &LedgerEnvironmentQ
         (LedgerEnvironmentReply::RequestHistory {history},LedgerEnvironmentQuery::RequestHistory {request_id})=>history.as_ref().is_none_or(|h|h.record.request_id==*request_id),
         (LedgerEnvironmentReply::References {records},LedgerEnvironmentQuery::References {query})=>match query {
             EnvironmentReferenceQuery::CurrentEnvironment {environment_id}=>records.len()<=1&&records.iter().all(|r|matches!(r,EnvironmentReferenceRecord::CurrentEnvironment {revision} if revision.environment_id==*environment_id)),
+            EnvironmentReferenceQuery::ArchivedEnvironment {environment_id}=>records.len()<=1&&records.iter().all(|r|matches!(r,EnvironmentReferenceRecord::ArchivedEnvironment {revision} if revision.environment_id==*environment_id)),
             EnvironmentReferenceQuery::Sandbox {..}=>records.len()<=3&&records.iter().all(|r|matches!(r,EnvironmentReferenceRecord::Sandbox {..})),
             EnvironmentReferenceQuery::CurrentEnvironments {after,limit} => records.len() <= usize::from(*limit) && validation::current_heads(records, after.as_deref()),
         },

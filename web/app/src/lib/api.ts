@@ -105,6 +105,10 @@ export function saveEnvironment(body: import('@capsem/sdk').EnvironmentCreateReq
   }, false);
 }
 
+export function archiveEnvironment(id: string, request: import('@capsem/sdk').EnvironmentArchiveRequest) {
+  return _sdk.call(transport => new Environments(transport).change(id, request), false);
+}
+
 // -- Public getters --
 
 export function isConnected(): boolean {

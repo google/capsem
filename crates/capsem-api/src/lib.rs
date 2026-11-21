@@ -5,9 +5,10 @@ mod agent_access;
 mod approvals;
 pub mod environments;
 pub use environments::{
-    EnvironmentChangeRequest, EnvironmentCreateRequest, EnvironmentCurrentResponse, EnvironmentListResponse,
-    EnvironmentMutationResponse, EnvironmentPluginListResponse, EnvironmentReadinessResponse, EnvironmentRevisionDetailResponse,
-    EnvironmentRevisionListResponse, EnvironmentRuleListResponse, EnvironmentTomlValidationRequest, EnvironmentTomlValidationResponse,
+    EnvironmentChangeIntent, EnvironmentChangeRequest, EnvironmentCreateRequest, EnvironmentCurrentResponse,
+    EnvironmentListResponse, EnvironmentMutationResponse, EnvironmentPluginListResponse, EnvironmentReadinessResponse,
+    EnvironmentRevisionDetailResponse, EnvironmentRevisionListResponse, EnvironmentRuleListResponse,
+    EnvironmentTomlValidationRequest, EnvironmentTomlValidationResponse,
 };
 pub mod requests;
 pub use agent_access::*;

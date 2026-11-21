@@ -45,6 +45,7 @@ impl std::fmt::Debug for EnvironmentMutationResponse {
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentCurrentResponse {
     pub document: EnvironmentDocument,
+    pub archived: bool,
     pub timestamp_unix_ms: i64,
     pub actor: String,
     pub reason: String,
@@ -134,6 +135,7 @@ pub struct EnvironmentListResponse {
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentListItem {
     pub environment: EnvironmentRevisionReference,
+    pub archived: bool,
     /// Missing when the current file cannot be verified against committed history.
     pub summary: Option<EnvironmentListSummary>,
     /// Number of VMs currently bound to this environment, visible to the operator.
@@ -230,6 +232,50 @@ impl std::fmt::Debug for EnvironmentChangeRequest {
         f.debug_struct("EnvironmentChangeRequest").finish_non_exhaustive()
     }
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvironmentArchiveAction {
+    Archive,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentArchiveRequest {
+    pub action: EnvironmentArchiveAction,
+    #[schema(format = "uuid")]
+    pub request_id: String,
+    #[schema(format = "uuid")]
+    pub base_revision_id: String,
+    pub reason: String,
+}
+
+impl EnvironmentArchiveRequest {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_submission(&self.request_id, &self.reason, None)?;
+        if !crate::identity::canonical_uuid(&self.base_revision_id) {
+            return Err("environment archive requires a canonical base revision identity".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(untagged)]
+pub enum EnvironmentChangeIntent {
+    Edit(Box<EnvironmentChangeRequest>),
+    Archive(EnvironmentArchiveRequest),
+}
+
+impl EnvironmentChangeIntent {
+    pub fn request_id(&self) -> &str {
+        match self {
+            Self::Edit(request) => &request.request_id,
+            Self::Archive(request) => &request.request_id,
+        }
+    }
+}
+
 fn validate_submission(id: &str, reason: &str, target: Option<&EnvironmentSandboxTarget>) -> Result<(), String> {
     if !crate::identity::canonical_uuid(id) || id.as_bytes()[14] != b'4' {
         return Err("environment request requires a canonical UUIDv4 request identity".into());

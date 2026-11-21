@@ -65,9 +65,9 @@ pub fn openapi() -> OpenApi {
             .content("application/json", Content::new(Some(request))).build()))
         .extensions(Some([("x-capsem-request-timeout-ms", IMAGE_PULL_REQUEST_TIMEOUT_MS)].into_iter().collect()));
     doc.add("/environments/create", HttpMethod::Post, create);
-    let request = doc.schema::<environments::EnvironmentChangeRequest>();
+    let request = doc.schema::<environments::EnvironmentChangeIntent>();
     let change = doc.operation::<EnvironmentMutationResponse>("/environments/{id}/changes", "changeEnvironment")
-        .description(Some("An operator publishes a blueprint revision. A scoped agent queues a proposal at the exact base revision of its running sandbox. Reconcile the same request ID after interruption. Running sandboxes require separate application."))
+        .description(Some("An operator publishes a blueprint revision or archives the exact current revision. Archival prevents new sandbox creation while preserving pinned work. A scoped agent queues an edit proposal at the exact base revision of its running sandbox. Reconcile the same request ID after interruption."))
         .request_body(Some(RequestBodyBuilder::new().required(Some(Required::True))
             .content("application/json", Content::new(Some(request))).build()))
         .extensions(Some([("x-capsem-request-timeout-ms", IMAGE_PULL_REQUEST_TIMEOUT_MS)].into_iter().collect()));

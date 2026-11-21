@@ -78,6 +78,7 @@ impl EnvironmentRevisions {
         let mut targets = Vec::new();
         if let Some(payload) = payload {
             match *payload {
+                EnvironmentRequestPayload::Archive { .. } => {}
                 EnvironmentRequestPayload::Change { specification }
                 | EnvironmentRequestPayload::ImageUpdate { specification } => {
                     proposed.specification = Some(specification);
@@ -132,6 +133,7 @@ fn summary(record: EnvironmentRequestRecord, at: i64) -> RequestSummary {
     let observed = view(record.clone());
     let kind = match record.kind {
         EnvironmentRequestKind::Change => RequestKind::EnvironmentChange,
+        EnvironmentRequestKind::Archive => RequestKind::EnvironmentArchive,
         EnvironmentRequestKind::ImageUpdate => RequestKind::EnvironmentImageUpdate,
         EnvironmentRequestKind::Promotion => RequestKind::EnvironmentPromotion,
         EnvironmentRequestKind::Apply => RequestKind::EnvironmentApply,

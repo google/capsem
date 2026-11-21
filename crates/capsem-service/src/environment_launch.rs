@@ -398,3 +398,23 @@ pub(crate) async fn validate_selection(
     validate_preparation(&selected.specification)
         .map_err(|error| crate::AppError::new(StatusCode::NOT_IMPLEMENTED, error.to_string()))
 }
+
+pub(crate) async fn require_active_for_new_vm(
+    state: &ServiceState,
+    environment_id: &str,
+) -> Result<(), crate::AppError> {
+    use axum::http::StatusCode;
+    let is_archived = state.environments.is_archived(environment_id).await.map_err(|_| {
+        crate::AppError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "environment archive status unavailable".into(),
+        )
+    })?;
+    if is_archived {
+        return Err(crate::AppError::new(
+            StatusCode::CONFLICT,
+            "environment is archived".into(),
+        ));
+    }
+    Ok(())
+}

@@ -32,9 +32,9 @@ class Environments:
         return result
 
     async def change(
-        self, id: str, request: models.EnvironmentChangeRequest, *, request_timeout: float | None = None,
+        self, id: str, request: models.EnvironmentChangeIntent, *, request_timeout: float | None = None,
     ) -> models.EnvironmentMutationResponse:
-        """Submit an observed-base change with a caller-chosen request ID."""
+        """Submit an observed-base edit or archive with a caller-chosen request ID."""
         request_id = request.request_id
         result = await api.change_environment(
             self._transport, id=id, body=request, request_timeout=request_timeout,

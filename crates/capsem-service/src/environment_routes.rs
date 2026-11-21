@@ -8,7 +8,7 @@ use axum::{
 };
 use capsem_api::{
     environments::{
-        EnvironmentChangeRequest, EnvironmentCreateRequest, EnvironmentCurrentResponse, EnvironmentMutationResponse,
+        EnvironmentChangeIntent, EnvironmentCreateRequest, EnvironmentCurrentResponse, EnvironmentMutationResponse,
         EnvironmentPolicyListQuery, EnvironmentRevisionReference, EnvironmentSpecification,
     },
     AgentOperation,
@@ -87,6 +87,7 @@ pub(crate) async fn info(
         return Err(AppError::new(StatusCode::NOT_FOUND, "environment not found".into()));
     }
     let observed = state.environments.load_current(&id).await;
+    let archived = state.environments.is_archived(&id).await;
     // Revocation/expiry during file, archive or DB work cannot publish a view
     // under the authorization snapshot from before the await.
     authorize(&actor, &id)?;
@@ -98,6 +99,7 @@ pub(crate) async fn info(
     })?;
     Ok(Json(EnvironmentCurrentResponse {
         document: current.document,
+        archived: archived.map_err(unavailable)?,
         timestamp_unix_ms: current.revision.timestamp_unix_ms,
         actor: current.revision.actor,
         reason: current.revision.reason,
@@ -173,16 +175,21 @@ pub(crate) async fn change(
     actor: AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
-    Json(request): Json<EnvironmentChangeRequest>,
+    Json(request): Json<EnvironmentChangeIntent>,
 ) -> Result<Json<EnvironmentMutationResponse>, AppError> {
-    if actor.agent_grant().is_some() {
-        return proposals::submit(actor, state, id, request).await.map(Json);
-    }
+    let request = match request {
+        EnvironmentChangeIntent::Edit(edit) if actor.agent_grant().is_some() => {
+            return proposals::submit(actor, state, id, *edit).await.map(Json);
+        }
+        intent => intent,
+    };
     actor.require_operator()?;
-    let owner = Arc::new(EnvironmentMutationCoordinator::new(state.environments.clone()));
-    let job = owner
-        .submit_change(id, request, sources::Sources(state))
-        .map_err(mutation_error)?;
+    let owner = Arc::new(coordinator(&state));
+    let job = match request {
+        EnvironmentChangeIntent::Edit(edit) => owner.submit_change(id, *edit, sources::Sources(state)),
+        EnvironmentChangeIntent::Archive(intent) => owner.submit_archive(id, intent),
+    }
+    .map_err(mutation_error)?;
     job.wait().await.map(Json).map_err(mutation_error)
 }
 
@@ -195,6 +202,7 @@ fn mutation_error(error: EnvironmentMutationError) -> AppError {
         Mutation::NotFound => StatusCode::NOT_FOUND,
         Mutation::Refused => StatusCode::FORBIDDEN,
         Mutation::Conflict
+        | Mutation::Archived
         | Mutation::Publication(EnvironmentFileError::Changed | EnvironmentFileError::RecoveryRequired) => {
             StatusCode::CONFLICT
         }

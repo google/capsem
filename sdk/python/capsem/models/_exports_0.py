@@ -51,6 +51,8 @@ from .detection_level import DetectionLevel
 from .disconnect_response import DisconnectResponse
 from .dns_event import DnsEvent
 from .enrollment_kind import EnrollmentKind
+from .environment_archive_action import EnvironmentArchiveAction
+from .environment_archive_request import EnvironmentArchiveRequest
 from .environment_capability_decision import EnvironmentCapabilityDecision
 from .environment_catalog_selections__environment_catalog_pin import (
     EnvironmentCatalogSelections_EnvironmentCatalogPin,
@@ -64,6 +66,7 @@ from .environment_catalog_selections__environment_catalog_selection import (
 from .environment_catalog_selections__environment_catalog_selection_selected_item import (
     EnvironmentCatalogSelections_EnvironmentCatalogSelectionSelectedItem,
 )
+from .environment_change_intent import EnvironmentChangeIntent
 from .environment_change_request import EnvironmentChangeRequest
 from .environment_create_request import EnvironmentCreateRequest
 from .environment_current_response import EnvironmentCurrentResponse
@@ -89,9 +92,6 @@ from .environment_mcps__environment_catalog_selection import (
 from .environment_mutation_response import EnvironmentMutationResponse
 from .environment_packages import EnvironmentPackages
 from .environment_plugin_descriptor import EnvironmentPluginDescriptor
-from .environment_plugin_direction_state import EnvironmentPluginDirectionState
-from .environment_plugin_entry import EnvironmentPluginEntry
-from .environment_plugin_field import EnvironmentPluginField
 
 __all__ = [
     'AgentAccessScope',
@@ -145,11 +145,14 @@ __all__ = [
     'DisconnectResponse',
     'DnsEvent',
     'EnrollmentKind',
+    'EnvironmentArchiveAction',
+    'EnvironmentArchiveRequest',
     'EnvironmentCapabilityDecision',
     'EnvironmentCatalogSelections_EnvironmentCatalogPin',
     'EnvironmentCatalogSelections_EnvironmentCatalogPinSelectedItem',
     'EnvironmentCatalogSelections_EnvironmentCatalogSelection',
     'EnvironmentCatalogSelections_EnvironmentCatalogSelectionSelectedItem',
+    'EnvironmentChangeIntent',
     'EnvironmentChangeRequest',
     'EnvironmentCreateRequest',
     'EnvironmentCurrentResponse',
@@ -171,7 +174,4 @@ __all__ = [
     'EnvironmentMutationResponse',
     'EnvironmentPackages',
     'EnvironmentPluginDescriptor',
-    'EnvironmentPluginDirectionState',
-    'EnvironmentPluginEntry',
-    'EnvironmentPluginField',
 ]

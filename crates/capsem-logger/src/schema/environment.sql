@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS environment_schema (
     id INTEGER PRIMARY KEY CHECK (id=1),
     version INTEGER NOT NULL CHECK (version>0)
 );
-INSERT OR IGNORE INTO environment_schema(id,version) VALUES(1,3);
+INSERT OR IGNORE INTO environment_schema(id,version) VALUES(1,4);
 
 CREATE TABLE IF NOT EXISTS environment_revisions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,7 +44,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_environment_revisions_request
 CREATE TABLE IF NOT EXISTS environment_requests (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     request_id TEXT NOT NULL UNIQUE,
-    kind TEXT NOT NULL CHECK (kind IN ('change','image_update','promotion','apply')),
+    kind TEXT NOT NULL CHECK (kind IN ('change','archive','image_update','promotion','apply')),
     environment_id TEXT NOT NULL,
     base_revision_id TEXT,
     source_environment_id TEXT,
@@ -82,6 +82,8 @@ CREATE INDEX IF NOT EXISTS idx_environment_requests_source
     ON environment_requests(source_environment_id,source_revision_id);
 CREATE INDEX IF NOT EXISTS idx_environment_requests_expiry
     ON environment_requests(expires_at_unix_ms) WHERE state='pending';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_environment_requests_archived
+    ON environment_requests(environment_id) WHERE kind='archive' AND result_revision_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS environment_request_invalidations (
     request_id TEXT PRIMARY KEY REFERENCES environment_requests(request_id),

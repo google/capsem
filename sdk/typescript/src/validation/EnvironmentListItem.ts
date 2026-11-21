@@ -6,6 +6,7 @@ import {EnvironmentListSummarySchema} from "./EnvironmentListSummary.js";
 import {EnvironmentRevisionReferenceSchema} from "./EnvironmentRevisionReference.js";
 
 export const EnvironmentListItemSchema: z.ZodType<EnvironmentListItem> = z.strictObject({
+  "archived": z.boolean(),
   "environment": z.lazy(() => EnvironmentRevisionReferenceSchema),
   "instance_count": z.int().min(0).nullable().exactOptional(),
   "summary": z.union([z.null(), z.lazy(() => EnvironmentListSummarySchema)]).exactOptional(),

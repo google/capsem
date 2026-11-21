@@ -121,6 +121,26 @@ impl EnvironmentRevisions {
         let _guard = lock.lock().await;
         self.files.load_current(&self.ledger, id).await
     }
+
+    pub async fn is_archived(&self, id: &str) -> Result<bool, EnvironmentFileError> {
+        validate_id(id)?;
+        let records = self
+            .ledger
+            .environment_references(capsem_logger::db::EnvironmentReferenceQuery::ArchivedEnvironment {
+                environment_id: id.into(),
+            })
+            .await
+            .map_err(|_| EnvironmentFileError::LedgerFailure)?;
+        match records.as_slice() {
+            [] => Ok(false),
+            [capsem_logger::db::EnvironmentReferenceRecord::ArchivedEnvironment { revision }]
+                if revision.environment_id == id =>
+            {
+                Ok(true)
+            }
+            _ => Err(EnvironmentFileError::Unverified),
+        }
+    }
     /// Load a committed immutable revision, including a historical binding whose
     /// shared environment has since advanced. This is data, not launch authority.
     pub async fn load_revision(

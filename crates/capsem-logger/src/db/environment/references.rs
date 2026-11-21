@@ -9,6 +9,7 @@ mod tests;
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EnvironmentReferenceQuery {
     CurrentEnvironment { environment_id: String },
+    ArchivedEnvironment { environment_id: String },
     Sandbox { session_id: String, generation: String },
     CurrentEnvironments { after: Option<String>, limit: u16 },
 }
@@ -19,7 +20,9 @@ pub const ENVIRONMENT_HEAD_PAGE_MAX: u16 = 65;
 impl EnvironmentReferenceQuery {
     pub(crate) fn validate(&self) -> DbResult<()> {
         let valid = match self {
-            Self::CurrentEnvironment { environment_id } => valid_id(environment_id),
+            Self::CurrentEnvironment { environment_id } | Self::ArchivedEnvironment { environment_id } => {
+                valid_id(environment_id)
+            }
             Self::Sandbox { session_id, generation } => valid_id(session_id) && valid_id(generation),
             Self::CurrentEnvironments { after, limit } => {
                 (1..=ENVIRONMENT_HEAD_PAGE_MAX).contains(limit) && after.as_deref().is_none_or(valid_id)
@@ -37,6 +40,9 @@ impl EnvironmentReferenceQuery {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EnvironmentReferenceRecord {
     CurrentEnvironment {
+        revision: EnvironmentRevisionParent,
+    },
+    ArchivedEnvironment {
         revision: EnvironmentRevisionParent,
     },
     Sandbox {
@@ -73,10 +79,48 @@ pub(in crate::db) fn execute(
         EnvironmentReferenceQuery::CurrentEnvironments { after, limit } => {
             current_page(reader.connection(), after.as_deref(), *limit)
         }
+        EnvironmentReferenceQuery::ArchivedEnvironment { environment_id } => {
+            archived(reader.connection(), environment_id)
+        }
         _ => query_rows(reader.connection(), query),
     };
     record_metadata_query("environment_reference_execute", started, &result);
     result
+}
+
+fn archived(connection: &rusqlite::Connection, environment_id: &str) -> DbResult<Vec<EnvironmentReferenceRecord>> {
+    use crate::db::bodies::bounded_sql_text;
+    let mut statement = connection
+        .prepare_cached(
+            "SELECT result_environment_id,result_revision_id,state,base_revision_id FROM environment_requests \
+         WHERE environment_id=?1 AND kind='archive' AND result_revision_id IS NOT NULL LIMIT 2",
+        )
+        .map_err(|error| format!("prepare environment archive query: {error}"))?;
+    let mut rows = statement
+        .query([environment_id])
+        .map_err(|error| format!("execute environment archive query: {error}"))?;
+    let read_error = |error| format!("read environment archive: {error}");
+    let Some(row) = rows.next().map_err(read_error)? else {
+        return Ok(Vec::new());
+    };
+    let owner = bounded_sql_text(row, 0, uuid::fmt::Hyphenated::LENGTH)?;
+    let revision_id = bounded_sql_text(row, 1, uuid::fmt::Hyphenated::LENGTH)?;
+    let state = bounded_sql_text(row, 2, 32)?;
+    let base = bounded_sql_text(row, 3, uuid::fmt::Hyphenated::LENGTH)?;
+    if owner != environment_id
+        || revision_id != base
+        || !valid_id(&revision_id)
+        || state != "approved"
+        || rows.next().map_err(read_error)?.is_some()
+    {
+        return Err("invalid archived environment reference".into());
+    }
+    Ok(vec![EnvironmentReferenceRecord::ArchivedEnvironment {
+        revision: EnvironmentRevisionParent {
+            environment_id: owner,
+            revision_id,
+        },
+    }])
 }
 
 fn query_rows(
@@ -92,7 +136,7 @@ fn query_rows(
             "p.owner_kind IN ('sandbox_boot','sandbox_live_policy','sandbox_desired') AND p.owner_id=?1 AND p.owner_generation=?2",
             session_id, generation.as_str(), 3,
         ),
-        EnvironmentReferenceQuery::CurrentEnvironments { .. } => unreachable!("page queries use current_page"),
+        _ => unreachable!("handled by specialized reference query"),
     };
     let mut statement = connection
         .prepare_cached(&format!(
@@ -139,7 +183,7 @@ fn query_rows(
                 };
                 EnvironmentReferenceRecord::Sandbox { dimension, revision }
             }
-            EnvironmentReferenceQuery::CurrentEnvironments { .. } => unreachable!("page queries use current_page"),
+            _ => unreachable!("handled by specialized reference query"),
         };
         records.push(record);
     }

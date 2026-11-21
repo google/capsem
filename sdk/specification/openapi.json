@@ -566,7 +566,7 @@
     },
     "/environments/{id}/changes": {
       "post": {
-        "description": "An operator publishes a blueprint revision. A scoped agent queues a proposal at the exact base revision of its running sandbox. Reconcile the same request ID after interruption. Running sandboxes require separate application.",
+        "description": "An operator publishes a blueprint revision or archives the exact current revision. Archival prevents new sandbox creation while preserving pinned work. A scoped agent queues an edit proposal at the exact base revision of its running sandbox. Reconcile the same request ID after interruption.",
         "operationId": "changeEnvironment",
         "parameters": [
           {
@@ -582,7 +582,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/EnvironmentChangeRequest"
+                "$ref": "#/components/schemas/EnvironmentChangeIntent"
               }
             }
           },
@@ -5992,6 +5992,38 @@
           "native_consumer_sign_in"
         ]
       },
+      "EnvironmentArchiveAction": {
+        "type": "string",
+        "enum": [
+          "archive"
+        ]
+      },
+      "EnvironmentArchiveRequest": {
+        "type": "object",
+        "required": [
+          "action",
+          "request_id",
+          "base_revision_id",
+          "reason"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/EnvironmentArchiveAction"
+          },
+          "base_revision_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
       "EnvironmentCapabilityDecision": {
         "type": "string",
         "enum": [
@@ -6058,6 +6090,16 @@
           }
         },
         "additionalProperties": false
+      },
+      "EnvironmentChangeIntent": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/EnvironmentChangeRequest"
+          },
+          {
+            "$ref": "#/components/schemas/EnvironmentArchiveRequest"
+          }
+        ]
       },
       "EnvironmentChangeRequest": {
         "type": "object",
@@ -6134,6 +6176,7 @@
         "description": "Canonical current content verified against the committed host-ledger revision.\nEffective corporate policy is a separate view of this same revision.",
         "required": [
           "document",
+          "archived",
           "timestamp_unix_ms",
           "actor",
           "reason"
@@ -6141,6 +6184,9 @@
         "properties": {
           "actor": {
             "type": "string"
+          },
+          "archived": {
+            "type": "boolean"
           },
           "document": {
             "$ref": "#/components/schemas/EnvironmentDocument"
@@ -6341,9 +6387,13 @@
       "EnvironmentListItem": {
         "type": "object",
         "required": [
-          "environment"
+          "environment",
+          "archived"
         ],
         "properties": {
+          "archived": {
+            "type": "boolean"
+          },
           "environment": {
             "$ref": "#/components/schemas/EnvironmentRevisionReference"
           },
@@ -11127,6 +11177,7 @@
         "type": "string",
         "enum": [
           "environment_change",
+          "environment_archive",
           "environment_image_update",
           "environment_promotion",
           "environment_apply"

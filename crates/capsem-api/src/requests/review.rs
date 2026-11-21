@@ -18,6 +18,7 @@ pub struct RequestListQuery {
 #[serde(rename_all = "snake_case")]
 pub enum RequestKind {
     EnvironmentChange,
+    EnvironmentArchive,
     EnvironmentImageUpdate,
     EnvironmentPromotion,
     EnvironmentApply,

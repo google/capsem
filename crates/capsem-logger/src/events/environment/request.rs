@@ -14,6 +14,7 @@ pub struct EnvironmentRequestTarget {
 #[serde(rename_all = "snake_case")]
 pub enum EnvironmentRequestKind {
     Change,
+    Archive,
     ImageUpdate,
     Promotion,
     Apply,
@@ -22,15 +23,22 @@ impl EnvironmentRequestKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Change => "change",
+            Self::Archive => "archive",
             Self::ImageUpdate => "image_update",
             Self::Promotion => "promotion",
             Self::Apply => "apply",
         }
     }
     pub fn parse_str(value: &str) -> Option<Self> {
-        [Self::Change, Self::ImageUpdate, Self::Promotion, Self::Apply]
-            .into_iter()
-            .find(|kind| kind.as_str() == value)
+        [
+            Self::Change,
+            Self::Archive,
+            Self::ImageUpdate,
+            Self::Promotion,
+            Self::Apply,
+        ]
+        .into_iter()
+        .find(|kind| kind.as_str() == value)
     }
 }
 
@@ -75,6 +83,7 @@ pub enum EnvironmentRequestPayload {
     Change {
         specification: Box<EnvironmentSpecification>,
     },
+    Archive {},
     ImageUpdate {
         specification: Box<EnvironmentSpecification>,
     },
@@ -93,13 +102,14 @@ impl EnvironmentRequestPayload {
         match self {
             Self::Promotion { source } => Some(source),
             Self::Apply { revision, .. } => Some(revision),
-            Self::Change { .. } | Self::ImageUpdate { .. } => None,
+            Self::Change { .. } | Self::Archive { .. } | Self::ImageUpdate { .. } => None,
         }
     }
 
     pub fn kind(&self) -> &'static str {
         match self {
             Self::Change { .. } => EnvironmentRequestKind::Change.as_str(),
+            Self::Archive { .. } => EnvironmentRequestKind::Archive.as_str(),
             Self::ImageUpdate { .. } => EnvironmentRequestKind::ImageUpdate.as_str(),
             Self::Promotion { .. } => EnvironmentRequestKind::Promotion.as_str(),
             Self::Apply { .. } => EnvironmentRequestKind::Apply.as_str(),

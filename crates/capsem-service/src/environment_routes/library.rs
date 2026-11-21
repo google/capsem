@@ -100,8 +100,10 @@ pub(crate) async fn list(
         if !matches_search(&id, summary.as_ref(), &search) {
             continue;
         }
+        let archived = state.environments.is_archived(&id).await.map_err(unavailable)?;
         let instance_count = counts.as_mut().map(|counts| counts.remove(&id).unwrap_or_default());
         environments.push(EnvironmentListItem {
+            archived,
             environment: EnvironmentRevisionReference {
                 environment_id: id,
                 revision_id,

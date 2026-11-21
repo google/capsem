@@ -1,5 +1,8 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+export {McpDefaultPermissionResponseSchema} from "./McpDefaultPermissionResponse.js";
+export {McpInfoResponseSchema} from "./McpInfoResponse.js";
+export {McpPermissionActionSchema} from "./McpPermissionAction.js";
 export {McpRefreshResponseSchema} from "./McpRefreshResponse.js";
 export {McpServerInfoResponseSchema} from "./McpServerInfoResponse.js";
 export {McpServersListResponseSchema} from "./McpServersListResponse.js";

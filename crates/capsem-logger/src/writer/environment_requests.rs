@@ -133,6 +133,17 @@ fn validate(conn: &Connection, record: &PreparedEnvironmentRequest) -> rusqlite:
         }
     }
     match record.payload.as_ref() {
+        EnvironmentRequestPayload::Archive { .. } => {
+            if record.requester.is_some() {
+                return Err(invalid("archive cannot be delegated"));
+            }
+            archive_base(
+                conn,
+                &record.environment_id,
+                record.base_revision_id.as_deref(),
+                &record.actor,
+            )?;
+        }
         EnvironmentRequestPayload::Change { specification }
         | EnvironmentRequestPayload::ImageUpdate { specification } => {
             specification
@@ -176,6 +187,45 @@ fn validate(conn: &Connection, record: &PreparedEnvironmentRequest) -> rusqlite:
             }
             committed_reference(conn, revision, true)?;
         }
+    }
+    Ok(())
+}
+
+fn archive_base(
+    conn: &Connection,
+    environment_id: &str,
+    revision_id: Option<&str>,
+    actor: &str,
+) -> rusqlite::Result<EnvironmentRevisionParent> {
+    let Some(revision_id) = revision_id.filter(|_| actor == "operator") else {
+        return Err(invalid("archive requires an operator and an exact environment head"));
+    };
+    require_active(conn, environment_id)?;
+    super::environment_references::check_current(conn, environment_id, Some(revision_id))?;
+    let committing: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM main.environment_revisions WHERE environment_id=?1 AND state='committing' \
+         UNION ALL SELECT 1 FROM mem.environment_revisions WHERE environment_id=?1 AND state='committing')",
+        [environment_id],
+        |row| row.get(0),
+    )?;
+    if committing {
+        return Err(invalid("an environment revision is still being published"));
+    }
+    Ok(EnvironmentRevisionParent {
+        environment_id: environment_id.into(),
+        revision_id: revision_id.into(),
+    })
+}
+
+pub(super) fn require_active(conn: &Connection, environment_id: &str) -> rusqlite::Result<()> {
+    let archived: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM main.environment_requests WHERE environment_id=?1 \
+         AND kind='archive' AND result_revision_id IS NOT NULL)",
+        [environment_id],
+        |row| row.get(0),
+    )?;
+    if archived {
+        return Err(invalid("environment is archived"));
     }
     Ok(())
 }
@@ -296,6 +346,21 @@ pub(super) fn decide(conn: &Connection, record: &EnvironmentRequestDecision) -> 
     if old.state != "pending" || (record.decision == EnvironmentRequestDecisionKind::Approve && !old.replayable) {
         return Err(invalid("environment request cannot be resolved from its current state"));
     }
+    let archive = if old.kind == EnvironmentRequestKind::Archive.as_str()
+        && record.decision == EnvironmentRequestDecisionKind::Approve
+    {
+        if old.requester.is_some() {
+            return Err(invalid("archive cannot be delegated"));
+        }
+        Some(archive_base(
+            conn,
+            &old.environment_id,
+            old.base_revision_id.as_deref(),
+            &record.actor,
+        )?)
+    } else {
+        None
+    };
     execute_cached(conn, "INSERT INTO main.environment_request_decisions(request_id,timestamp_unix_ms,actor,decision,reason) VALUES(?1,?2,?3,?4,?5)", rusqlite::params![record.request_id,record.timestamp_unix_ms,record.actor,record.decision.as_str(),record.reason])?;
     execute_cached(
         conn,
@@ -315,7 +380,19 @@ pub(super) fn decide(conn: &Connection, record: &EnvironmentRequestDecision) -> 
         HostEventKind::EnvironmentRequestDecided,
         true,
         old.requester.as_ref(),
-    )
+    )?;
+    // Approval and archival become visible in the same durable write.
+    if let Some(result) = archive {
+        store_result(
+            conn,
+            &record.request_id,
+            &old,
+            &result,
+            record.timestamp_unix_ms,
+            &record.actor,
+        )?;
+    }
+    Ok(())
 }
 
 pub(super) fn require_approved(conn: &Connection, id: &str) -> rusqlite::Result<()> {
@@ -377,7 +454,7 @@ pub(super) fn require_revision_request(
         EnvironmentRequestPayload::Promotion { source } => {
             super::environment::committed_specification(conn, &source, bodies)? == *record.specification
         }
-        EnvironmentRequestPayload::Apply { .. } => false,
+        EnvironmentRequestPayload::Archive { .. } | EnvironmentRequestPayload::Apply { .. } => false,
     };
     if !matches {
         return Err(invalid(
@@ -410,6 +487,9 @@ pub(super) fn bind_result(
     let payload = required_payload(conn, &old, bodies)?;
     let (parent, request_id) = committed_reference(conn, &record.result, true)?;
     match payload {
+        EnvironmentRequestPayload::Archive { .. } => {
+            return Err(invalid("archive result must be recorded with its decision"));
+        }
         EnvironmentRequestPayload::Apply { revision, .. } if revision == record.result => {}
         EnvironmentRequestPayload::Apply { .. } => {
             return Err(invalid("environment apply result does not match its selected revision"))
@@ -433,25 +513,39 @@ pub(super) fn bind_result(
             }
         }
     }
+    store_result(
+        conn,
+        &record.request_id,
+        &old,
+        &record.result,
+        record.timestamp_unix_ms,
+        &record.actor,
+    )
+}
+
+fn store_result(
+    conn: &Connection,
+    request_id: &str,
+    old: &ExistingRequest,
+    result: &EnvironmentRevisionParent,
+    timestamp_unix_ms: i64,
+    actor: &str,
+) -> rusqlite::Result<()> {
     execute_cached(
         conn,
         "UPDATE main.environment_requests SET result_environment_id=?1,result_revision_id=?2 WHERE request_id=?3",
-        rusqlite::params![
-            record.result.environment_id,
-            record.result.revision_id,
-            record.request_id
-        ],
+        rusqlite::params![result.environment_id, result.revision_id, request_id],
     )?;
     audit(
         conn,
         RequestAudit {
-            request_id: &record.request_id,
+            request_id,
             environment_id: &old.environment_id,
             state: "approved",
-            result: Some(&record.result),
+            result: Some(result),
         },
-        record.timestamp_unix_ms,
-        &record.actor,
+        timestamp_unix_ms,
+        actor,
         HostEventKind::EnvironmentRequestResultBound,
         true,
         old.requester.as_ref(),

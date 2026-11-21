@@ -25,6 +25,7 @@ pub enum EnvironmentMutationError {
     Refused,
     NotFound,
     Conflict,
+    Archived,
     Resolution(EnvironmentResolutionError),
     LedgerFailure,
     Publication(EnvironmentFileError),
@@ -37,6 +38,7 @@ impl std::fmt::Display for EnvironmentMutationError {
             Self::InvalidIntent => "invalid environment mutation intent",
             Self::Refused => "delegated session scope ended or does not cover this operation and owner",
             Self::Conflict => "request identity already has different or non-replayable intent",
+            Self::Archived => "environment is archived",
             Self::Resolution(_) => "environment source resolution failed",
             Self::LedgerFailure => "environment request durability is unconfirmed",
             Self::Publication(_) => "environment publication is unconfirmed; reconcile the request",
@@ -165,6 +167,109 @@ impl EnvironmentMutationCoordinator {
         self.enqueue(MutationIntent::change(environment_id, request)?, sources)
     }
 
+    pub fn submit_archive(
+        self: &Arc<Self>,
+        environment_id: String,
+        request: EnvironmentArchiveRequest,
+    ) -> Result<EnvironmentMutationJob, EnvironmentMutationError> {
+        request
+            .validate()
+            .map_err(|_| EnvironmentMutationError::InvalidIntent)?;
+        validate_id(&environment_id).map_err(|_| EnvironmentMutationError::InvalidIntent)?;
+        let owner = self.clone();
+        Ok(EnvironmentMutationJob::spawn(async move {
+            owner.archive(environment_id, request).await
+        }))
+    }
+
+    async fn archive(
+        &self,
+        environment_id: String,
+        request: EnvironmentArchiveRequest,
+    ) -> Result<EnvironmentMutationResponse, EnvironmentMutationError> {
+        use EnvironmentMutationError as Error;
+        let request_lock = self
+            .revisions
+            .lock_for(&format!("request:{}", request.request_id))
+            .map_err(Error::Publication)?;
+        let _request = request_lock.lock().await;
+        let existing = self.find_request(request.request_id.clone()).await?;
+        if let Some(record) = &existing {
+            if record.kind != EnvironmentRequestKind::Archive
+                || record.environment_id != environment_id
+                || record.base_revision_id.as_ref() != Some(&request.base_revision_id)
+                || record.reason != request.reason
+            {
+                return Err(Error::Conflict);
+            }
+            if record.state != EnvironmentRequestState::Pending {
+                return Ok(view(record.clone()));
+            }
+        }
+        let environment_lock = self.revisions.lock_for(&environment_id).map_err(Error::Publication)?;
+        let _environment = environment_lock.lock().await;
+        self.revisions
+            .reconcile_locked(&environment_id, now()?)
+            .await
+            .map_err(Error::Publication)?;
+        match current_revision(&self.revisions.ledger, &environment_id)
+            .await
+            .map_err(Error::Publication)?
+        {
+            None => return Err(Error::NotFound),
+            Some(current) if current != request.base_revision_id => return Err(Error::Conflict),
+            Some(_) => {}
+        }
+        if self
+            .revisions
+            .is_archived(&environment_id)
+            .await
+            .map_err(Error::Publication)?
+        {
+            return Err(Error::Archived);
+        }
+        let at = now()?;
+        if existing.as_ref().is_some_and(|record| at >= record.expires_at_unix_ms) {
+            self.write(WriteOp::EnvironmentRequestInvalidation(
+                EnvironmentRequestInvalidation {
+                    request_id: request.request_id.clone(),
+                    timestamp_unix_ms: at,
+                    actor: "operator".into(),
+                    kind: EnvironmentRequestInvalidationKind::Expired,
+                    reason: "archive request expired before its decision".into(),
+                },
+            ))
+            .await?;
+            self.request_changed(&request.request_id);
+            return Ok(view(self.read_request(request.request_id).await?));
+        }
+        if existing.is_none() {
+            self.write(WriteOp::PrepareEnvironmentRequest(PreparedEnvironmentRequest {
+                request_id: request.request_id.clone(),
+                environment_id,
+                base_revision_id: Some(request.base_revision_id),
+                requester: None,
+                timestamp_unix_ms: at,
+                expires_at_unix_ms: expiry(at)?,
+                actor: "operator".into(),
+                reason: request.reason.clone(),
+                payload_event_id: event_id(),
+                payload: Box::new(EnvironmentRequestPayload::Archive {}),
+            }))
+            .await?;
+        }
+        self.write(WriteOp::EnvironmentRequestDecision(EnvironmentRequestDecision {
+            request_id: request.request_id.clone(),
+            timestamp_unix_ms: now()?,
+            actor: "operator".into(),
+            decision: EnvironmentRequestDecisionKind::Approve,
+            reason: request.reason,
+        }))
+        .await?;
+        self.request_changed(&request.request_id);
+        Ok(view(self.read_request(request.request_id).await?))
+    }
+
     fn enqueue<R>(
         self: &Arc<Self>,
         request: MutationIntent,
@@ -243,6 +348,14 @@ impl EnvironmentMutationCoordinator {
                 .reconcile_locked(&environment_id, now()?)
                 .await
                 .map_err(EnvironmentMutationError::Publication)?;
+            if self
+                .revisions
+                .is_archived(&environment_id)
+                .await
+                .map_err(EnvironmentMutationError::Publication)?
+            {
+                return Err(EnvironmentMutationError::Archived);
+            }
             let current = self
                 .revisions
                 .files

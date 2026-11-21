@@ -93,6 +93,14 @@ Open **Change history** to inspect older revisions. Complete revisions show
 canonical TOML. When values have been purged, the view identifies the removed
 variables and shows the remaining content when it is available.
 
+## Archive a saved environment
+
+Open the environment with **Edit**, choose **Archive environment**, enter a
+reason, and confirm. Capsem blocks new sandboxes from that environment,
+including from older revisions. Existing sandboxes can still run and restart
+using their pinned revisions. Choose **Inspect** on the archived environment
+to read its history or canonical TOML.
+
 ## Temporary VMs
 
 For a quick experiment you do not need to keep, omit `-n`:

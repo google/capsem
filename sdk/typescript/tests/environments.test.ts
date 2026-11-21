@@ -1,12 +1,38 @@
 import {expect, it} from 'vitest';
-import {Hypervisor, HttpError, RequestApplicationState, RequestDecision, RequestState, type EnvironmentCreateRequest, type CallOptions} from '../src/index.js';
+import {EnvironmentArchiveAction, Hypervisor, HttpError, RequestApplicationState, RequestDecision, RequestState, type EnvironmentCreateRequest, type CallOptions} from '../src/index.js';
 import {gateway} from './gateway.js';
 
 const requestId = '00000000-0000-4000-8000-000000000001';
 const environmentId = '00000000-0000-4000-8000-000000000002';
 const input: EnvironmentCreateRequest = {request_id: requestId, specification: {name: 'development'}, reason: 'prepare blueprint'};
 const pending = {request_id: requestId, environment_id: environmentId, decision: 'approved', application: 'pending', result: null, application_error: null};
-const current = {document: {identity: {schema_version: 1, id: environmentId, revision_id: requestId}, specification: {name: 'development'}}, timestamp_unix_ms: 1, actor: 'operator', reason: 'approved', request_id: requestId};
+const current = {document: {identity: {schema_version: 1, id: environmentId, revision_id: requestId}, specification: {name: 'development'}}, archived: false, timestamp_unix_ms: 1, actor: 'operator', reason: 'approved', request_id: requestId};
+
+it('archives an exact revision and continues to expose its history', async () => {
+  const base = {environment_id: environmentId, revision_id: requestId};
+  const archive = {action: EnvironmentArchiveAction.ARCHIVE, request_id: requestId, base_revision_id: requestId, reason: 'retire blueprint'};
+  const route = `/environments/${environmentId}`;
+  const history = {summary: {environment: base, actor: 'operator', reason: 'approved', replayable: true, timestamp_unix_ms: 1},
+    availability: 'complete', canonical_toml: 'name = "development"', purged_variables: []};
+  await gateway((request, reply) => {
+    if (request.method === 'POST') reply.end(JSON.stringify({...pending, application: 'applied', result: base}));
+    else if (request.url === '/environments/list') reply.end(JSON.stringify({environments: [{environment: base, archived: true}]}));
+    else if (request.url === `${route}/info`) reply.end(JSON.stringify({...current, archived: true}));
+    else reply.end(JSON.stringify(history));
+  }, async (url, received) => {
+    const hv = new Hypervisor(url, 'token');
+    try {
+      expect((await hv.environments.change(environmentId, archive)).result).toEqual(base);
+      expect((await hv.environments.list()).environments).toEqual([{environment: base, archived: true}]);
+      expect((await hv.environments.info(environmentId)).archived).toBe(true);
+      expect(await hv.environments.revision(base)).toEqual(history);
+      await expect(hv.environments.revision({...base, revision_id: environmentId})).rejects.toThrow('identity changed');
+      await expect(hv.environments.revision({...base, environment_id: requestId})).rejects.toThrow('identity changed');
+      expect(received[0]?.url).toBe(`${route}/changes`);
+      expect(JSON.parse(received[0]?.body.toString() ?? '')).toEqual(archive);
+    } finally { hv.close(); }
+  });
+});
 
 it('preserves approval versus application and explicitly reconciles the same request ID', async () => {
   await gateway((request, response) => response.end(JSON.stringify(request.method === 'POST' ? pending : current)), async (url, received) => {

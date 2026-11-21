@@ -20,9 +20,8 @@ pub(crate) fn assert_current(conn: &Connection) -> rusqlite::Result<()> {
             row.get::<_, i64>(0)
         })
         .optional()?;
-    // Format 3 also retains monotonic observed catalog revocations, so older
-    // layouts cannot silently admit versions whose revocation history is absent.
-    if version != Some(3) {
+    // Format 4 records environment archival as durable request state.
+    if version != Some(4) {
         return Err(contract_error(
             "unsupported or missing environment ledger format version",
         ));
@@ -45,6 +44,22 @@ pub(crate) fn assert_current(conn: &Connection) -> rusqlite::Result<()> {
     if !valid {
         return Err(contract_error(
             "environment ledger lacks its unique committing-revision index",
+        ));
+    }
+    let archive_index: Option<(String, i64)> = conn.query_row(
+        "SELECT sql,\"unique\" FROM sqlite_master JOIN pragma_index_list('environment_requests') AS indexes ON indexes.name=sqlite_master.name WHERE sqlite_master.name='idx_environment_requests_archived'",
+        [], |row| Ok((row.get(0)?, row.get(1)?)),
+    ).optional()?;
+    let valid =
+        archive_index.is_some_and(|(sql, unique)| {
+            unique == 1
+                && sql.split_whitespace().collect::<String>().to_lowercase().ends_with(
+                    "onenvironment_requests(environment_id)wherekind='archive'andresult_revision_idisnotnull",
+                )
+        });
+    if !valid {
+        return Err(contract_error(
+            "environment ledger lacks its unique archive request index",
         ));
     }
     Ok(())

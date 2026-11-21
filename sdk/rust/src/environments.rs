@@ -32,18 +32,36 @@ impl Environments<'_> {
         }
         Ok(result)
     }
-    /// Submit a change against its observed base, with explicit reconciliation.
+    /// Submit an edit against its observed base, with explicit reconciliation.
     pub async fn change(
         &self,
         id: &str,
         request: models::EnvironmentChangeRequest,
+    ) -> Result<models::EnvironmentMutationResponse> {
+        self.submit_change(id, models::EnvironmentChangeIntent::Edit(Box::new(request)))
+            .await
+    }
+
+    /// Archive the exact observed head while preserving existing pinned sandboxes.
+    pub async fn archive(
+        &self,
+        id: &str,
+        request: models::environments::EnvironmentArchiveRequest,
+    ) -> Result<models::EnvironmentMutationResponse> {
+        self.submit_change(id, models::EnvironmentChangeIntent::Archive(request)).await
+    }
+
+    async fn submit_change(
+        &self,
+        id: &str,
+        request: models::EnvironmentChangeIntent,
     ) -> Result<models::EnvironmentMutationResponse> {
         let input = api::ChangeEnvironmentParams {
             id: id.into(),
             body: request,
         };
         let result = api::change_environment(&self.0.transport, &input, self.0.options).await?;
-        if result.request_id != input.body.request_id || result.environment_id != id {
+        if result.request_id != input.body.request_id() || result.environment_id != id {
             return Err(Error::InvalidResponse("environment change identity changed"));
         }
         Ok(result)

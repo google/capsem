@@ -6,6 +6,7 @@ import {EnvironmentDocumentSchema} from "./EnvironmentDocument.js";
 
 export const EnvironmentCurrentResponseSchema: z.ZodType<EnvironmentCurrentResponse> = z.strictObject({
   "actor": z.string(),
+  "archived": z.boolean(),
   "document": z.lazy(() => EnvironmentDocumentSchema),
   "reason": z.string(),
   "request_id": z.string().nullable().exactOptional(),

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import StrictStr, TypeAdapter
 
 from .._transport import Method, Transport
-from ..models.environment_change_request import EnvironmentChangeRequest
+from ..models.environment_change_intent import EnvironmentChangeIntent
 from ..models.environment_mutation_response import EnvironmentMutationResponse
 
 
@@ -13,7 +13,7 @@ async def change_environment(
     transport: Transport,
     *,
     id: StrictStr,
-    body: EnvironmentChangeRequest,
+    body: EnvironmentChangeIntent,
     request_timeout: float | None = None,
 ) -> EnvironmentMutationResponse:
     id = TypeAdapter(StrictStr).validate_python(id)

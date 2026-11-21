@@ -35,6 +35,74 @@ fn decision(kind: EnvironmentRequestDecisionKind) -> EnvironmentRequestDecision 
 }
 
 #[tokio::test]
+async fn archive_decision_sets_a_terminal_receipt_and_preserves_the_current_revision() {
+    use crate::db::{EnvironmentReferenceQuery, EnvironmentReferenceRecord, EnvironmentRequestQuery};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("host.db");
+    let writer = DbWriter::open(&path, 8).unwrap();
+    let head = revision(2, 3);
+    committed(&writer, &head).await;
+    let mut interrupted = revision(2, 5);
+    interrupted.previous_revision_id = Some(head.revision_id.clone());
+    durable(&writer, WriteOp::PrepareEnvironmentRevision(interrupted.clone())).await;
+    let transition = |state| WriteOp::EnvironmentRevisionTransition(crate::events::EnvironmentRevisionTransition {
+        environment_id: interrupted.environment_id.clone(),
+        revision_id: interrupted.revision_id.clone(),
+        state,
+        timestamp_unix_ms: 21,
+        actor: "operator".into(),
+    });
+    durable(&writer, transition(crate::events::EnvironmentRevisionState::RecoveredUnapplied)).await;
+    let mut archive = proposal();
+    archive.base_revision_id = Some(head.revision_id.clone());
+    archive.timestamp_unix_ms = 50;
+    archive.payload = Box::new(EnvironmentRequestPayload::Archive {});
+    durable(&writer, WriteOp::PrepareEnvironmentRequest(archive.clone())).await;
+    let reader = crate::DbHandle::open_external_reader(&path).unwrap();
+    let query = EnvironmentReferenceQuery::ArchivedEnvironment {
+        environment_id: archive.environment_id.clone(),
+    };
+    assert!(reader.environment_references(query.clone()).await.unwrap().is_empty());
+
+    let mut approval = decision(EnvironmentRequestDecisionKind::Approve);
+    approval.timestamp_unix_ms = 51;
+    durable(&writer, WriteOp::EnvironmentRequestDecision(approval.clone())).await;
+    durable(&writer, WriteOp::EnvironmentRequestDecision(approval)).await;
+    let reference = crate::events::EnvironmentRevisionParent {
+        environment_id: head.environment_id,
+        revision_id: head.revision_id,
+    };
+    assert_eq!(
+        reader.environment_references(query).await.unwrap(),
+        [EnvironmentReferenceRecord::ArchivedEnvironment {
+            revision: reference.clone()
+        },]
+    );
+    let current = EnvironmentReferenceQuery::CurrentEnvironment {
+        environment_id: archive.environment_id,
+    };
+    assert_eq!(
+        reader.environment_references(current).await.unwrap(),
+        [EnvironmentReferenceRecord::CurrentEnvironment {
+            revision: reference.clone()
+        },]
+    );
+    let receipts = reader
+        .environment_requests(EnvironmentRequestQuery::Get {
+            request_id: archive.request_id,
+        })
+        .await
+        .unwrap();
+    assert_eq!(receipts[0].result, Some(reference.clone()));
+
+    let mut next = revision(2, 4);
+    next.previous_revision_id = Some(reference.revision_id);
+    rejected(&writer, WriteOp::PrepareEnvironmentRevision(next)).await;
+    rejected(&writer, transition(crate::events::EnvironmentRevisionState::Committing)).await;
+}
+
+#[tokio::test]
 async fn request_proposal_and_immutable_decision_survive_archive_flush_and_reopen() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("host.db");

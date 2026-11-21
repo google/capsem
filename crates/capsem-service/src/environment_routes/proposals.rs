@@ -1,6 +1,7 @@
 //! Delegate proposal authority to one authenticated, acknowledged VM owner.
 use super::*;
 use crate::{caller_auth::session::denied, owner_connection::OwnerConnection};
+use capsem_api::environments::EnvironmentChangeRequest;
 use capsem_api::environments::EnvironmentRevisionReference;
 use capsem_service::environment_revisions::EnvironmentProposalOrigin;
 

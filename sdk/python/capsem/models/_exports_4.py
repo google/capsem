@@ -1,5 +1,8 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .terminal_summary import TerminalSummary
+from .text_content import TextContent
+from .text_content_kind import TextContentKind
 from .timeline_event import TimelineEvent
 from .timeline_layer import TimelineLayer
 from .timeline_reference import TimelineReference
@@ -39,6 +42,9 @@ from .vm_summary import VmSummary
 from .widget import Widget
 
 __all__ = [
+    'TerminalSummary',
+    'TextContent',
+    'TextContentKind',
     'TimelineEvent',
     'TimelineLayer',
     'TimelineReference',

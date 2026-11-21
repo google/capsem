@@ -127,6 +127,19 @@ impl ServiceState {
         } else {
             None
         };
+        let environment = environment.or_else(|| source_entry.as_ref().and_then(|entry| entry.environment.clone()));
+        if let Some(reference) = &environment {
+            tokio::runtime::Handle::current()
+                .block_on(crate::environment_launch::require_active_for_new_vm(
+                    self,
+                    &reference.environment_id,
+                ))
+                .map_err(crate::lifecycle_readiness::SelectionRefusal)?;
+        }
+        anyhow::ensure!(
+            environment.is_none() || env.is_none(),
+            "saved environment cannot include inline guest variables"
+        );
 
         // If cloning from a source sandbox, inherit its base_version.
         let version = if let Some(ref entry) = source_entry {
@@ -195,11 +208,6 @@ impl ServiceState {
             }
         }
 
-        let environment = environment.or_else(|| source_entry.as_ref().and_then(|entry| entry.environment.clone()));
-        anyhow::ensure!(
-            environment.is_none() || env.is_none(),
-            "saved environment cannot include inline guest variables"
-        );
         let (active_policy, variables) =
             self.prepare_environment_policy(&session_dir, environment.as_ref(), environment.as_ref())?;
         env = variables.or(env);

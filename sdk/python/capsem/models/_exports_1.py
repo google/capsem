@@ -1,5 +1,8 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .environment_plugin_direction_state import EnvironmentPluginDirectionState
+from .environment_plugin_entry import EnvironmentPluginEntry
+from .environment_plugin_field import EnvironmentPluginField
 from .environment_plugin_field_dependency import EnvironmentPluginFieldDependency
 from .environment_plugin_field_value import EnvironmentPluginFieldValue
 from .environment_plugin_list_response import EnvironmentPluginListResponse
@@ -105,11 +108,11 @@ from .image_evidence import ImageEvidence
 from .image_evidence_kind import ImageEvidenceKind
 from .image_info import ImageInfo
 from .image_interface import ImageInterface
-from .image_inventory_response import ImageInventoryResponse
-from .image_list_response import ImageListResponse
-from .image_package import ImagePackage
 
 __all__ = [
+    'EnvironmentPluginDirectionState',
+    'EnvironmentPluginEntry',
+    'EnvironmentPluginField',
     'EnvironmentPluginFieldDependency',
     'EnvironmentPluginFieldValue',
     'EnvironmentPluginListResponse',
@@ -187,7 +190,4 @@ __all__ = [
     'ImageEvidenceKind',
     'ImageInfo',
     'ImageInterface',
-    'ImageInventoryResponse',
-    'ImageListResponse',
-    'ImagePackage',
 ]

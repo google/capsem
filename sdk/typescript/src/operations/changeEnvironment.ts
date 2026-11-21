@@ -2,22 +2,22 @@
 
 import {z} from "zod";
 import {Transport, Method, MediaType, type CallOptions} from "../transport.js";
-import type {EnvironmentChangeRequest} from "../models/EnvironmentChangeRequest.js";
+import type {EnvironmentChangeIntent} from "../models/EnvironmentChangeIntent.js";
 import type {EnvironmentMutationResponse} from "../models/EnvironmentMutationResponse.js";
-import {EnvironmentChangeRequestSchema} from "../validation/EnvironmentChangeRequest.js";
+import {EnvironmentChangeIntentSchema} from "../validation/EnvironmentChangeIntent.js";
 import {EnvironmentMutationResponseSchema} from "../validation/EnvironmentMutationResponse.js";
 
 export async function changeEnvironment(
   transport: Transport,
   parameters: {
     "id": string;
-    "body": EnvironmentChangeRequest;
+    "body": EnvironmentChangeIntent;
   },
   options: CallOptions = {},
 ): Promise<EnvironmentMutationResponse> {
   const input = z.object({
   "id": z.string(),
-  "body": z.lazy(() => EnvironmentChangeRequestSchema),
+  "body": z.lazy(() => EnvironmentChangeIntentSchema),
 }).parse(parameters);
   const payload = await transport.request(Method.POST, "/environments/{id}/changes", {
     signal: options.signal, timeoutMs: options.timeoutMs ?? Math.max(transport.timeoutMs, 1020000), accept: MediaType.JSON,

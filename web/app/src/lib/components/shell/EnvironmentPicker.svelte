@@ -87,9 +87,12 @@
               </div>
               <div class="flex shrink-0 gap-3">
                 <button type="button" class="text-xs text-primary hover:underline focus-visible:outline-primary disabled:opacity-50"
-                  aria-label={`Edit ${row.summary.name}`} onkeydown={onkey} onclick={() => onedit(row.environment)} {disabled}>Edit</button>
-                <button type="button" class="text-xs text-primary hover:underline focus-visible:outline-primary disabled:opacity-50"
-                  aria-label={`Use ${row.summary.name}`} onkeydown={onkey} onclick={() => onselect(row)} {disabled}>Use</button>
+                  aria-label={`${row.archived ? 'Inspect' : 'Edit'} ${row.summary.name}`} onkeydown={onkey}
+                  onclick={() => onedit(row.environment)} {disabled}>{row.archived ? 'Inspect' : 'Edit'}</button>
+                {#if !row.archived}
+                  <button type="button" class="text-xs text-primary hover:underline focus-visible:outline-primary disabled:opacity-50"
+                    aria-label={`Use ${row.summary.name}`} onkeydown={onkey} onclick={() => onselect(row)} {disabled}>Use</button>
+                {/if}
               </div>
             </div>
             <p class="mt-1 text-xs text-muted-foreground-1 break-all">
@@ -97,6 +100,7 @@
                 <span title={row.summary.image.resolved_digest}>{row.summary.image.reference} · {row.summary.image.update_policy} updates</span>
               {:else}Plain VM{/if}
               {#if row.instance_count != null} · {row.instance_count} {row.instance_count === 1 ? 'session' : 'sessions'}{/if}
+              {#if row.archived} · Archived{/if}
             </p>
             <p class="text-xs text-muted-foreground-1" title={row.environment.revision_id}>
               Revision {row.environment.revision_id.slice(0, 8)} · {new Date(row.summary.timestamp_unix_ms).toLocaleString()}

@@ -65,6 +65,14 @@ pub(super) fn request(r: &EnvironmentRequestRecord) -> bool {
             r.kind,
             EnvironmentRequestKind::Promotion | EnvironmentRequestKind::Apply
         ) != r.source.is_some()
+        || (r.kind == EnvironmentRequestKind::Archive
+            && (r.actor != "operator"
+                || r.base_revision_id.is_none()
+                || r.requester.is_some()
+                || r.result.as_ref().is_some_and(|result| {
+                    result.environment_id != r.environment_id
+                        || Some(&result.revision_id) != r.base_revision_id.as_ref()
+                })))
     {
         return false;
     }
@@ -94,7 +102,9 @@ pub(super) fn request(r: &EnvironmentRequestRecord) -> bool {
     match r.state {
         EnvironmentRequestState::Pending => decision.is_none() && invalidation.is_none() && r.result.is_none(),
         EnvironmentRequestState::Approved => {
-            decision == Some(EnvironmentRequestDecisionKind::Approve) && invalidation.is_none()
+            decision == Some(EnvironmentRequestDecisionKind::Approve)
+                && invalidation.is_none()
+                && (r.kind != EnvironmentRequestKind::Archive || r.result.is_some())
         }
         EnvironmentRequestState::Denied => {
             decision == Some(EnvironmentRequestDecisionKind::Deny) && invalidation.is_none() && r.result.is_none()
@@ -123,6 +133,7 @@ pub(super) fn request_payload(r: &EnvironmentRequestRecord, p: &EnvironmentReque
         return false;
     }
     match p {
+        EnvironmentRequestPayload::Archive { .. } => true,
         EnvironmentRequestPayload::Change { specification }
         | EnvironmentRequestPayload::ImageUpdate { specification } => specification.validate().is_ok(),
         EnvironmentRequestPayload::Promotion { source } => parent(source),
@@ -202,6 +213,9 @@ pub(super) fn current_heads<'a>(records: &'a [EnvironmentReferenceRecord], after
 }
 
 pub(super) fn references(records: &[EnvironmentReferenceRecord]) -> bool {
+    if let [EnvironmentReferenceRecord::ArchivedEnvironment { revision }] = records {
+        return parent(revision);
+    }
     if matches!(
         records.first(),
         Some(EnvironmentReferenceRecord::CurrentEnvironment { .. })

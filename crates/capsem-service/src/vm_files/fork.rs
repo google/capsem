@@ -106,6 +106,9 @@ async fn fork_owned(
             state.verify_lifecycle_selection(&selection_id, capsem_api::VmLifecycleIntent::Fork, &admitted)
         })
         .await??;
+    if let Some(reference) = &environment {
+        crate::environment_launch::require_active_for_new_vm(&state, &reference.environment_id).await?;
+    }
 
     // Clone state into new persistent sandbox. The route/runtime id is
     // separate from the human display name.

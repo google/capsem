@@ -48,7 +48,7 @@ async fn plugin_defaults_and_saved_results_require_their_exact_revision_context(
 async fn facade_preserves_request_identity_application_state_and_explicit_reconciliation() {
     let mut server = Server::respond(|parts| {
         let response = if parts.uri.path() == "/environments/create" { pending() } else {
-            json!({"document":{"identity":{"schema_version":1,"id":ENVIRONMENT,"revision_id":REQUEST},"specification":{"name":"development"}},"timestamp_unix_ms":1,"actor":"operator","reason":"approved","request_id":REQUEST}).to_string()
+            json!({"document":{"identity":{"schema_version":1,"id":ENVIRONMENT,"revision_id":REQUEST},"specification":{"name":"development"}},"archived":false,"timestamp_unix_ms":1,"actor":"operator","reason":"approved","request_id":REQUEST}).to_string()
         };
         Response::new(Body::from(response))
     }).await;
@@ -138,7 +138,7 @@ async fn facade_refuses_substituted_request_identity() {
 
 #[tokio::test]
 async fn facade_refuses_substituted_environment_identity() {
-    let response = json!({"document":{"identity":{"schema_version":1,"id":REQUEST,"revision_id":REQUEST},"specification":{"name":"development"}},"timestamp_unix_ms":1,"actor":"operator","reason":"approved","request_id":REQUEST}).to_string();
+    let response = json!({"document":{"identity":{"schema_version":1,"id":REQUEST,"revision_id":REQUEST},"specification":{"name":"development"}},"archived":false,"timestamp_unix_ms":1,"actor":"operator","reason":"approved","request_id":REQUEST}).to_string();
     let mut server = Server::reply(200, response.as_bytes(), None).await;
     let hypervisor = Hypervisor::new(&server.url, "private-token").unwrap();
     assert!(matches!(
@@ -178,4 +178,26 @@ async fn changes_preserve_base_and_refuse_substituted_request_or_environment() {
         assert_eq!(body["base_revision_id"], base);
         assert!(server.received.try_recv().is_err());
     }
+}
+
+#[tokio::test]
+async fn archive_environment_submits_an_exact_base_on_the_changes_route() {
+    use models::environments::{EnvironmentArchiveAction, EnvironmentArchiveRequest};
+
+    let mut server = Server::reply(200, pending().as_bytes(), None).await;
+    let hypervisor = Hypervisor::new(&server.url, "private-token").unwrap();
+    let base = "00000000-0000-4000-8000-000000000003";
+    let request = EnvironmentArchiveRequest {
+        action: EnvironmentArchiveAction::Archive,
+        request_id: REQUEST.into(),
+        base_revision_id: base.into(),
+        reason: "retire blueprint".into(),
+    };
+    assert_eq!(hypervisor.environments().archive(ENVIRONMENT, request).await.unwrap().request_id, REQUEST);
+    let (parts, body) = server.received.recv().await.unwrap();
+    assert_eq!(parts.method, "POST");
+    assert_eq!(parts.uri.path(), format!("/environments/{ENVIRONMENT}/changes"));
+    assert_eq!(serde_json::from_slice::<serde_json::Value>(&body).unwrap(), json!({
+        "action": "archive", "request_id": REQUEST, "base_revision_id": base, "reason": "retire blueprint",
+    }));
 }

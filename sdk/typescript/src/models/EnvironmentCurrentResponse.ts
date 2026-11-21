@@ -4,6 +4,7 @@ import type { EnvironmentDocument } from "./EnvironmentDocument.js";
 
 export interface EnvironmentCurrentResponse {
   "actor": string;
+  "archived": boolean;
   "document": EnvironmentDocument;
   "reason": string;
   "request_id"?: string | null;
