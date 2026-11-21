@@ -17,7 +17,7 @@ pub(super) fn running_sandbox_info(i: &InstanceInfo) -> SandboxInfo {
             desired: reference(&binding.desired),
             owner_generation: Some(i.generation.to_string()),
             policy_digest: binding.acknowledged.then(|| binding.policy_digest.clone()),
-            pending_restart: (binding.acknowledged && binding.boot == binding.desired).then_some(false),
+            pending_restart: binding.acknowledged.then_some(binding.pending_restart),
         }
     });
     info.name = Some(i.name.clone());

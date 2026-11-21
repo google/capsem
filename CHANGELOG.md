@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Operators can approve, deny, or inspect an environment proposal through the gateway. Approval applies the fork's live policy to the originating VM and saves deferred configuration for its next start.
+- Added: A scoped requester can withdraw its own pending environment proposal.
 - Added: The operator can inspect durable environment proposals and their exact historical review content through the gateway.
 - Added: An agent scoped to a running VM can submit an environment change for operator review.
 - Added: Authenticated `/events` clients receive `approval-pending` notifications when a VM’s actionable approval queue changes, even when no client polls `/status` (#404).

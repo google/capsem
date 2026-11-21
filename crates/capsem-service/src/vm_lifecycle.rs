@@ -716,6 +716,7 @@ pub(super) async fn handle_persist(
     let name = &payload.name;
     validate_vm_name(name).map_err(|e| AppError::new(StatusCode::BAD_REQUEST, e.to_string()))?;
 
+    let _selection = state.policy_mutation.begin().await;
     // Find the running ephemeral instance
     let (live_session_dir, asset_pins, ram_mb, cpus, base_version, forked_from, env, generation, labels, environment) = {
         let instances = state.instances.lock().unwrap();

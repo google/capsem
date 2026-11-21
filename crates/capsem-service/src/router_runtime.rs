@@ -24,6 +24,7 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/environments/{id}/changes", post(environment_routes::change))
         .route("/requests/list", get(environment_routes::reviews::list))
         .route("/requests/{id}/info", get(environment_routes::reviews::info))
+        .route("/requests/{id}/resolve", post(environment_routes::decisions::resolve))
         .route("/status", get(handle_service_status))
         .route("/restart", post(restart::handle_restart))
         .route("/update/status", get(handle_update_status))

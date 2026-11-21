@@ -105,6 +105,10 @@ impl EnvironmentMutationCoordinator {
         Self { revisions }
     }
 
+    pub async fn request_status(&self, id: String) -> Result<EnvironmentMutationResponse, EnvironmentMutationError> {
+        self.read_request(id).await.map(view)
+    }
+
     /// Dropping the HTTP response or this job cannot cancel accepted work.
     /// The source capability is selected by the host, never deserialized.
     pub fn submit<R>(
@@ -403,6 +407,7 @@ fn event_id() -> String {
     format!("{:012x}", capsem_crypto::random::u64() & 0xffff_ffff_ffff)
 }
 pub(super) fn view(record: EnvironmentRequestRecord) -> EnvironmentMutationResponse {
+    use capsem_logger::events::environment::application::EnvironmentApplicationState as Application;
     let result = record.result.map(|result| EnvironmentRevisionReference {
         environment_id: result.environment_id,
         revision_id: result.revision_id,
@@ -418,13 +423,20 @@ pub(super) fn view(record: EnvironmentRequestRecord) -> EnvironmentMutationRespo
             EnvironmentRequestState::Expired => RequestState::Expired,
             EnvironmentRequestState::Stale => RequestState::Stale,
         },
-        application: if result.is_some() && record.requester.is_none() {
-            RequestApplicationState::Applied
-        } else {
-            RequestApplicationState::Pending
+        application: match record
+            .application
+            .as_ref()
+            .map(|status| (status.state, status.pending_restart))
+        {
+            Some((Application::Applying, _)) => RequestApplicationState::Applying,
+            Some((Application::Applied, false)) => RequestApplicationState::Applied,
+            Some((Application::Failed, _)) => RequestApplicationState::Failed,
+            None if result.is_some() && record.requester.is_none() => RequestApplicationState::Applied,
+            _ => RequestApplicationState::Pending,
         },
         result,
-        application_error: None,
+        application_error: record.application.and_then(|status| status.failure_reason),
+        observed_revision: record.requester.is_some().then_some(record.payload_event_id),
     }
 }
 #[cfg(test)]

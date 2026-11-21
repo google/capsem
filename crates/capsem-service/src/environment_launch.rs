@@ -16,6 +16,7 @@ pub(crate) struct EnvironmentBinding {
     pub(crate) desired: EnvironmentRevisionParent,
     pub(crate) policy_digest: String,
     pub(crate) acknowledged: bool,
+    pub(crate) pending_restart: bool,
 }
 impl EnvironmentBinding {
     pub(crate) fn starting(reference: EnvironmentRevisionParent, policy_digest: String) -> Self {
@@ -25,6 +26,7 @@ impl EnvironmentBinding {
             desired: reference,
             policy_digest,
             acknowledged: false,
+            pending_restart: false,
         }
     }
 }
