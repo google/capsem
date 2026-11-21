@@ -1,0 +1,13 @@
+{
+  "upstream_package_sha256": "b5949e504d5ab9944a168259afc0c39ac0230627b6ec5367ace194c59bcbe163",
+  "reason": "Replace rmcp 3.10's unmaintained chrono dependency with jiff while preserving RFC 3339 annotation and task timestamp wire values, request-state epoch milliseconds, and timeout diagnostics. Drop schemars' unused chrono04 feature so chrono is absent from the active product graph. Upstream rmcp 3.11.0 retains the same chrono dependency; remove this patch when a stable upstream release ships maintained timestamps.",
+  "files": {
+    "Cargo.lock": "ec978fa17643da71d59bc12e4abf7ae73eb3435200a0bf0cd7c12c92cc38e167",
+    "Cargo.toml": "34f03095e8e521d34831d41324ebf838b6fad7a5914f5104b0c9bd85ce61b481",
+    "Cargo.toml.orig": "eccc8ecc0c16958fbdd55bc9ebd2b250b616001f68528c682d5e4b442628e58a",
+    "src/model/annotated.rs": "d0e9cd2c4ef28fb516816a3c7390714c7d6496c5e55bb1a61681b2f08aed79ad",
+    "src/model/request_state.rs": "6417043c9069c8290378f69d1438f436fd7253b008bd4c7f7dab55076ec4527e",
+    "src/service.rs": "5d7e34a5678330a85038d37165897733fc3dcf8a77adc22f724b71ad0d1873ca",
+    "src/task_manager.rs": "ef4abba7a533902134f1a1a6167142b9914f38a6adbd514d6baf1ab0e01c766f"
+  }
+}

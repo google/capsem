@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-exclude = ["third_party/rust/alacritty_terminal", "third_party/rust/vte", "third_party/rust/oci-client", "third_party/rust/tauri-plugin-single-instance"]
+exclude = ["third_party/rust/alacritty_terminal", "third_party/rust/vte", "third_party/rust/oci-client", "third_party/rust/rmcp", "third_party/rust/tauri-plugin-single-instance"]
 members = [
     "crates/capsem-cache",
     "crates/capsem-crypto",
@@ -270,4 +270,5 @@ rmcp = { version = "3.9", features = ["client", "server"] }
 hickory-proto = { version = "0.26", default-features = false, features = ["std"] }
 
 [patch.crates-io]
+rmcp = { path = "third_party/rust/rmcp" }
 vte = { path = "third_party/rust/vte" }

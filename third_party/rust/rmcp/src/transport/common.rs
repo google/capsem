@@ -1,0 +1,28 @@
+#[cfg(feature = "transport-streamable-http-server")]
+pub mod server_side_http;
+
+pub mod http_header;
+
+#[cfg(any(feature = "client-side-sse", feature = "server-side-http"))]
+pub mod mcp_headers;
+
+#[cfg(any(
+    feature = "transport-streamable-http-client-reqwest",
+    all(unix, feature = "transport-streamable-http-client-unix-socket")
+))]
+mod client_side_http;
+
+#[cfg(feature = "__reqwest")]
+mod reqwest;
+
+// Note: This module provides SSE stream parsing and auto-reconnect utilities.
+// It's used by the streamable HTTP client (which receives SSE-formatted responses),
+// not the removed SSE transport. The name is historical.
+#[cfg(feature = "client-side-sse")]
+pub mod client_side_sse;
+
+#[cfg(feature = "auth")]
+pub mod auth;
+
+#[cfg(all(unix, feature = "transport-streamable-http-client-unix-socket"))]
+pub mod unix_socket;
