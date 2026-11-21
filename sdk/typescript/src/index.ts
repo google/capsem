@@ -5,7 +5,7 @@ export {Hypervisor} from './hypervisor.js';
 export {delegatedBearer} from './identity.js';
 export {ManagedSession} from './managed.js';
 export {Images} from './images.js';
-export {Environments, type EnvironmentListOptions} from './environments.js';
+export {Environments, type EnvironmentListOptions, type EnvironmentRevisionListOptions} from './environments.js';
 export {
   EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelectionSchema as EnvironmentDraftSchema,
 } from './validation/EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection.js';

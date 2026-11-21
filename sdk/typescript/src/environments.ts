@@ -8,6 +8,11 @@ export interface EnvironmentListOptions extends CallOptions {
   limit?: number;
 }
 
+export interface EnvironmentRevisionListOptions extends CallOptions {
+  before?: number;
+  limit?: number;
+}
+
 /** Canonical blueprints; requests retain caller-chosen reconciliation IDs. */
 export class Environments {
   constructor(private readonly transport: Transport) {}
@@ -36,5 +41,27 @@ export class Environments {
     const result = await api.getEnvironmentInfo(this.transport, {id}, options);
     if (result.document.identity.id !== id) throw new Error('Environment identity changed');
     return result;
+  }
+
+  async listRevisions(id: string, {signal, timeoutMs, ...query}: EnvironmentRevisionListOptions = {}): Promise<models.EnvironmentRevisionListResponse> {
+    return api.listEnvironmentRevisions(this.transport, {id, ...query}, {signal, timeoutMs});
+  }
+
+  async revision(reference: models.EnvironmentRevisionReference, options: CallOptions = {}): Promise<models.EnvironmentRevisionDetailResponse> {
+    const result = await api.getEnvironmentRevision(this.transport, {id: reference.environment_id, revision_id: reference.revision_id}, options);
+    verifyRevision(reference, result.summary.environment);
+    return result;
+  }
+
+  async validateToml(base: models.EnvironmentRevisionReference, toml: string, options: CallOptions = {}): Promise<models.EnvironmentTomlValidationResponse> {
+    const result = await api.validateEnvironmentToml(this.transport, {id: base.environment_id, revision_id: base.revision_id, body: {toml}}, options);
+    verifyRevision(base, result.base);
+    return result;
+  }
+}
+
+function verifyRevision(expected: models.EnvironmentRevisionReference, actual: models.EnvironmentRevisionReference): void {
+  if (expected.environment_id !== actual.environment_id || expected.revision_id !== actual.revision_id) {
+    throw new Error('Environment revision identity changed');
   }
 }
