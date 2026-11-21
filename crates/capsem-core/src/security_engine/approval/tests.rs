@@ -94,6 +94,71 @@ async fn live_queue_changes_are_observable_without_polling_ledger_rows() {
 }
 
 #[tokio::test]
+async fn only_actionable_queue_changes_notify_subscribers() {
+    let broker = ApprovalBroker::default();
+    let owner = binding("session");
+    let mut changes = broker.subscribe();
+    drop(broker.reserve(owner.clone(), request(1, 0)).unwrap());
+    assert!(
+        !changes.has_changed().unwrap(),
+        "an invisible reservation was cancelled"
+    );
+
+    let pending = broker.reserve(owner.clone(), request(2, 0)).unwrap();
+    assert!(pending.publish());
+    changes.changed().await.unwrap();
+    assert!(pending.publish());
+    assert!(!changes.has_changed().unwrap(), "the ask was already visible");
+
+    let ticket = broker.claim(&owner, "000000000002").unwrap();
+    changes.changed().await.unwrap();
+    assert!(ticket.complete_after_audit(ApprovalOutcome::Denied));
+    assert_eq!(pending.wait().await, ApprovalOutcome::Denied);
+    assert!(
+        !changes.has_changed().unwrap(),
+        "the resolver already removed the ask from the queue"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn queue_notifications_preserve_the_original_binding_across_expiry_and_retirement() {
+    let broker = ApprovalBroker::default();
+    let original = binding("session");
+    let replacement = binding("session");
+    let mut changes = broker.subscribe_queue_changes();
+    let first = broker.register(original.clone(), request(1, 0)).unwrap();
+    let second = broker.register(replacement.clone(), request(1, 0)).unwrap();
+    assert_eq!(changes.try_recv().unwrap(), original);
+    assert_eq!(changes.try_recv().unwrap(), replacement);
+
+    broker.cancel_generation(&original);
+    assert_eq!(first.wait().await, ApprovalOutcome::Cancelled);
+    assert_eq!(changes.try_recv().unwrap(), original);
+    assert_eq!(broker.pending_count(&replacement), 1);
+
+    tokio::time::advance(ApprovalLimits::default().timeout).await;
+    assert_eq!(second.wait().await, ApprovalOutcome::Expired);
+    assert_eq!(changes.try_recv().unwrap(), replacement);
+    assert!(matches!(changes.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
+}
+
+#[test]
+fn slow_queue_subscribers_receive_a_lag_signal() {
+    let broker = ApprovalBroker::default();
+    let owner = binding("session");
+    let mut changes = broker.subscribe_queue_changes();
+    // A pending operation and its cancellation each consume one slot.
+    for id in 0..=capsem_proto::APPROVAL_PENDING_TOTAL.next_power_of_two() as u64 {
+        drop(broker.register(owner.clone(), request(id, 0)).unwrap());
+    }
+    assert!(matches!(
+        changes.try_recv(),
+        Err(broadcast::error::TryRecvError::Lagged(_))
+    ));
+    assert_eq!(changes.try_recv().unwrap(), owner);
+}
+
+#[tokio::test]
 async fn unresolved_original_emission_is_blocked_without_a_capability() {
     use crate::security_engine::*;
     let db = capsem_logger::DbWriter::open_in_memory(16).unwrap();

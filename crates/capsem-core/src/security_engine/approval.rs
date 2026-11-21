@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use capsem_proto::approval::{ApprovalOutcome, ApprovalRequest};
-use tokio::sync::{oneshot, watch};
+use tokio::sync::{broadcast, oneshot, watch};
 use tokio::time::Instant;
 use uuid::Uuid;
 
@@ -71,6 +71,7 @@ pub struct ApprovalBroker {
     state: Arc<Mutex<State>>,
     limits: ApprovalLimits,
     changes: watch::Sender<u64>,
+    queue_changes: broadcast::Sender<ApprovalBinding>,
 }
 
 impl Default for ApprovalBroker {
@@ -97,6 +98,7 @@ impl ApprovalBroker {
             state: Arc::default(),
             limits,
             changes: watch::channel(0).0,
+            queue_changes: broadcast::channel(capsem_proto::APPROVAL_PENDING_TOTAL).0,
         })
     }
 
@@ -105,7 +107,16 @@ impl ApprovalBroker {
         self.changes.subscribe()
     }
 
-    fn changed(&self) {
+    /// Queue invalidations identify only the owning session and generation.
+    /// Subscribers can refetch the live queue after a lag indication.
+    pub fn subscribe_queue_changes(&self) -> broadcast::Receiver<ApprovalBinding> {
+        self.queue_changes.subscribe()
+    }
+
+    fn changed(&self, binding: &ApprovalBinding) {
+        if self.queue_changes.receiver_count() > 0 {
+            let _ = self.queue_changes.send(binding.clone());
+        }
         self.changes
             .send_modify(|revision| *revision = revision.wrapping_add(1));
     }
@@ -181,7 +192,7 @@ impl ApprovalBroker {
         );
         drop(state);
         if published {
-            self.changed();
+            self.changed(&key.0);
         }
         Ok(PendingApproval {
             broker: self.clone(),
@@ -208,7 +219,7 @@ impl ApprovalBroker {
         let identity = Arc::clone(&entry.identity);
         let audit = Arc::clone(&entry.audit);
         drop(state);
-        self.changed();
+        self.changed(binding);
         Ok(ApprovalTicket {
             broker: self.clone(),
             key,
@@ -279,20 +290,20 @@ impl ApprovalBroker {
             .filter(|(owner, _)| owner == binding)
             .cloned()
             .collect();
-        let changed = !keys.is_empty();
+        let mut changed = false;
         for key in keys {
-            remove(&mut state, &key);
+            changed |= remove(&mut state, &key);
         }
         drop(state);
         if changed {
-            self.changed();
+            self.changed(binding);
         }
     }
 
     fn remove(&self, key: &Key) {
         let changed = remove(&mut self.state.lock().unwrap(), key);
         if changed {
-            self.changed();
+            self.changed(&key.0);
         }
     }
 
@@ -309,7 +320,7 @@ impl ApprovalBroker {
         };
         drop(state);
         if changed {
-            self.changed();
+            self.changed(&key.0);
         }
     }
 }
@@ -317,6 +328,7 @@ impl ApprovalBroker {
 fn remove(state: &mut State, key: &Key) -> bool {
     if let Some(entry) = state.entries.remove(key) {
         state.held_bytes -= entry.request.held_bytes as usize;
+        let was_actionable = entry.published && entry.delivery.is_some();
         // Capture the cause when cancellation arrives, before a delayed waiter
         // polls both its timer and cancellation. Earlier cancellation stays
         // cancelled; cancellation after the deadline cannot replace expiry.
@@ -326,7 +338,7 @@ fn remove(state: &mut State, key: &Key) -> bool {
             ApprovalOutcome::Cancelled
         };
         let _ = entry.cancel.send(Some(outcome));
-        true
+        was_actionable
     } else {
         false
     }
@@ -367,7 +379,7 @@ impl PendingApproval {
         if !Arc::ptr_eq(&entry.identity, &self.identity) || remaining_ms == 0 || self.cancel.borrow().is_some() {
             return None;
         }
-        entry.published = true;
+        let became_actionable = !std::mem::replace(&mut entry.published, true);
         let registration = capsem_proto::approval::ApprovalRegistration {
             ask_id: entry.request.ask_id.clone(),
             event_id: entry.request.event_id.clone(),
@@ -375,7 +387,9 @@ impl PendingApproval {
             remaining_ms,
         };
         drop(state);
-        self.broker.changed();
+        if became_actionable {
+            self.broker.changed(&self.key.0);
+        }
         Some(registration)
     }
 
@@ -427,7 +441,6 @@ impl ApprovalTicket {
             state.held_bytes -= entry.request.held_bytes as usize;
         }
         drop(state);
-        self.broker.changed();
         self.delivery.take().is_some_and(|sender| sender.send(outcome).is_ok())
     }
 }
