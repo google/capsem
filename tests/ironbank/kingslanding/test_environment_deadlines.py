@@ -135,6 +135,13 @@ def test_client_cold_lifecycle_waits_for_the_retained_revision(
     assert_cold_lifecycle_waits(service, tmp_path, client, operation, startup_seconds)
 
 
+@pytest.mark.parametrize("client", ["python", "typescript"])
+def test_installed_sdk_cold_lifecycle_waits_for_the_retained_revision(
+    client, service, tmp_path
+):
+    assert_cold_lifecycle_waits(service, tmp_path, client, "clone", 238)
+
+
 def run_cold_client(client, operation, service, gateway, source, source_name, timeout):
     target_name = vm_name("cold-clone")
     env = environment(service)
@@ -253,6 +260,44 @@ def assert_cold_lifecycle_waits(service, tmp_path, client, operation, startup_se
                 },
                 "startup_timeout_seconds": startup_seconds + 30,
             }
+            if client in {"python", "typescript"}:
+                selected_source = readiness["selection"]
+                env = {
+                    **{
+                        key: value
+                        for key, value in os.environ.items()
+                        if key != "VIRTUAL_ENV"
+                    },
+                    "SDK_GATEWAY_URL": gateway.base_url,
+                    "SDK_GATEWAY_TOKEN": gateway.token,
+                    "SDK_VM_ID": source,
+                    "SDK_ENVIRONMENT_ID": selected["environment_id"],
+                    "SDK_REVISION_ID": selected["revision_id"],
+                    "SDK_COLD_SOURCE_NAME": source_name,
+                    "SDK_COLD_SOURCE_GENERATION": selected_source["generation"],
+                    "SDK_COLD_MEMORY_GIB": str(DEFAULT_RAM_MB // 1024),
+                    "SDK_COLD_CPUS": str(DEFAULT_CPUS),
+                    "SDK_COLD_MIN_SECONDS": str(startup_seconds),
+                }
+                run = python_gateway if client == "python" else typescript_gateway
+                output = run(
+                    ROOT,
+                    env,
+                    probe="cold_lifecycle_acceptance.py"
+                    if client == "python"
+                    else "cold-lifecycle-acceptance.mjs",
+                    success_marker="SDK_COLD_LIFECYCLE_OK",
+                    timeout_seconds=startup_seconds + 75,
+                )
+                assert output.count("SDK_COLD_LIFECYCLE_OK") == (
+                    2 if client == "python" else 1
+                )
+                assert api.get(f"/vms/{lookup}/readiness?intent={intent}") == readiness
+                assert [
+                    row["id"]
+                    for row in request(service, "GET", "/vms/list")["sandboxes"]
+                ] == [source]
+                return
             if operation == "clone":
                 path = "/vms/create"
                 payload = {
