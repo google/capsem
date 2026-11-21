@@ -382,6 +382,52 @@ async fn ready_brings_the_counters_up_to_the_last_commit() {
     assert!(reader.read_cache_epoch(ReadCacheDomain::LedgerCounters) > epoch);
 }
 
+#[tokio::test]
+async fn committed_denials_notify_without_a_route_read_or_history_replay() {
+    let p = temp_db_path("external-ledger-denial-notifications");
+    let writer = DbHandle::open(&p).expect("open owning writer handle");
+    writer
+        .write(WriteOp::NetEvent(make_net_event("historic.example", Decision::Denied)))
+        .await
+        .unwrap();
+    writer.flush().await.unwrap();
+
+    let reader = DbHandle::open_external_reader(&p).expect("open external reader");
+    let mut denials = reader.subscribe_denials();
+    reader.ready().await.unwrap();
+    assert_eq!(reader.ledger_counters().await.unwrap().net.denied, 1);
+    assert!(!denials.has_changed().unwrap(), "historic denials are the baseline");
+
+    writer
+        .write(WriteOp::NetEvent(make_net_event("allowed.example", Decision::Allowed)))
+        .await
+        .unwrap();
+    writer.flush().await.unwrap();
+    reader.ready().await.unwrap();
+    assert_eq!(reader.ledger_counters().await.unwrap().net.allowed, 1);
+    assert!(!denials.has_changed().unwrap(), "an unrelated network commit notified");
+
+    let requests = reader.reader_requests();
+    writer
+        .write(WriteOp::NetEvent(make_net_event("new.example", Decision::Denied)))
+        .await
+        .unwrap();
+    writer.flush().await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), denials.changed())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(reader.ledger_counters().await.unwrap().net.denied, 2);
+    assert_eq!(reader.reader_requests(), requests, "no caller requested the refresh");
+
+    reader.ready().await.unwrap();
+    assert!(!denials.has_changed().unwrap(), "a re-read repeated the notification");
+    assert!(
+        !reader.subscribe_denials().has_changed().unwrap(),
+        "a new listener replayed a denial"
+    );
+}
+
 /// Without anyone calling `ready()`, a commit still reaches the polls: the
 /// reader worker notices it on its own within `HOT_REFRESH_INTERVAL`.
 #[tokio::test]

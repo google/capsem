@@ -16,6 +16,7 @@
 
 use super::*;
 use crate::counters::LedgerCounters;
+use tokio::sync::watch;
 
 /// How stale a published snapshot may get while nobody calls `ready()`.
 ///
@@ -30,6 +31,8 @@ pub(super) const HOT_REFRESH_INTERVAL: std::time::Duration = std::time::Duration
 struct Published {
     data_version: Option<i64>,
     snapshot: Option<Result<Arc<LedgerCounters>, String>>,
+    // Read errors never replace the last successfully observed baseline.
+    last_denied: Option<u64>,
 }
 
 /// Shared between a handle and its reader worker.
@@ -39,6 +42,7 @@ pub(super) struct HotCounters {
     /// Moves every time a different snapshot, or a different failure, is
     /// published: the freshness answer for [`ReadCacheDomain::LedgerCounters`].
     epoch: AtomicU64,
+    denials: watch::Sender<()>,
 }
 
 impl HotCounters {
@@ -54,6 +58,10 @@ impl HotCounters {
 
     pub(super) fn epoch(&self) -> u64 {
         self.epoch.load(Ordering::Acquire)
+    }
+
+    pub(super) fn subscribe_denials(&self) -> watch::Receiver<()> {
+        self.denials.subscribe()
     }
 
     /// Worker side: bring the published snapshot up to the file.
@@ -93,6 +101,15 @@ impl HotCounters {
             (Some(Err(old)), Err(new)) => old != new,
             _ => true,
         };
+        let denied_increased = if let Ok(counters) = &snapshot {
+            let denied = counters.net.denied;
+            published
+                .last_denied
+                .replace(denied)
+                .is_some_and(|previous| denied > previous)
+        } else {
+            false
+        };
         published.data_version = data_version;
         if changed {
             published.snapshot = Some(snapshot);
@@ -101,5 +118,11 @@ impl HotCounters {
             self.epoch.fetch_add(1, Ordering::AcqRel);
         }
         drop(published);
+        if denied_increased {
+            let _ = self.denials.send(());
+        }
     }
 }
+
+#[cfg(test)]
+mod tests;

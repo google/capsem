@@ -592,6 +592,12 @@ impl DbHandle {
         }
     }
 
+    /// Coalesced invalidation when the committed network-denial count grows.
+    /// The initial ledger snapshot and already observed commits stay silent.
+    pub fn subscribe_denials(&self) -> tokio::sync::watch::Receiver<()> {
+        self.inner.hot.subscribe_denials()
+    }
+
     /// How many requests this handle has sent its reader worker.
     ///
     /// Each one is a cross-thread round trip, and on a polled route that is

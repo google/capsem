@@ -66,6 +66,11 @@ impl LedgerServer {
         })
     }
 
+    /// Observe fresh committed network denials for this worker's ledger.
+    pub fn subscribe_denials(&self) -> tokio::sync::watch::Receiver<()> {
+        self.db.subscribe_denials()
+    }
+
     /// Serve one descriptor whose expected authority came from the trusted
     /// coordinator. Other clients may call this concurrently on the same
     /// server; SQLite and archive ownership remain in this process.
