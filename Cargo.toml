@@ -228,6 +228,7 @@ rmp = "0.8.15"
 toml = "0.8"
 rusqlite = { version = "0.41", features = ["bundled", "hooks", "serialize"] }
 humantime = "2"
+jiff = { version = "0.2.37", default-features = false, features = ["std"] }
 objc2 = "0.6"
 objc2-virtualization = { version = "0.3", features = [
     "VZVirtioFileSystemDeviceConfiguration",

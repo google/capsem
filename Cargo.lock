@@ -896,6 +896,7 @@ version = "0.7.2"
 dependencies = [
  "capsem-crypto",
  "capsem-proto",
+ "jiff",
  "libc",
  "nix 0.29.0",
  "rmp-serde",

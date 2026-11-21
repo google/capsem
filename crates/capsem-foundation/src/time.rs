@@ -1,4 +1,50 @@
-//! Dependency-free UTC time formatting shared by host crates.
+//! UTC time parsing and formatting shared by host crates.
+
+use std::time::SystemTime;
+
+use jiff::Timestamp;
+
+/// Parse an RFC 3339 timestamp into a system clock instant.
+pub fn parse_rfc3339(value: &str) -> Result<SystemTime, jiff::Error> {
+    value.parse::<Timestamp>().map(Into::into)
+}
+
+/// Format a system clock instant with smart nanosecond precision.
+///
+/// Whole seconds omit the fractional component. Any non-zero fraction is
+/// rendered with nine digits to preserve the historical Capsem wire format.
+pub fn format_rfc3339(time: SystemTime) -> String {
+    let timestamp = timestamp(time);
+    if timestamp.subsec_nanosecond() == 0 {
+        timestamp.to_string()
+    } else {
+        format!("{timestamp:.9}")
+    }
+}
+
+/// Format a system clock instant at whole-second precision.
+pub fn format_rfc3339_seconds(time: SystemTime) -> String {
+    format!("{:.0}", timestamp(time))
+}
+
+/// Format a system clock instant at millisecond precision.
+pub fn format_rfc3339_millis(time: SystemTime) -> String {
+    format!("{:.3}", timestamp(time))
+}
+
+/// Format a system clock instant at microsecond precision.
+pub fn format_rfc3339_micros(time: SystemTime) -> String {
+    format!("{:.6}", timestamp(time))
+}
+
+/// Format a system clock instant at nanosecond precision.
+pub fn format_rfc3339_nanos(time: SystemTime) -> String {
+    format!("{:.9}", timestamp(time))
+}
+
+fn timestamp(time: SystemTime) -> Timestamp {
+    Timestamp::try_from(time).expect("system time is outside the supported RFC 3339 range")
+}
 
 /// Break epoch seconds into UTC calendar and clock components.
 pub fn epoch_to_parts(secs: u64) -> (i64, u32, u32, u64, u64, u64) {
