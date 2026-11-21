@@ -28,6 +28,7 @@ const ADOPTED: u8 = 102;
 const REJECTED: u8 = 103;
 const STOPPED: u8 = 104;
 const CLOSED: u8 = 105;
+const DENIAL_OBSERVED: u8 = 106;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LedgerControlRequest {
@@ -66,6 +67,9 @@ pub enum LedgerControlEvent {
         client_id: u64,
         reason: LedgerClientCloseReason,
     },
+    DenialObserved {
+        generation: LedgerGeneration,
+    },
 }
 
 impl LedgerControlEvent {
@@ -75,7 +79,8 @@ impl LedgerControlEvent {
             | Self::Adopted { generation, .. }
             | Self::Rejected { generation, .. }
             | Self::Stopped { generation }
-            | Self::Closed { generation, .. } => generation,
+            | Self::Closed { generation, .. }
+            | Self::DenialObserved { generation } => generation,
         }
     }
 }
@@ -146,6 +151,7 @@ pub fn encode_ledger_control_event(event: LedgerControlEvent) -> [u8; LEDGER_CON
             client_id,
             reason,
         } => encode(CLOSED, 0, reason as u16, generation, client_id),
+        LedgerControlEvent::DenialObserved { generation } => encode(DENIAL_OBSERVED, 0, 0, generation, 0),
     }
 }
 
@@ -174,6 +180,7 @@ pub fn decode_ledger_control_event(
             },
         }),
         STOPPED if detail == 0 && client_id == 0 => Ok(LedgerControlEvent::Stopped { generation }),
+        DENIAL_OBSERVED if detail == 0 && client_id == 0 => Ok(LedgerControlEvent::DenialObserved { generation }),
         CLOSED if client_id != 0 => Ok(LedgerControlEvent::Closed {
             generation,
             client_id,

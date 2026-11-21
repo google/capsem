@@ -47,6 +47,7 @@ fn events_round_trip_generation_identity_and_rejection() {
             reason: LedgerControlRejection::DuplicateClient,
         },
         LedgerControlEvent::Stopped { generation: GENERATION },
+        LedgerControlEvent::DenialObserved { generation: GENERATION },
         LedgerControlEvent::Closed {
             generation: GENERATION,
             client_id: 75,
@@ -58,6 +59,26 @@ fn events_round_trip_generation_identity_and_rejection() {
             event
         );
     }
+}
+
+#[test]
+fn denial_records_carry_only_the_worker_generation() {
+    let valid = encode_ledger_control_event(LedgerControlEvent::DenialObserved { generation: GENERATION });
+    assert!(decode_ledger_control_request(&valid).is_err());
+    for index in [ROLE_OFFSET, DETAIL_RANGE.start, CLIENT_ID_RANGE.start] {
+        let mut frame = valid;
+        frame[index] = 1;
+        assert!(decode_ledger_control_event(&frame).is_err());
+    }
+    let mut legacy = valid;
+    legacy[VERSION_RANGE].copy_from_slice(&(LEDGER_PROTOCOL_VERSION - 1).to_be_bytes());
+    assert!(matches!(
+        decode_ledger_control_event(&legacy),
+        Err(LedgerControlError::Version { .. })
+    ));
+    let mut no_generation = valid;
+    no_generation[GENERATION_RANGE].fill(0);
+    assert!(decode_ledger_control_event(&no_generation).is_err());
 }
 
 #[test]
