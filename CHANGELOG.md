@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Create and edit saved environments in the desktop, with review before saving and safe reconciliation if a save response is lost.
 - Added: Browse saved environments in the desktop and launch the exact revision you select, even after refreshing the library.
 - Added: List and search the committed saved environments visible to your gateway credential, including their revision and availability.
 - Added: The CLI lists and inspects environment requests and submits decisions with the exact reviewed observation.

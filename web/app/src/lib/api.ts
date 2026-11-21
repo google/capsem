@@ -73,6 +73,18 @@ export function listSavedEnvironments(options: EnvironmentListOptions) {
   return _sdk.call(transport => new Environments(transport).list(options));
 }
 
+export function getSavedEnvironment(id: string, signal: AbortSignal) {
+  return _sdk.call(transport => new Environments(transport).info(id, { signal }));
+}
+
+export function saveEnvironment(body: import('@capsem/sdk').EnvironmentCreateRequest,
+  base: import('@capsem/sdk').EnvironmentRevisionReference | null) {
+  return _sdk.call(transport => {
+    const environments = new Environments(transport);
+    return base ? environments.change(base.environment_id, { ...body, base_revision_id: base.revision_id }) : environments.create(body);
+  }, false);
+}
+
 // -- Public getters --
 
 export function isConnected(): boolean {

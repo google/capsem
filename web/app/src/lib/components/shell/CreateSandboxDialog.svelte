@@ -3,8 +3,9 @@
   import { tabStore } from '../../stores/tabs.svelte.ts';
   import Modal from './Modal.svelte';
   import EnvironmentPicker from './EnvironmentPicker.svelte';
+  import EnvironmentEditor from './EnvironmentEditor.svelte';
   import { tick } from 'svelte';
-  import { ImageSurface, type EnvironmentListItem, type ImageInfo } from '@capsem/sdk';
+  import { ImageSurface, type EnvironmentListItem, type EnvironmentRevisionReference, type ImageInfo } from '@capsem/sdk';
   import { getImages } from '../../api';
   import { selectedSessionImage, sessionCreateRequest } from '../../models/session-create';
   import { sessionActionError } from '../../models/session-action-error';
@@ -27,6 +28,8 @@
   let savedMode = $state(false);
   let browsingEnvironments = $state(false);
   let selectedEnvironment = $state<EnvironmentListItem | null>(null);
+  let editor = $state<{ selection: EnvironmentRevisionReference | null } | null>(null);
+  let libraryRefresh = $state(0);
   let nameInput: HTMLInputElement;
   let opener: HTMLElement | null = null;
   let selectedImage = $derived(images.find(image => image.name === imageName) ?? null);
@@ -57,7 +60,7 @@
   });
 
   function close(restoreFocus = true) {
-    if (creating) return;
+    if (creating || editor) return;
     vmStore.closeCreateModal();
     name = '';
     ramMb = DEFAULT_RAM_MB;
@@ -87,7 +90,7 @@
   }
 
   async function handleSubmit() {
-    if (creating || (savedMode ? !selectedEnvironment : imagesLoading)) return;
+    if (editor || creating || (savedMode ? !selectedEnvironment : imagesLoading)) return;
     error = null;
     const trimmedName = name.trim();
     if (!trimmedName) {
@@ -117,7 +120,7 @@
   confirmLabel={creating ? 'Creating...' : 'Create'}
   onconfirm={handleSubmit}
   oncancel={close}
-  disabled={creating || (savedMode ? !selectedEnvironment : imagesLoading)}
+  disabled={!!editor || creating || (savedMode ? !selectedEnvironment : imagesLoading)}
 >
   <div class="space-y-4 py-2">
     {#if error}
@@ -151,7 +154,10 @@
               onkeydown={ownEnter} onclick={() => { browsingEnvironments = true; }}>Change environment</button>
           {/if}
         {/if}
-        {#if browsingEnvironments}<EnvironmentPicker onselect={selectEnvironment} disabled={creating} />{/if}
+        {#if browsingEnvironments}
+          <EnvironmentPicker onselect={selectEnvironment} disabled={creating} refreshVersion={libraryRefresh}
+            onedit={(selection) => { editor = { selection }; }} />
+        {/if}
         <button type="button" class="text-xs text-primary hover:underline disabled:opacity-50" disabled={creating}
           onkeydown={ownEnter} onclick={() => { savedMode = false; browsingEnvironments = false; }}>Use an image instead</button>
       </div>
@@ -223,3 +229,6 @@
     </div>
   </div>
 </Modal>
+{#if editor}
+  <EnvironmentEditor selection={editor.selection} onclose={() => { editor = null; }} onsaved={() => libraryRefresh++} />
+{/if}

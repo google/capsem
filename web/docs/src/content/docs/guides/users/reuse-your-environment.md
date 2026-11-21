@@ -60,6 +60,16 @@ The dialog shows the revision it will boot. Refreshing the library keeps the
 selected revision. Choose **Change environment** and select the newer revision
 if you want to use it.
 
+## Save a new environment or revise one
+
+In **Saved environments**, choose **New environment** or **Edit** beside an
+existing environment. Set the image, startup script, and configuration you
+want. Use the **Secret bindings** section for credential binding IDs.
+
+Select **Review changes**, check the settings, enter a reason, and select
+**Save environment**. Running sessions keep their existing revisions. If the
+saved revision changes before you save, reload it before starting a new edit.
+
 ## Temporary VMs
 
 For a quick experiment you do not need to keep, omit `-n`:
