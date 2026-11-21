@@ -7,6 +7,8 @@ fn event_frames_round_trip_and_refuse_unknown_kinds_and_nil_sessions() {
     assert_eq!(SessionEvent::decode(frame), Some(event));
     let denial = SessionEvent::RequestDenied([0x5b; 16]);
     assert_eq!(SessionEvent::decode(denial.encode()), Some(denial));
+    let changed = SessionEvent::EnvironmentRequestsChanged([0x5c; 16]);
+    assert_eq!(SessionEvent::decode(changed.encode()), Some(changed));
     frame[0] = 0;
     assert_eq!(SessionEvent::decode(frame), None);
     assert_eq!(
@@ -15,6 +17,10 @@ fn event_frames_round_trip_and_refuse_unknown_kinds_and_nil_sessions() {
     );
     assert_eq!(
         SessionEvent::decode(SessionEvent::RequestDenied([0; 16]).encode()),
+        None
+    );
+    assert_eq!(
+        SessionEvent::decode(SessionEvent::EnvironmentRequestsChanged([0; 16]).encode()),
         None
     );
 }
