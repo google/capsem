@@ -2,7 +2,7 @@
 
 import * as gateway from '@capsem/sdk/operations';
 import { Connections, CredentialGrants, Environments, HostLogSource, NetworkError, ServiceAvailability, creationDeadlineMs } from '@capsem/sdk';
-import type { EnvironmentListOptions } from '@capsem/sdk';
+import type { EnvironmentListOptions, EnvironmentRevisionListOptions, EnvironmentRevisionReference } from '@capsem/sdk';
 import type { AuthorizeGoogleRequest, CreateSessionGrantRequest } from '@capsem/sdk';
 import type { StopResponse, VmActionResponse, LogsResponse, VmStatsDetailResponse, EventBodiesResponse } from '@capsem/sdk';
 import type { ContainerStatusResponse, ImageListResponse, ImagePullResponse, CredentialInjectProvider, CredentialInjectResponse, CredentialStorage } from '@capsem/sdk';
@@ -75,6 +75,18 @@ export function listSavedEnvironments(options: EnvironmentListOptions) {
 
 export function getSavedEnvironment(id: string, signal: AbortSignal) {
   return _sdk.call(transport => new Environments(transport).info(id, { signal }));
+}
+
+export function listSavedEnvironmentRevisions(id: string, options: EnvironmentRevisionListOptions) {
+  return _sdk.call(transport => new Environments(transport).listRevisions(id, options));
+}
+
+export function getSavedEnvironmentRevision(reference: EnvironmentRevisionReference, signal: AbortSignal) {
+  return _sdk.call(transport => new Environments(transport).revision(reference, { signal }));
+}
+
+export function validateSavedEnvironmentToml(reference: EnvironmentRevisionReference, toml: string, signal: AbortSignal) {
+  return _sdk.call(transport => new Environments(transport).validateToml(reference, toml, { signal }));
 }
 
 export function saveEnvironment(body: import('@capsem/sdk').EnvironmentCreateRequest,

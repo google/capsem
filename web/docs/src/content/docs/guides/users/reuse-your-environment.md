@@ -70,6 +70,16 @@ Select **Review changes**, check the settings, enter a reason, and select
 **Save environment**. Running sessions keep their existing revisions. If the
 saved revision changes before you save, reload it before starting a new edit.
 
+To edit a saved revision as text, open **TOML** in its editor. Keep the
+revision identity fields as shown. When changing an image, repository, or
+catalog selector, remove its old resolution fields so Capsem can resolve the
+new selection. **Review changes** validates the text against the selected
+revision before you save.
+
+Open **Change history** to inspect older revisions. Complete revisions show
+canonical TOML. When values have been purged, the view identifies the removed
+variables and shows the remaining content when it is available.
+
 ## Temporary VMs
 
 For a quick experiment you do not need to keep, omit `-n`:

@@ -1,20 +1,21 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { RequestApplicationState, RequestState, type EnvironmentCreateRequest, type EnvironmentCurrentResponse,
+  import { RequestApplicationState, RequestReviewAvailability, RequestState, type EnvironmentCreateRequest, type EnvironmentCurrentResponse,
     type EnvironmentRevisionReference } from '@capsem/sdk';
   import X from 'phosphor-svelte/lib/X';
-  import { getSavedEnvironment, saveEnvironment } from '../../api';
+  import { getSavedEnvironment, getSavedEnvironmentRevision, saveEnvironment, validateSavedEnvironmentToml } from '../../api';
   import { ApiError } from '../../gateway-sdk';
   import { editableFields, environmentChanges, reviewedDraft, type EnvironmentDraft } from '../../models/environment-editor';
   import { sessionActionError } from '../../models/session-action-error';
   import EnvironmentFields from './EnvironmentFields.svelte';
+  import EnvironmentHistory from './EnvironmentHistory.svelte';
 
   let { selection, onclose, onsaved }: {
     selection: EnvironmentRevisionReference | null;
     onclose: () => void;
     onsaved: () => void;
   } = $props();
-  type Phase = 'loading' | 'loadFailed' | 'editing' | 'reviewing' | 'saving' | 'stale' | 'unconfirmed' | 'saved';
+  type Phase = 'loading' | 'loadFailed' | 'editing' | 'validating' | 'reviewing' | 'saving' | 'stale' | 'unconfirmed' | 'saved';
   let phase = $state<Phase>('editing');
   let current = $state<EnvironmentCurrentResponse | null>(null);
   let fields = $state(editableFields());
@@ -23,15 +24,23 @@
   let saved = $state<EnvironmentRevisionReference | null>(null);
   let reason = $state('');
   let error = $state<string | null>(null);
+  let source = $state<'fields' | 'toml'>('fields');
+  let showHistory = $state(false);
+  let canonical = $state<string | null>(null);
+  let toml = $state('');
+  let loadingToml = $state(false);
   let dialog: HTMLDialogElement;
   let title: HTMLHeadingElement;
   let content: HTMLDivElement;
   let reader: AbortController | null = null;
+  let tomlReader: AbortController | null = null;
   const id = $props.id();
   let base = $derived(current ? { environment_id: current.document.identity.id, revision_id: current.document.identity.revision_id } : null);
-  let changes = $derived(draft ? environmentChanges(current ? reviewedDraft(editableFields(current.document.specification)) : null, draft) : []);
+  let original = $derived(current ? reviewedDraft(editableFields(current.document.specification)) : null);
+  let changes = $derived(draft ? environmentChanges(original, draft) : []);
+  let dirtyToml = $derived(canonical != null && toml !== canonical);
   const action = 'rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary-hover disabled:opacity-50';
-  const secondary = 'rounded-lg border border-line-2 px-4 py-2 text-sm font-medium hover:bg-muted-hover';
+  const secondary = 'rounded-lg border border-line-2 px-4 py-2 text-sm font-medium hover:bg-muted-hover aria-pressed:bg-muted aria-pressed:border-primary';
 
   function focusTitle() {
     void tick().then(() => {
@@ -61,6 +70,10 @@
       draft = null;
       attempt = null;
       reason = '';
+      source = 'fields';
+      showHistory = false;
+      canonical = null;
+      toml = '';
       phase = 'editing';
     } catch (err: unknown) {
       if (!controller.signal.aborted) {
@@ -70,18 +83,85 @@
     }
   }
 
-  function review() {
+  async function loadToml() {
+    if (!base) return;
+    tomlReader?.abort();
+    const controller = new AbortController();
+    tomlReader = controller;
+    loadingToml = true;
     error = null;
     try {
-      const next = reviewedDraft(fields);
-      const before = current ? reviewedDraft(editableFields(current.document.specification)) : null;
-      if (!environmentChanges(before, next).length) { error = 'There are no changes to save.'; return; }
+      const value = await getSavedEnvironmentRevision(base, controller.signal);
+      if (controller.signal.aborted) return;
+      if (value.availability !== RequestReviewAvailability.COMPLETE || value.canonical_toml == null) {
+        error = 'Canonical TOML is unavailable for this revision.';
+        return;
+      }
+      canonical = value.canonical_toml;
+      toml = value.canonical_toml;
+    } catch (err) {
+      if (!controller.signal.aborted) error = sessionActionError(err);
+    } finally {
+      if (!controller.signal.aborted) loadingToml = false;
+    }
+  }
+
+  function openToml() {
+    if (source === 'fields') {
+      try {
+        if (environmentChanges(original, reviewedDraft(fields)).length) throw new Error();
+      } catch {
+        error = 'Review or discard the current settings draft before switching to TOML.';
+        return;
+      }
+    }
+    source = 'toml';
+    showHistory = false;
+    error = null;
+    if (canonical == null && !loadingToml) void loadToml();
+  }
+
+  function openSettings() {
+    if (dirtyToml) {
+      error = 'Review or discard the TOML draft before switching to settings.';
+      return;
+    }
+    source = 'fields';
+    showHistory = false;
+    error = null;
+  }
+
+  async function review() {
+    if (phase !== 'editing' || showHistory) return;
+    error = null;
+    draft = null;
+    try {
+      let next: EnvironmentDraft;
+      if (source === 'toml') {
+        if (!base || canonical == null) return;
+        const controller = new AbortController();
+        tomlReader = controller;
+        phase = 'validating';
+        next = (await validateSavedEnvironmentToml(base, toml, controller.signal)).specification;
+        if (controller.signal.aborted) return;
+        phase = 'editing';
+      } else {
+        next = reviewedDraft(fields);
+      }
+      if (!environmentChanges(original, next).length) { error = 'There are no changes to save.'; return; }
       draft = next;
       attempt = null;
       phase = 'reviewing';
       focusTitle();
     } catch (err) {
-      error = sessionActionError(err);
+      if (tomlReader?.signal.aborted) return;
+      if (source === 'toml' && err instanceof ApiError && err.status === 409) {
+        phase = 'stale';
+        error = 'The saved revision changed before TOML could be validated. Reload the current revision to start a new edit.';
+      } else {
+        phase = 'editing';
+        error = sessionActionError(err);
+      }
     }
   }
 
@@ -126,7 +206,7 @@
     dialog.showModal();
     focusTitle();
     if (selection) void load(selection.revision_id);
-    return () => reader?.abort();
+    return () => { reader?.abort(); tomlReader?.abort(); };
   });
 </script>
 
@@ -146,7 +226,30 @@
     {#if error}<p role="alert" class="rounded-lg border border-destructive/30 p-3 text-destructive-text">{error}</p>{/if}
     {#if phase === 'loading'}<p role="status">Loading saved revision…</p>{/if}
     {#if base && phase !== 'saved'}<p class="break-all text-xs text-muted-foreground-1">Base revision {base.revision_id}</p>{/if}
-    {#if phase === 'editing'}
+    {#if base && (phase === 'editing' || phase === 'validating')}
+      <nav aria-label="Environment editor views" class="flex flex-wrap gap-2">
+        <button type="button" class={secondary} aria-pressed={!showHistory && source === 'fields'} disabled={phase === 'validating'} onclick={openSettings}>Settings</button>
+        <button type="button" class={secondary} aria-pressed={!showHistory && source === 'toml'} disabled={phase === 'validating'} onclick={openToml}>TOML</button>
+        <button type="button" class={secondary} aria-pressed={showHistory} disabled={phase === 'validating'} onclick={() => { error = null; showHistory = true; }}>Change history</button>
+      </nav>
+    {/if}
+    {#if showHistory && base && phase === 'editing'}
+      <EnvironmentHistory reference={base} />
+    {:else if source === 'toml' && (phase === 'editing' || phase === 'validating' || (phase === 'stale' && !draft))}
+      {#if loadingToml}<p role="status">Loading canonical TOML…</p>{/if}
+      {#if canonical != null}
+        <div class="space-y-2">
+          <label for={`${id}-toml`} class="font-medium">Environment TOML</label>
+          <textarea id={`${id}-toml`} class="w-full rounded-lg border border-line-2 bg-background-1 p-3 font-mono text-xs"
+            rows="16" bind:value={toml} readonly={phase !== 'editing'} spellcheck="false"></textarea>
+          {#if dirtyToml && phase === 'editing'}
+            <button type="button" class="text-primary hover:underline" onclick={() => { toml = canonical ?? ''; error = null; }}>Discard TOML changes</button>
+          {/if}
+        </div>
+      {:else if !loadingToml}
+        <button type="button" class="text-primary hover:underline" onclick={loadToml}>Retry canonical TOML</button>
+      {/if}
+    {:else if phase === 'editing'}
       <EnvironmentFields bind:fields pin={current?.document.specification.image?.resolved_digest} />
     {:else if draft && phase !== 'saved'}
       <div class="space-y-3" aria-label="Changed settings" role="region">
@@ -175,13 +278,15 @@
   <footer class="flex shrink-0 flex-wrap justify-end gap-2 border-t border-overlay-border p-4">
     {#if phase === 'editing'}
       <button type="button" class={secondary} onclick={close}>Cancel</button>
-      <button type="button" class={action} onclick={review}>Review changes</button>
+      {#if !showHistory}<button type="button" class={action} disabled={source === 'toml' && canonical == null} onclick={review}>Review changes</button>{/if}
+    {:else if phase === 'validating'}
+      <p role="status">Validating TOML…</p>
     {:else if phase === 'reviewing'}
       <button type="button" class={secondary} onclick={() => { error = null; phase = 'editing'; focusTitle(); }}>Back to editing</button>
       <button type="button" class={action} disabled={!reason.trim()} onclick={save}>Save environment</button>
     {:else if phase === 'stale' && selection}
       <button type="button" class={secondary} onclick={close}>Close</button>
-      <button type="button" class={action} onclick={() => load()}>{draft ? 'Discard draft and reload' : 'Load current revision'}</button>
+      <button type="button" class={action} onclick={() => load()}>{draft || dirtyToml ? 'Discard draft and reload' : 'Load current revision'}</button>
     {:else if phase === 'loadFailed'}
       <button type="button" class={action} onclick={() => load(selection?.revision_id)}>Retry</button>
     {:else if phase === 'unconfirmed'}
