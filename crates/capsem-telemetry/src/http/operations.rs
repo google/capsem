@@ -58,6 +58,8 @@ pub const ROUTES: &[&str] = &[
     "/proxies/{id}/heartbeat",
     "/proxies/{id}/stop",
     "/purge",
+    "/requests/list",
+    "/requests/{id}/info",
     "/restart",
     "/run",
     "/security/latest",
