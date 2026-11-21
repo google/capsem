@@ -14,6 +14,7 @@ pub use rules::{
 };
 #[cfg(test)]
 mod tests;
+mod toml_edit;
 mod validation;
 pub use catalog::{EnvironmentCatalogPin, EnvironmentCatalogSelection, EnvironmentCatalogSelections};
 
@@ -160,26 +161,9 @@ pub struct EnvironmentDocument {
 
 impl EnvironmentDocument {
     pub fn from_toml(source: &str) -> Result<Self, String> {
-        if source.len() > capsem_proto::ENVIRONMENT_MAX_SPEC_BYTES {
-            return Err("environment specification exceeds its byte limit".into());
-        }
-        let mut table: toml::Table = toml::from_str(source).map_err(|_| "invalid environment TOML")?;
-        let mut identity = toml::Table::new();
-        for key in [
-            "schema_version",
-            "id",
-            "revision_id",
-            "parent_environment_id",
-            "parent_revision_id",
-        ] {
-            if let Some(value) = table.remove(key) {
-                identity.insert(key.into(), value);
-            }
-        }
+        let (identity, table) = toml_edit::document_tables(source)?;
         let document = Self {
-            identity: toml::Value::Table(identity)
-                .try_into()
-                .map_err(|_| "invalid environment identity")?,
+            identity,
             specification: toml::Value::Table(table)
                 .try_into()
                 .map_err(|_| "invalid environment specification")?,
