@@ -39,6 +39,7 @@ macro_rules! operation {
 }
 
 operation!(get_hypervisor_info, "getHypervisorInfo");
+operation!(list_environments, "listEnvironments", ListEnvironmentsParams);
 operation!(get_environment_info, "getEnvironmentInfo", GetEnvironmentInfoParams);
 operation!(
     get_environment_readiness,

@@ -4,6 +4,20 @@ use crate::{models, operations as api, Error, Result};
 
 pub struct Environments<'a>(pub(crate) &'a Client);
 impl Environments<'_> {
+    /// List or search the committed environments visible to this credential.
+    pub async fn list(
+        &self,
+        query: models::environments::EnvironmentListQuery,
+    ) -> Result<models::EnvironmentListResponse> {
+        query.validate().map_err(Error::InvalidInput)?;
+        let input = api::ListEnvironmentsParams {
+            search: query.search,
+            after: query.after,
+            limit: query.limit.map(u32::from),
+        };
+        api::list_environments(&self.0.transport, &input, self.0.options).await
+    }
+
     /// Submit editable intent with a caller-chosen request ID. Reconcile that
     /// same ID explicitly after interruption; approval and application differ.
     pub async fn create(

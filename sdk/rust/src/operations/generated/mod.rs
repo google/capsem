@@ -109,6 +109,8 @@ mod inject_credential;
 pub use inject_credential::{inject_credential, InjectCredentialParams};
 mod list_connections;
 pub use list_connections::{list_connections, ListConnectionsParams};
+mod list_environments;
+pub use list_environments::{list_environments, ListEnvironmentsParams};
 mod list_images;
 pub use list_images::{list_images, ListImagesParams};
 mod list_mcp_servers;
