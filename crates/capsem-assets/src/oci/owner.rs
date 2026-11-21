@@ -18,6 +18,16 @@ impl ImageCache {
         })
     }
 
+    /// Bind the configured cache policy to an explicit private root.
+    ///
+    /// Services with an already-owned runtime directory use this constructor
+    /// instead of consulting process-wide installation paths.
+    pub fn at(root: &std::path::Path) -> Result<Self> {
+        Ok(Self {
+            inner: BlobCache::at(root)?,
+        })
+    }
+
     pub fn snapshot(&self, key: &CacheKey) -> Result<CacheSnapshot> {
         self.inner.snapshot(key)
     }
@@ -53,12 +63,5 @@ impl ImageCache {
         anyhow::ensure!(maximum_entries > 0, "inventory entry budget must be positive");
         self.inner.prepare().await?;
         self.inner.refresh_inventory(maximum_entries).await
-    }
-
-    #[cfg(test)]
-    pub(super) fn at(root: &std::path::Path) -> Result<Self> {
-        Ok(Self {
-            inner: BlobCache::at(root)?,
-        })
     }
 }

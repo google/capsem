@@ -136,7 +136,6 @@ impl BlobCache {
         Ok((contract.root, policy))
     }
 
-    #[cfg(test)]
     pub(super) fn at(root: &Path) -> Result<Self> {
         Ok(Self {
             root: root.to_owned(),
