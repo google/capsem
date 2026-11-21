@@ -6,6 +6,8 @@ records what startup prepared, proving ordering before a real Redis workload.
 
 import concurrent.futures
 import copy
+import hashlib
+import json
 import secrets
 import time
 import uuid
@@ -81,7 +83,10 @@ def observe(service, vm, reference, count):
     return info["owner_generation"]
 
 
-def test_clone_uses_new_approved_controls_from_carried_image_bytes(service, tmp_path):
+@pytest.mark.parametrize("operation", ["clone", "start", "fork"])
+def test_advanced_saved_revision_uses_new_controls_from_carried_image_bytes(
+    operation, service, tmp_path
+):
     artifacts = {}
     with registry(tmp_path, image_config=IMAGE_CONFIG, artifacts=artifacts) as (
         image,
@@ -147,34 +152,78 @@ def test_clone_uses_new_approved_controls_from_carried_image_bytes(service, tmp_
             == 3
         )
 
-        blobs = service.home_dir / "cache" / "oci-images" / "blobs"
-        assert blobs.is_dir() and any(path.is_file() for path in blobs.rglob("*"))
-        blobs.rename(blobs.with_name("test-original-blobs"))
         prefix = f"/v2/{repository}/"
         before = [path for path in requests if path.startswith(prefix)]
         assert before, requests
+        workload_digests = {path.rsplit(":", 1)[1] for path in before}
+        blobs = service.home_dir / "cache" / "oci-images" / "blobs"
 
-        clone = request(
-            service,
-            "POST",
-            "/vms/create",
-            {
-                "from": name,
-                "name": vm_name("carried-clone"),
-                "environment": next_revision,
-                "ram_mb": DEFAULT_RAM_MB,
-                "cpus": DEFAULT_CPUS,
-            },
-        )["id"]
+        def cached_digests():
+            return {
+                hashlib.sha256(path.read_bytes()).hexdigest()
+                for path in blobs.rglob("*")
+                if path.is_file()
+            }
+
+        assert workload_digests <= cached_digests()
+        blobs.rename(blobs.with_name("test-original-blobs"))
+
+        if operation == "clone":
+            target = request(
+                service,
+                "POST",
+                "/vms/create",
+                {
+                    "from": name,
+                    "name": vm_name("carried-clone"),
+                    "environment": next_revision,
+                    "ram_mb": DEFAULT_RAM_MB,
+                    "cpus": DEFAULT_CPUS,
+                },
+            )["id"]
+        else:
+            # Seed the stopped fixture's approved next-start binding while its
+            # carried controls still come from the last real boot.
+            service.stop(cleanup=False)
+            registry_path = service.tmp_dir / "persistent_registry.json"
+            registry_data = json.loads(registry_path.read_text())
+            entry_data = registry_data["vms"][name]
+            assert entry_data["environment"] == original
+            entry_data["environment"] = next_revision
+            registry_path.write_text(json.dumps(registry_data))
+            service.start()
+
+            target = source
+            if operation == "fork":
+                ready = request(service, "GET", f"/vms/{source}/readiness?intent=fork")
+                assert ready["selection"]["generation"] == generation
+                assert ready["selection"]["environment"] == next_revision
+                target = request(
+                    service,
+                    "POST",
+                    f"/vms/{source}/fork",
+                    {"name": vm_name("carried-fork"), "expected": ready["selection"]},
+                )["id"]
+            ready = request(service, "GET", f"/vms/{target}/readiness?intent=start")
+            assert ready["selection"]["environment"] == next_revision
+            assert ready["selection"]["generation"] == (
+                None if operation == "fork" else generation
+            )
+            request(
+                service,
+                "POST",
+                f"/vms/{target}/start",
+                {"expected": ready["selection"]},
+            )
         try:
-            info = request(service, "GET", f"/vms/{clone}/info")["environment"]
+            info = request(service, "GET", f"/vms/{target}/info")["environment"]
             assert (
                 info["boot"] == next_revision and info["owner_generation"] != generation
             )
             result = request(
                 service,
                 "POST",
-                f"/vms/{clone}/exec",
+                f"/vms/{target}/exec",
                 {
                     "command": (
                         'set -eu; test -z "${OLD_ONLY+x}"; test "$BOUND_REVISION" = next-variable; '
@@ -187,12 +236,13 @@ def test_clone_uses_new_approved_controls_from_carried_image_bytes(service, tmp_
                 result["exit_code"] == 0 and exec_output_text(result).strip() == "PONG"
             ), result
             assert (
-                request(service, "GET", f"/vms/{clone}/container")["state"] == "running"
+                request(service, "GET", f"/vms/{target}/container")["state"]
+                == "running"
             )
             assert [path for path in requests if path.startswith(prefix)] == before
-            assert not any(path.is_file() for path in blobs.rglob("*"))
+            assert workload_digests.isdisjoint(cached_digests())
         finally:
-            request(service, "DELETE", f"/vms/{clone}/delete")
+            request(service, "DELETE", f"/vms/{target}/delete")
 
 
 def test_saved_startup_precedes_entrypoint_on_create_cold_resume_and_fork(service, tmp_path):
