@@ -1,6 +1,7 @@
 //! Canonical blueprints through the authenticated gateway.
 use crate::client::Client;
 use crate::{models, operations as api, Error, Result};
+use models::environments::{EnvironmentRevisionListQuery, EnvironmentRevisionReference};
 
 pub struct Environments<'a>(pub(crate) &'a Client);
 impl Environments<'_> {
@@ -58,6 +59,54 @@ impl Environments<'_> {
         .await?;
         if result.document.identity.id != id {
             return Err(Error::InvalidResponse("environment identity changed"));
+        }
+        Ok(result)
+    }
+
+    pub async fn list_revisions(
+        &self,
+        id: &str,
+        query: EnvironmentRevisionListQuery,
+    ) -> Result<models::EnvironmentRevisionListResponse> {
+        query.validated_limit().map_err(Error::InvalidInput)?;
+        let input = api::ListEnvironmentRevisionsParams {
+            id: id.into(),
+            before: query.before,
+            limit: query.limit.map(u32::from),
+        };
+        api::list_environment_revisions(&self.0.transport, &input, self.0.options).await
+    }
+
+    pub async fn revision(
+        &self,
+        reference: &EnvironmentRevisionReference,
+    ) -> Result<models::EnvironmentRevisionDetailResponse> {
+        reference.validate().map_err(Error::InvalidInput)?;
+        let input = api::GetEnvironmentRevisionParams {
+            id: reference.environment_id.clone(),
+            revision_id: reference.revision_id.clone(),
+        };
+        let result = api::get_environment_revision(&self.0.transport, &input, self.0.options).await?;
+        if result.summary.environment != *reference {
+            return Err(Error::InvalidResponse("environment revision identity changed"));
+        }
+        Ok(result)
+    }
+
+    pub async fn validate_toml(
+        &self,
+        base: &EnvironmentRevisionReference,
+        toml: String,
+    ) -> Result<models::EnvironmentTomlValidationResponse> {
+        base.validate().map_err(Error::InvalidInput)?;
+        let input = api::ValidateEnvironmentTomlParams {
+            id: base.environment_id.clone(),
+            revision_id: base.revision_id.clone(),
+            body: models::EnvironmentTomlValidationRequest { toml },
+        };
+        let result = api::validate_environment_toml(&self.0.transport, &input, self.0.options).await?;
+        if result.base != *base {
+            return Err(Error::InvalidResponse("environment revision identity changed"));
         }
         Ok(result)
     }

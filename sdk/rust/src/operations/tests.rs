@@ -42,6 +42,21 @@ operation!(get_hypervisor_info, "getHypervisorInfo");
 operation!(list_environments, "listEnvironments", ListEnvironmentsParams);
 operation!(get_environment_info, "getEnvironmentInfo", GetEnvironmentInfoParams);
 operation!(
+    list_environment_revisions,
+    "listEnvironmentRevisions",
+    ListEnvironmentRevisionsParams
+);
+operation!(
+    get_environment_revision,
+    "getEnvironmentRevision",
+    GetEnvironmentRevisionParams
+);
+operation!(
+    validate_environment_toml,
+    "validateEnvironmentToml",
+    ValidateEnvironmentTomlParams
+);
+operation!(
     get_environment_readiness,
     "getEnvironmentReadiness",
     GetEnvironmentReadinessParams
