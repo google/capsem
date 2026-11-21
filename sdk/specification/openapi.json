@@ -468,6 +468,70 @@
         "x-capsem-request-timeout-ms": 1020000
       }
     },
+    "/environments/list": {
+      "get": {
+        "description": "Discover committed saved environments within the caller's scope. Continue search while next_cursor is present, including after an empty page.",
+        "operationId": "listEnvironments",
+        "parameters": [
+          {
+            "name": "search",
+            "in": "query",
+            "description": "Case-insensitive substring of the environment name, description, image, or ID.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "Continue from the response cursor, keeping the same search and caller scope.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum number of returned items, from 1 to 64. Defaults to 24.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/environments/{id}/changes": {
       "post": {
         "description": "An operator publishes a blueprint revision. A scoped agent queues a proposal at the exact base revision of its running sandbox. Reconcile the same request ID after interruption. Running sandboxes require separate application.",
@@ -5830,6 +5894,25 @@
         },
         "additionalProperties": false
       },
+      "EnvironmentImage": {
+        "type": "object",
+        "required": [
+          "reference",
+          "resolved_digest"
+        ],
+        "properties": {
+          "reference": {
+            "type": "string"
+          },
+          "resolved_digest": {
+            "type": "string"
+          },
+          "update_policy": {
+            "$ref": "#/components/schemas/EnvironmentImageUpdatePolicy"
+          }
+        },
+        "additionalProperties": false
+      },
       "EnvironmentImageUpdatePolicy": {
         "type": "string",
         "enum": [
@@ -5837,6 +5920,91 @@
           "ask",
           "auto"
         ]
+      },
+      "EnvironmentListItem": {
+        "type": "object",
+        "required": [
+          "environment"
+        ],
+        "properties": {
+          "environment": {
+            "$ref": "#/components/schemas/EnvironmentRevisionReference"
+          },
+          "instance_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Number of VMs currently bound to this environment, visible to the operator.",
+            "minimum": 0
+          },
+          "summary": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EnvironmentListSummary",
+                "description": "Missing when the current file cannot be verified against committed history."
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentListResponse": {
+        "type": "object",
+        "required": [
+          "environments"
+        ],
+        "properties": {
+          "environments": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentListItem"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A bounded search can return an empty page with a continuation cursor."
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentListSummary": {
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "timestamp_unix_ms"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "image": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EnvironmentImage"
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "timestamp_unix_ms": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "additionalProperties": false
       },
       "EnvironmentMcpDefinition": {
         "oneOf": [

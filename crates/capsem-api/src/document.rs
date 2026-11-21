@@ -22,6 +22,11 @@ pub fn openapi() -> OpenApi {
     doc.post::<CreateAgentAccessRequest, CreateAgentAccessResponse>("/agent-access", "createAgentAccess");
     let revoke = doc.operation::<VmActionResponse>("/agent-access/{id}", "revokeAgentAccess");
     doc.add("/agent-access/{id}", HttpMethod::Delete, revoke);
+    let environments = doc
+        .operation::<environments::EnvironmentListResponse>("/environments/list", "listEnvironments")
+        .description(Some("Discover committed saved environments within the caller's scope. Continue search while next_cursor is present, including after an empty page."))
+        .parameters(Some(environments::EnvironmentListQuery::into_params(|| Some(ParameterIn::Query))));
+    doc.add("/environments/list", HttpMethod::Get, environments);
     doc.get::<environments::EnvironmentCurrentResponse>("/environments/{id}/info", "getEnvironmentInfo");
     doc.get::<environments::EnvironmentReadinessResponse>(
         "/environments/{id}/revisions/{revision_id}/readiness",

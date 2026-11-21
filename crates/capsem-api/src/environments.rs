@@ -2,7 +2,7 @@
 //! or self-attested host resolution. Service admission supplies that authority.
 pub use capsem_config::environment::*;
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 
 /// Reconciliation result for a submitted mutation, including an accepted
 /// decision whose effect remains pending or failed. Request IDs are stable;
@@ -77,6 +77,70 @@ pub struct EnvironmentRevisionReference {
     pub environment_id: String,
     #[schema(format = "uuid")]
     pub revision_id: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+#[into_params(parameter_in = Query)]
+pub struct EnvironmentListQuery {
+    /// Case-insensitive substring of the environment name, description, image, or ID.
+    pub search: Option<String>,
+    /// Continue from the response cursor, keeping the same search and caller scope.
+    pub after: Option<String>,
+    /// Maximum number of returned items, from 1 to 64. Defaults to 24.
+    pub limit: Option<u16>,
+}
+
+impl EnvironmentListQuery {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        let search = self.search.as_deref().unwrap_or_default();
+        if self.limit.is_some_and(|limit| !(1..=64).contains(&limit))
+            || search.len() > capsem_proto::ENVIRONMENT_MAX_NAME_BYTES
+            || search.chars().any(char::is_control)
+            || self
+                .after
+                .as_deref()
+                .is_some_and(|cursor| !crate::identity::canonical_uuid(cursor))
+        {
+            return Err("invalid environment list query");
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentListResponse {
+    pub environments: Vec<EnvironmentListItem>,
+    /// A bounded search can return an empty page with a continuation cursor.
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentListItem {
+    pub environment: EnvironmentRevisionReference,
+    /// Missing when the current file cannot be verified against committed history.
+    pub summary: Option<EnvironmentListSummary>,
+    /// Number of VMs currently bound to this environment, visible to the operator.
+    pub instance_count: Option<u32>,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentListSummary {
+    pub name: String,
+    pub description: String,
+    pub image: Option<EnvironmentImage>,
+    pub timestamp_unix_ms: i64,
+}
+
+impl std::fmt::Debug for EnvironmentListSummary {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EnvironmentListSummary")
+            .field("timestamp_unix_ms", &self.timestamp_unix_ms)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Immutable timing metadata for a selected revision. This grants no launch
