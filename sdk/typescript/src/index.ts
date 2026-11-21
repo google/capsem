@@ -6,6 +6,9 @@ export {delegatedBearer} from './identity.js';
 export {ManagedSession} from './managed.js';
 export {Images} from './images.js';
 export {Environments, type EnvironmentListOptions} from './environments.js';
+export {
+  EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelectionSchema as EnvironmentDraftSchema,
+} from './validation/EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection.js';
 export {creationDeadlineMs} from './readiness.js';
 export {Requests, type RequestListOptions} from './requests.js';
 export {Credentials} from './credentials.js';
