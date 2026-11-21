@@ -70,9 +70,12 @@ cp "$RELEASE_DIR/capsem-pty-agent" \
 
 echo "--- Build companion host binaries ---"
 cargo build --release --locked --offline --target "$RUST_TARGET" \
-    -p capsem -p capsem-service -p capsem-process -p capsem-ledger -p capsem-proxy -p capsem-tui \
+    -p capsem -p capsem-service -p capsem-process -p capsem-proxy -p capsem-tui \
     -p capsem-router -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway \
     -p capsem-tray -p capsem-admin -p capsem-mock-server -p capsem-bench
+# Debian embeds the same ledger executable in preinst for admission before unpacking.
+echo "--- Build the size-optimized Debian ledger ---"
+CARGO_PROFILE_RELEASE_OPT_LEVEL=s cargo build --release --locked --offline --target "$RUST_TARGET" -p capsem-ledger
 bash build_system/scripts/build/check-build-provenance.sh "$RELEASE_DIR/capsem" \
     "${CAPSEM_BUILD_REVISION:-}"
 

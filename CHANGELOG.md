@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added: Authenticated `/events` clients receive `request-denied` notifications with the VM ID when new network denials reach its ledger (#404).
 - Fixed: The authenticated gateway serves VM lifecycle readiness for start, fork, and clone.
 - Fixed: The gateway keeps start, resume, and create-from requests open for the approved startup time of the selected saved revision.
+- Fixed: Build the Debian ledger for size so the installer can run the packaged executable before unpacking.
 
 - Fixed: Restore Inspect adapter PyPI publication and its clean public-registry consumer check now that the publisher is authorized for `inspect-capsem-sandbox` (#392).
 
