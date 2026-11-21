@@ -94,6 +94,7 @@ impl EnvironmentMutationCoordinator {
             }),
         }))
         .await?;
+        self.request_changed(&request.request_id);
         Ok(view(self.read_request(request.request_id).await?))
     }
 }

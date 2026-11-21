@@ -25,6 +25,11 @@ use capsem_service::environment_files::EnvironmentFileError;
 pub(crate) use sources::catalogs::launch_policy;
 use std::sync::Arc;
 
+fn coordinator(state: &ServiceState) -> EnvironmentMutationCoordinator {
+    EnvironmentMutationCoordinator::new(state.environments.clone())
+        .with_request_notifications(state.approvals.environment_request_notifier())
+}
+
 pub(crate) fn permits_inspect(actor: &AuthenticatedActor, id: &str) -> bool {
     actor.agent_grant().is_some_and(|grant| {
         grant.scope().environment_ids().iter().any(|candidate| candidate == id)

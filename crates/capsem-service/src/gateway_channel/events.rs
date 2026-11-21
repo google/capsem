@@ -25,6 +25,7 @@ struct Feed {
 struct Subscription {
     changes: broadcast::Receiver<ApprovalBinding>,
     denials: broadcast::Receiver<LedgerDenial>,
+    environment_requests: broadcast::Receiver<uuid::Uuid>,
     channel: GatewayChannel,
     service: Arc<ServiceState>,
     _seat: tokio::sync::OwnedSemaphorePermit,
@@ -55,6 +56,7 @@ async fn subscribe(
     let subscription = Subscription {
         changes: service.approvals.broker.subscribe_queue_changes(),
         denials: service.ledger_workers.subscribe_denials(),
+        environment_requests: service.approvals.subscribe_environment_requests(),
         channel,
         service,
         _seat: seat,
@@ -67,6 +69,7 @@ async fn subscribe(
                 // End a lossy feed so the gateway can invalidate its subscribers.
                 changed = subscription.changes.recv() => approval_event(&subscription.service, &changed.ok()?),
                 denied = subscription.denials.recv() => denial_event(&subscription.service, &denied.ok()?),
+                changed = subscription.environment_requests.recv() => Some(SessionEvent::EnvironmentRequestsChanged(*changed.ok()?.as_bytes())),
             };
             if let Some(event) = event {
                 return Some((Ok::<_, Infallible>(Bytes::from_owner(event.encode())), subscription));

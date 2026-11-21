@@ -48,7 +48,7 @@ pub(super) async fn submit(
     }
     let owner = actor.session_owner(&state, &session, AgentOperation::Propose)?;
     let origin = EnvironmentProposalOrigin::delegated(access_id, session, owner.generation());
-    let coordinator = Arc::new(EnvironmentMutationCoordinator::new(state.environments.clone()));
+    let coordinator = Arc::new(coordinator(&state));
     let job = coordinator
         .submit_proposal(
             base.environment_id,

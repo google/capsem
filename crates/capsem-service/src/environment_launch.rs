@@ -17,6 +17,8 @@ pub(crate) struct EnvironmentBinding {
     pub(crate) policy_digest: String,
     pub(crate) acknowledged: bool,
     pub(crate) pending_restart: bool,
+    /// This generation started from a stopped persistent VM.
+    pub(crate) cold_restart: bool,
 }
 impl EnvironmentBinding {
     pub(crate) fn starting(reference: EnvironmentRevisionParent, policy_digest: String) -> Self {
@@ -27,6 +29,7 @@ impl EnvironmentBinding {
             policy_digest,
             acknowledged: false,
             pending_restart: false,
+            cold_restart: false,
         }
     }
 }
@@ -210,6 +213,91 @@ pub(crate) async fn initialize(state: &std::sync::Arc<ServiceState>, id: &str) -
         .ok_or("environment launch owner changed")?;
     binding.acknowledged = true;
     drop(instances);
+    Ok(())
+}
+
+/// Settle a deferred application only after the cold workload is ready.
+pub(crate) async fn settle_cold_restart(
+    state: &ServiceState,
+    owner: &crate::owner_connection::OwnerConnection,
+) -> Result<(), crate::AppError> {
+    use axum::http::StatusCode;
+    use capsem_logger::db::{EnvironmentRequestQuery, EnvironmentRevisionQuery};
+    use capsem_logger::events::environment::{
+        application::{EnvironmentApplicationBoot, EnvironmentApplicationState},
+        request::EnvironmentRequestTarget,
+    };
+    use capsem_logger::WriteOp;
+
+    let ended = || crate::AppError::new(StatusCode::CONFLICT, "restart owner changed".into());
+    owner.validate(state, false).map_err(|_| ended())?;
+    let boot = {
+        let instances = state.instances.lock().unwrap();
+        instances
+            .get(owner.id())
+            .filter(|instance| instance.generation == owner.generation())
+            .ok_or_else(ended)?
+            .environment
+            .as_ref()
+            .filter(|binding| binding.acknowledged && binding.cold_restart)
+            .map(|binding| binding.boot.clone())
+    };
+    let Some(revision) = boot else {
+        return Ok(());
+    };
+    let _settlement = state.policy_mutation.begin().await;
+    let unavailable = |error| {
+        tracing::warn!(%error, session_id = %owner.id(), "environment restart receipt unavailable");
+        crate::AppError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "restart receipt could not be recorded".into(),
+        )
+    };
+    let records = state
+        .host_ledger
+        .environment_revisions(EnvironmentRevisionQuery::Get {
+            environment_id: revision.environment_id.clone(),
+            revision_id: revision.revision_id.clone(),
+        })
+        .await
+        .map_err(unavailable)?;
+    let Some(request_id) = records.into_iter().next().and_then(|record| record.request_id) else {
+        return Ok(());
+    };
+    let requests = state
+        .host_ledger
+        .environment_requests(EnvironmentRequestQuery::Get {
+            request_id: request_id.clone(),
+        })
+        .await
+        .map_err(unavailable)?;
+    let generation = owner.generation().to_string();
+    if !requests.into_iter().any(|request| {
+        request.result.as_ref() == Some(&revision)
+            && request
+                .requester
+                .is_some_and(|target| target.session_id == owner.id() && target.generation != generation)
+            && request.application.is_some_and(|application| {
+                application.state == EnvironmentApplicationState::Applied && application.pending_restart
+            })
+    }) {
+        return Ok(());
+    }
+    owner.validate(state, false).map_err(|_| ended())?;
+    state
+        .host_ledger
+        .write(WriteOp::EnvironmentApplicationBoot(EnvironmentApplicationBoot {
+            target: EnvironmentRequestTarget {
+                session_id: owner.id().into(),
+                generation,
+            },
+            revision,
+            timestamp_unix_ms: crate::policy_mutation::unix_timestamp_ms(),
+        }))
+        .await
+        .map_err(unavailable)?;
+    state.host_ledger.flush().await.map_err(unavailable)?;
+    state.approvals.environment_request_notifier()(&request_id);
     Ok(())
 }
 

@@ -99,10 +99,27 @@ impl MutationIntent {
 
 pub struct EnvironmentMutationCoordinator {
     revisions: Arc<EnvironmentRevisions>,
+    notify_request: Option<RequestNotification>,
 }
+type RequestNotification = Box<dyn Fn(&str) + Send + Sync>;
+
 impl EnvironmentMutationCoordinator {
     pub fn new(revisions: Arc<EnvironmentRevisions>) -> Self {
-        Self { revisions }
+        Self {
+            revisions,
+            notify_request: None,
+        }
+    }
+
+    pub fn with_request_notifications(mut self, notify: impl Fn(&str) + Send + Sync + 'static) -> Self {
+        self.notify_request = Some(Box::new(notify));
+        self
+    }
+
+    fn request_changed(&self, id: &str) {
+        if let Some(notify) = &self.notify_request {
+            notify(id);
+        }
     }
 
     pub async fn request_status(&self, id: String) -> Result<EnvironmentMutationResponse, EnvironmentMutationError> {
@@ -347,6 +364,7 @@ impl EnvironmentMutationCoordinator {
                 },
             ))
             .await?;
+            self.request_changed(&request.request_id);
             record = self.read_request(request.request_id.clone()).await?;
         }
         // Pending, interrupted or stale requests remain visible. Reconciliation

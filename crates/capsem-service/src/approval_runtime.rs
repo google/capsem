@@ -11,11 +11,22 @@ use crate::session_db_handles::SessionLedger;
 
 pub(crate) mod capability;
 
-#[derive(Default)]
 pub(crate) struct Runtime {
     pub(crate) broker: ApprovalBroker,
     sessions: Mutex<HashMap<ApprovalBinding, Arc<Session>>>,
     initialization: tokio::sync::Mutex<()>,
+    environment_requests: tokio::sync::broadcast::Sender<uuid::Uuid>,
+}
+
+impl Default for Runtime {
+    fn default() -> Self {
+        Self {
+            broker: Default::default(),
+            sessions: Default::default(),
+            initialization: Default::default(),
+            environment_requests: tokio::sync::broadcast::channel(capsem_proto::APPROVAL_PENDING_TOTAL).0,
+        }
+    }
 }
 
 pub(crate) struct Session {
@@ -27,6 +38,19 @@ pub(crate) struct Session {
 }
 
 impl Runtime {
+    pub(crate) fn subscribe_environment_requests(&self) -> tokio::sync::broadcast::Receiver<uuid::Uuid> {
+        self.environment_requests.subscribe()
+    }
+
+    pub(crate) fn environment_request_notifier(&self) -> impl Fn(&str) + Send + Sync + 'static {
+        let sender = self.environment_requests.clone();
+        move |request_id| {
+            if let Ok(id) = uuid::Uuid::parse_str(request_id) {
+                let _ = sender.send(id);
+            }
+        }
+    }
+
     pub(crate) fn install(
         &self,
         binding: ApprovalBinding,

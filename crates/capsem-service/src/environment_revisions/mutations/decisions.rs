@@ -117,6 +117,7 @@ impl EnvironmentMutationCoordinator {
             reason: intent.reason.clone(),
         }))
         .await?;
+        self.request_changed(&id);
 
         let approved = if let Some((runtime, base, specification)) = approved {
             let revision = self
@@ -204,6 +205,7 @@ impl EnvironmentMutationCoordinator {
             },
         ))
         .await?;
+        self.request_changed(&id);
         Ok(ResolvedEnvironmentReview {
             response: view(self.read_request(id).await?),
             approved: None,

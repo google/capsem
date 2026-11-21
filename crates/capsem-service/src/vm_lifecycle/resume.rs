@@ -117,6 +117,7 @@ async fn resume_owned(
             if has_workload {
                 crate::container_setup::require_owner_ready(&state, &owner, preparation).await?;
             }
+            crate::environment_launch::settle_cold_restart(&state, &owner).await?;
             owner
                 .validate(&state, false)
                 .map_err(|_| AppError::new(StatusCode::CONFLICT, "resume owner ended before response".into()))?;

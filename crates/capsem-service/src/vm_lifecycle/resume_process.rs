@@ -131,7 +131,12 @@ impl ServiceState {
             entry.env = Some(variables);
         }
         let environment_binding = entry.environment.as_ref().map(|reference| {
-            crate::environment_launch::EnvironmentBinding::starting(reference.clone(), active_policy.digest.clone())
+            let mut binding = crate::environment_launch::EnvironmentBinding::starting(
+                reference.clone(),
+                active_policy.digest.clone(),
+            );
+            binding.cold_restart = !entry.suspended;
+            binding
         });
         let active_policy_path = active_policy.path.clone();
         let (upstream_broker, owner_upstream_policy) = crate::upstream_broker::PendingBroker::pair_for_session(

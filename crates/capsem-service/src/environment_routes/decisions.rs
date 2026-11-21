@@ -52,7 +52,7 @@ async fn resolve_owned(
     } else {
         None
     };
-    let coordinator = EnvironmentMutationCoordinator::new(state.environments.clone());
+    let coordinator = coordinator(&state);
     let resolved = coordinator
         .resolve_proposal(
             id.clone(),
@@ -94,6 +94,7 @@ async fn resolve_owned(
             .await?;
             unconfirmed.recorded.map_err(mutation_error)?;
         }
+        state.approvals.environment_request_notifier()(&id);
         return coordinator.request_status(id).await.map_err(mutation_error);
     }
     Ok(response)
