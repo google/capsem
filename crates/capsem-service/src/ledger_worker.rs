@@ -21,11 +21,13 @@ use anyhow::{anyhow, bail, Context, Result};
 use capsem_foundation::unix::router_channel::{DescriptorReceiver, DescriptorSender};
 use capsem_proto::ledger::{LedgerChannelGrant, LedgerClientRole, LedgerGeneration};
 use capsem_proto::ledger_control::{
-    decode_ledger_control_event, encode_ledger_control_request, LedgerControlEvent, LedgerControlRequest,
-    LEDGER_CONTROL_FRAME_SIZE, LEDGER_CONTROL_MAX_FDS,
+    decode_ledger_control_event, encode_ledger_control_event, encode_ledger_control_request, LedgerControlEvent,
+    LedgerControlRequest, LEDGER_CONTROL_FRAME_SIZE, LEDGER_CONTROL_MAX_FDS,
 };
 use tokio::process::{Child, Command};
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
+
+use crate::instance::{WorkerAuthority, WorkerGrant};
 
 mod retention;
 
@@ -39,6 +41,7 @@ const OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(2);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 const COMMAND_QUEUE_CAPACITY: usize = 64;
+const DENIAL_QUEUE_CAPACITY: usize = 64;
 
 type ControlSender = DescriptorSender<LEDGER_CONTROL_FRAME_SIZE, LEDGER_CONTROL_MAX_FDS>;
 type ControlReceiver = DescriptorReceiver<LEDGER_CONTROL_FRAME_SIZE, LEDGER_CONTROL_MAX_FDS>;
@@ -49,11 +52,32 @@ struct LedgerSlot {
     worker: LedgerWorker,
 }
 
+#[derive(Clone)]
+pub(crate) struct LedgerDenial {
+    pub(crate) session_id: Arc<str>,
+    database: Arc<Path>,
+    authority: WorkerGrant,
+}
+
+impl LedgerDenial {
+    pub(crate) fn owns_session_directory(&self, directory: &Path) -> bool {
+        !self.authority.is_revoked() && self.database.parent() == Some(directory)
+    }
+}
+
+struct DenialTarget {
+    session_id: Arc<str>,
+    sender: broadcast::Sender<LedgerDenial>,
+}
+
+type DenialRelay = (broadcast::Sender<LedgerDenial>, LedgerDenial);
+
 /// Service-owned table that serializes each session's ledger lifetime.
 pub(crate) struct LedgerWorkers {
     binary: PathBuf,
     retention_policy: Option<fn() -> u64>,
     slots: tokio::sync::Mutex<std::collections::HashMap<String, LedgerSlot>>,
+    denials: broadcast::Sender<LedgerDenial>,
 }
 
 impl LedgerWorkers {
@@ -62,7 +86,12 @@ impl LedgerWorkers {
             binary,
             retention_policy,
             slots: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+            denials: broadcast::channel(DENIAL_QUEUE_CAPACITY).0,
         }
+    }
+
+    pub(crate) fn subscribe_denials(&self) -> broadcast::Receiver<LedgerDenial> {
+        self.denials.subscribe()
     }
 
     /// Acquire a role-bound channel from the one worker for `session_id`.
@@ -94,7 +123,7 @@ impl LedgerWorkers {
                 }
                 slot.worker.clone()
             } else {
-                let worker = self.spawn(database, log_path).await?;
+                let worker = self.spawn(session_id, database, log_path).await?;
                 slots.insert(
                     session_id.to_string(),
                     LedgerSlot {
@@ -174,7 +203,7 @@ impl LedgerWorkers {
         }
     }
 
-    async fn spawn(&self, database: &Path, log_path: &Path) -> Result<LedgerWorker> {
+    async fn spawn(&self, session_id: &str, database: &Path, log_path: &Path) -> Result<LedgerWorker> {
         let log = tokio::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -183,7 +212,17 @@ impl LedgerWorkers {
             .with_context(|| format!("open {}", log_path.display()))?
             .into_std()
             .await;
-        LedgerWorker::spawn(&self.binary, database, Stdio::from(log.try_clone()?), Stdio::from(log)).await
+        LedgerWorker::spawn(
+            &self.binary,
+            database,
+            Stdio::from(log.try_clone()?),
+            Stdio::from(log),
+            DenialTarget {
+                session_id: Arc::from(session_id),
+                sender: self.denials.clone(),
+            },
+        )
+        .await
     }
 
     #[cfg(test)]
@@ -226,7 +265,13 @@ pub(crate) struct LedgerWorker {
 }
 
 impl LedgerWorker {
-    pub(crate) async fn spawn(binary: &Path, database: &Path, stdout: Stdio, stderr: Stdio) -> Result<Self> {
+    async fn spawn(
+        binary: &Path,
+        database: &Path,
+        stdout: Stdio,
+        stderr: Stdio,
+        denials: DenialTarget,
+    ) -> Result<Self> {
         let generation = fresh_generation();
         let mut command = Command::new(binary);
         command.env_clear().stdout(stdout).stderr(stderr).kill_on_drop(true);
@@ -237,6 +282,7 @@ impl LedgerWorker {
             database,
             generation,
             SHUTDOWN_TIMEOUT,
+            Some(denials),
             |command, generation, database| {
                 command
                     .arg("--parent-pid")
@@ -310,6 +356,7 @@ async fn launch(
     database: &Path,
     generation: LedgerGeneration,
     shutdown_timeout: Duration,
+    denials: Option<DenialTarget>,
     configure: impl FnOnce(&mut Command, LedgerGeneration, &Path),
 ) -> Result<LedgerWorker> {
     if !database.is_absolute() || database.file_name().and_then(|name| name.to_str()) != Some("session.db") {
@@ -321,10 +368,21 @@ async fn launch(
     let child = command.spawn().context("spawn capsem-ledger")?;
     let control_tx = ControlSender::new(coordinator.try_clone()?).context("open ledger control sender")?;
     let control_rx = ControlReceiver::new(coordinator).context("open ledger control receiver")?;
-    let process = WorkerProcess::start(child, control_tx, control_rx, generation, shutdown_timeout).await?;
+    let denial_authority = WorkerAuthority::default();
+    let denials = denials.map(|target| {
+        (
+            target.sender,
+            LedgerDenial {
+                session_id: target.session_id,
+                database: Arc::from(database),
+                authority: denial_authority.grant(),
+            },
+        )
+    });
+    let process = WorkerProcess::start(child, control_tx, control_rx, generation, shutdown_timeout, denials).await?;
     let (commands, requests) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
     let (stopped_tx, stopped) = watch::channel(None);
-    tokio::spawn(supervise(process, requests, stopped_tx));
+    tokio::spawn(supervise(process, requests, stopped_tx, denial_authority));
     Ok(LedgerWorker {
         generation,
         commands,
@@ -339,6 +397,7 @@ impl WorkerProcess {
         control_rx: ControlReceiver,
         generation: LedgerGeneration,
         shutdown_timeout: Duration,
+        denials: Option<DenialRelay>,
     ) -> Result<Self> {
         let mut pending = PendingWorker {
             child,
@@ -371,7 +430,7 @@ impl WorkerProcess {
             control_rx,
         } = pending;
         let (events_tx, control_events) = mpsc::channel(COMMAND_QUEUE_CAPACITY);
-        let control_reader = tokio::spawn(read_control(control_rx, events_tx));
+        let control_reader = tokio::spawn(read_control(control_rx, events_tx, generation, denials));
         Ok(Self {
             generation,
             child,
@@ -529,6 +588,7 @@ async fn supervise(
     mut process: WorkerProcess,
     mut requests: mpsc::Receiver<CommandRequest>,
     stopped: watch::Sender<Option<String>>,
+    denial_authority: WorkerAuthority,
 ) {
     let reason = loop {
         tokio::select! {
@@ -555,6 +615,7 @@ async fn supervise(
             }
             request = requests.recv() => {
                 let Some(request) = request else {
+                    denial_authority.revoke();
                     break match process.shutdown().await {
                         Ok(()) => "ledger worker stopped after its owner released it".to_string(),
                         Err(error) => format!("ledger worker release failed: {error:#}"),
@@ -571,6 +632,7 @@ async fn supervise(
                         }
                     }
                     CommandRequest::Shutdown { completed } => {
+                        denial_authority.revoke();
                         let result = process.shutdown().await;
                         // Completion is the replacement barrier: even a send
                         // or protocol failure is reaped before the coordinator
@@ -587,14 +649,33 @@ async fn supervise(
             }
         }
     };
+    denial_authority.revoke();
     process.kill_reap().await;
     fail_pending(&mut requests, &reason);
     let _ = stopped.send(Some(reason));
 }
 
-async fn read_control(receiver: ControlReceiver, events: mpsc::Sender<io::Result<ControlFrame>>) {
+async fn read_control(
+    receiver: ControlReceiver,
+    events: mpsc::Sender<io::Result<ControlFrame>>,
+    generation: LedgerGeneration,
+    denials: Option<DenialRelay>,
+) {
+    let denial = encode_ledger_control_event(LedgerControlEvent::DenialObserved { generation });
     loop {
         let event = receiver.recv().await;
+        // Invalidation frames are never responses to adoption or shutdown.
+        // Match the complete canonical frame, so a stale generation or any
+        // spare bytes/descriptors still take the normal rejection path.
+        if event
+            .as_ref()
+            .is_ok_and(|frame| frame.fds.is_empty() && frame.bytes == denial)
+        {
+            if let Some((sender, notice)) = &denials {
+                let _ = sender.send(notice.clone());
+            }
+            continue;
+        }
         let complete = event.is_err();
         if events.send(event).await.is_err() || complete {
             return;

@@ -58,6 +58,44 @@ async fn feed_drops_on_gateway_control_revocation() {
     let _ = task.await;
 }
 
+#[tokio::test]
+async fn live_ledger_denial_reaches_the_sealed_gateway_feed() {
+    use crate::ledger_worker::{tests::fake_binary, LedgerWorkers};
+    use capsem_proto::ledger::LedgerClientRole;
+
+    let mut service = crate::tests::make_test_state_owned();
+    service.ledger_workers = Arc::new(LedgerWorkers::new(fake_binary(&service.run_dir, "denial"), None));
+    let service = Arc::new(service);
+    let id = capsem_crypto::uuid_v4();
+    let session_id = id.to_string();
+    let directory = service.run_dir.join(&session_id);
+    std::fs::create_dir(&directory).unwrap();
+    crate::tests::insert_fake_instance_with_session_dir(&service, &session_id, std::process::id(), directory.clone());
+    let request = Request::get(PATH).body(Body::empty()).unwrap();
+    let response = event_routes(service.clone()).operator_request(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let client = service
+        .ledger_workers
+        .acquire(
+            &session_id,
+            &directory.join("session.db"),
+            &directory.join("ledger.log"),
+            LedgerClientRole::Reader,
+        )
+        .await
+        .unwrap();
+    let frame = tokio::time::timeout(std::time::Duration::from_secs(5), response.into_body().frame())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap()
+        .into_data()
+        .unwrap();
+    assert_eq!(frame.as_ref(), SessionEvent::RequestDenied(*id.as_bytes()).encode());
+    drop(client);
+    service.ledger_workers.shutdown(&session_id).await.unwrap();
+}
+
 #[test]
 fn a_notification_cannot_be_retargeted_to_a_replacement_generation() {
     let service = crate::tests::make_test_state();

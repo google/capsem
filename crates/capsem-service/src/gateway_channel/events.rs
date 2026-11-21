@@ -1,6 +1,7 @@
 //! One event feed per authenticated gateway epoch, on the sealed HTTP seat.
 
 use super::GatewayChannel;
+use crate::ledger_worker::LedgerDenial;
 use crate::{caller_auth::AuthenticatedActor, AppError, ServiceState};
 use axum::{
     body::{Body, Bytes},
@@ -23,6 +24,7 @@ struct Feed {
 
 struct Subscription {
     changes: broadcast::Receiver<ApprovalBinding>,
+    denials: broadcast::Receiver<LedgerDenial>,
     channel: GatewayChannel,
     service: Arc<ServiceState>,
     _seat: tokio::sync::OwnedSemaphorePermit,
@@ -52,22 +54,21 @@ async fn subscribe(
         .map_err(|_| AppError::new(StatusCode::CONFLICT, "gateway event feed already open".into()))?;
     let subscription = Subscription {
         changes: service.approvals.broker.subscribe_queue_changes(),
+        denials: service.ledger_workers.subscribe_denials(),
         channel,
         service,
         _seat: seat,
     };
     let stream = futures::stream::unfold(subscription, |mut subscription| async move {
         loop {
-            let binding = tokio::select! {
+            let event = tokio::select! {
                 biased;
                 () = subscription.channel.revoked() => return None,
-                changed = subscription.changes.recv() => match changed {
-                    Ok(binding) => binding,
-                    // End a lossy feed so the gateway can invalidate its subscribers.
-                    Err(broadcast::error::RecvError::Lagged(_) | broadcast::error::RecvError::Closed) => return None,
-                },
+                // End a lossy feed so the gateway can invalidate its subscribers.
+                changed = subscription.changes.recv() => approval_event(&subscription.service, &changed.ok()?),
+                denied = subscription.denials.recv() => denial_event(&subscription.service, &denied.ok()?),
             };
-            if let Some(event) = approval_event(&subscription.service, &binding) {
+            if let Some(event) = event {
                 return Some((Ok::<_, Infallible>(Bytes::from_owner(event.encode())), subscription));
             }
         }
@@ -88,6 +89,17 @@ fn approval_event(service: &ServiceState, binding: &ApprovalBinding) -> Option<S
     let instance = instances.get(&binding.session_id)?;
     (instance.generation == binding.generation && !instance.authority.grant().is_revoked())
         .then_some(SessionEvent::ApprovalPending(*id.as_bytes()))
+}
+
+fn denial_event(service: &ServiceState, denied: &LedgerDenial) -> Option<SessionEvent> {
+    let id = uuid::Uuid::parse_str(&denied.session_id).ok()?;
+    if id.is_nil() || id.to_string() != denied.session_id.as_ref() {
+        return None;
+    }
+    let instances = service.instances.lock().unwrap();
+    let instance = instances.get(denied.session_id.as_ref())?;
+    (denied.owns_session_directory(&instance.session_dir) && !instance.authority.grant().is_revoked())
+        .then_some(SessionEvent::RequestDenied(*id.as_bytes()))
 }
 
 #[cfg(test)]

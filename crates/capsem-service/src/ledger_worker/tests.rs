@@ -67,6 +67,20 @@ async fn fake_ledger_worker_child() {
                     std::process::exit(43);
                 }
                 let stream = UnixStream::from(frame.fds.into_iter().next().unwrap());
+                if matches!(mode.as_str(), "denial" | "stale_denial") {
+                    let reported = if mode == "denial" {
+                        generation
+                    } else {
+                        LedgerGeneration::new([8; 16])
+                    };
+                    control_tx
+                        .send(
+                            &encode_ledger_control_event(LedgerControlEvent::DenialObserved { generation: reported }),
+                            &[],
+                        )
+                        .await
+                        .unwrap();
+                }
                 control_tx
                     .send(
                         &encode_ledger_control_event(LedgerControlEvent::Adopted {
@@ -143,6 +157,7 @@ async fn fake(mode: &'static str) -> Result<LedgerWorker> {
         &database,
         GENERATION,
         Duration::from_millis(200),
+        None,
         move |command, generation, _database| {
             command
                 .env("CAPSEM_FAKE_LEDGER_WORKER", mode)
@@ -335,6 +350,51 @@ async fn lifecycle_slot_serializes_concurrent_leases_and_replacement() {
     assert_ne!(replacement.grant().generation(), first_generation);
     drop(replacement);
     workers.shutdown("a").await.unwrap();
+}
+
+#[tokio::test]
+async fn denial_notices_are_bound_to_their_slot_without_interrupting_adoption() {
+    let directory = tempfile::tempdir().unwrap();
+    let workers = Arc::new(LedgerWorkers::new(fake_binary(directory.path(), "denial"), None));
+    let (database, log) = session_paths(directory.path(), "denial-owner");
+    let mut notices = workers.subscribe_denials();
+    let reader = workers
+        .acquire("denial-owner", &database, &log, LedgerClientRole::Reader)
+        .await
+        .unwrap();
+    let notice = tokio::time::timeout(Duration::from_secs(2), notices.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(notice.session_id.as_ref(), "denial-owner");
+    let original = reader.grant().generation();
+    assert!(notice.owns_session_directory(database.parent().unwrap()));
+    assert!(!notice.owns_session_directory(directory.path()));
+    drop(reader);
+    workers.shutdown("denial-owner").await.unwrap();
+    let replacement = workers
+        .acquire("denial-owner", &database, &log, LedgerClientRole::Reader)
+        .await
+        .unwrap();
+    assert_ne!(replacement.grant().generation(), original);
+    assert!(!notice.owns_session_directory(database.parent().unwrap()));
+    drop(replacement);
+    workers.shutdown("denial-owner").await.unwrap();
+}
+
+#[tokio::test]
+async fn a_stale_worker_denial_puts_no_notice_on_the_service_feed() {
+    let directory = tempfile::tempdir().unwrap();
+    let workers = Arc::new(LedgerWorkers::new(fake_binary(directory.path(), "stale_denial"), None));
+    let (database, log) = session_paths(directory.path(), "denial-owner");
+    let mut notices = workers.subscribe_denials();
+    let error = workers
+        .acquire("denial-owner", &database, &log, LedgerClientRole::Reader)
+        .await
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("while adopting client"), "{error:#}");
+    assert!(matches!(notices.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
+    workers.shutdown_all().await;
 }
 
 #[tokio::test]
