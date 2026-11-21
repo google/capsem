@@ -11,6 +11,7 @@ Remote and browser clients take a complete HTTP(S) URL and bearer token.
 | Interface | Methods |
 | --- | --- |
 | Hypervisor | `info`, `list`, `create`, `run`, `purge`, `log`, `update`, `restart` |
+| Operator request review | `requests.list/info` |
 | Agent debugging | `debug.panics/triage` |
 | Private networks | `networks.create/list/inspect/delete/logs` |
 | MCP | `mcp.info/servers/default_permission/get`; scoped `server.tools.list/call`, `server.refresh` |
