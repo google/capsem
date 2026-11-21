@@ -28,6 +28,21 @@ pub fn openapi() -> OpenApi {
         .parameters(Some(environments::EnvironmentListQuery::into_params(|| Some(ParameterIn::Query))));
     doc.add("/environments/list", HttpMethod::Get, environments);
     doc.get::<environments::EnvironmentCurrentResponse>("/environments/{id}/info", "getEnvironmentInfo");
+    let revisions = doc
+        .operation::<EnvironmentRevisionListResponse>("/environments/{id}/revisions/list", "listEnvironmentRevisions")
+        .description(Some("List committed revisions newest first for the operator."))
+        .parameters(Some(environments::EnvironmentRevisionListQuery::into_params(|| {
+            Some(ParameterIn::Query)
+        })));
+    doc.add("/environments/{id}/revisions/list", HttpMethod::Get, revisions);
+    doc.get::<EnvironmentRevisionDetailResponse>(
+        "/environments/{id}/revisions/{revision_id}/info",
+        "getEnvironmentRevision",
+    );
+    doc.post::<environments::EnvironmentTomlValidationRequest, EnvironmentTomlValidationResponse>(
+        "/environments/{id}/revisions/{revision_id}/validate",
+        "validateEnvironmentToml",
+    );
     doc.get::<environments::EnvironmentReadinessResponse>(
         "/environments/{id}/revisions/{revision_id}/readiness",
         "getEnvironmentReadiness",

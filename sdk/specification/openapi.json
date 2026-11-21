@@ -628,6 +628,120 @@
         }
       }
     },
+    "/environments/{id}/revisions/list": {
+      "get": {
+        "description": "List committed revisions newest first for the operator.",
+        "operationId": "listEnvironmentRevisions",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "description": "Continue into older revisions from the cursor on the previous page.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum returned revisions, from 1 to 64. Defaults to 24.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentRevisionListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/environments/{id}/revisions/{revision_id}/info": {
+      "get": {
+        "operationId": "getEnvironmentRevision",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "revision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentRevisionDetailResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/environments/{id}/revisions/{revision_id}/readiness": {
       "get": {
         "operationId": "getEnvironmentReadiness",
@@ -656,6 +770,66 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/EnvironmentReadinessResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/environments/{id}/revisions/{revision_id}/validate": {
+      "post": {
+        "operationId": "validateEnvironmentToml",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "revision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnvironmentTomlValidationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentTomlValidationResponse"
                 }
               }
             }
@@ -6364,6 +6538,69 @@
         },
         "additionalProperties": false
       },
+      "EnvironmentRevisionDetailResponse": {
+        "type": "object",
+        "required": [
+          "summary",
+          "availability",
+          "purged_variables"
+        ],
+        "properties": {
+          "availability": {
+            "$ref": "#/components/schemas/RequestReviewAvailability"
+          },
+          "canonical_toml": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Exact canonical serialization, present only for complete history."
+          },
+          "partial_specification": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin",
+                "description": "Retained fields of a purged revision, never replayable."
+              }
+            ]
+          },
+          "purged_variables": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "summary": {
+            "$ref": "#/components/schemas/EnvironmentRevisionSummary"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentRevisionListResponse": {
+        "type": "object",
+        "required": [
+          "revisions"
+        ],
+        "properties": {
+          "next_cursor": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "revisions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentRevisionSummary"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "EnvironmentRevisionReference": {
         "type": "object",
         "required": [
@@ -6378,6 +6615,57 @@
           "revision_id": {
             "type": "string",
             "format": "uuid"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentRevisionSummary": {
+        "type": "object",
+        "required": [
+          "environment",
+          "timestamp_unix_ms",
+          "actor",
+          "reason",
+          "replayable"
+        ],
+        "properties": {
+          "actor": {
+            "type": "string"
+          },
+          "environment": {
+            "$ref": "#/components/schemas/EnvironmentRevisionReference"
+          },
+          "fork_parent": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EnvironmentRevisionReference"
+              }
+            ]
+          },
+          "previous_revision_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "replayable": {
+            "type": "boolean"
+          },
+          "request_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "timestamp_unix_ms": {
+            "type": "integer",
+            "format": "int64"
           }
         },
         "additionalProperties": false
@@ -6887,6 +7175,35 @@
             "type": "integer",
             "format": "int32",
             "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentTomlValidationRequest": {
+        "type": "object",
+        "required": [
+          "toml"
+        ],
+        "properties": {
+          "toml": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentTomlValidationResponse": {
+        "type": "object",
+        "required": [
+          "base",
+          "specification"
+        ],
+        "properties": {
+          "base": {
+            "$ref": "#/components/schemas/EnvironmentRevisionReference"
+          },
+          "specification": {
+            "$ref": "#/components/schemas/EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection",
+            "description": "Validated selectors for the existing change and review operation."
           }
         },
         "additionalProperties": false

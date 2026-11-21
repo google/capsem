@@ -6,7 +6,8 @@ mod approvals;
 pub mod environments;
 pub use environments::{
     EnvironmentChangeRequest, EnvironmentCreateRequest, EnvironmentCurrentResponse, EnvironmentListResponse,
-    EnvironmentMutationResponse, EnvironmentReadinessResponse,
+    EnvironmentMutationResponse, EnvironmentReadinessResponse, EnvironmentRevisionDetailResponse,
+    EnvironmentRevisionListResponse, EnvironmentTomlValidationRequest, EnvironmentTomlValidationResponse,
 };
 pub mod requests;
 pub use agent_access::*;

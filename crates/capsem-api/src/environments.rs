@@ -1,6 +1,8 @@
 //! Environment intent contains editable selectors, never authenticated actors
 //! or self-attested host resolution. Service admission supplies that authority.
 pub use capsem_config::environment::*;
+mod revisions;
+pub use revisions::*;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
