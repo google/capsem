@@ -778,19 +778,37 @@ describe('api', () => {
 
     it('refreshes token before reconnecting events websocket after gateway restart', async () => {
       vi.useFakeTimers();
+      const changed = vi.fn();
+      const reconnect = vi.fn();
+      const unsubscribe = api.onApprovalQueueChanged(changed, reconnect);
+      const id = '00000000-0000-4000-8000-000000000001';
       mockFetch
         .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
         .mockReturnValueOnce(jsonResponse({ token: 'old-token' }))
         .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
       await api.init();
       expect(mockWsUrls.at(-1)).toContain('token=old-token');
+      wsOnOpen?.();
+      const notify = (payload: unknown) => wsOnMessage?.({ data: JSON.stringify({ type: 'approval-pending', payload }) });
+      notify({ id });
+      notify({ id });
+      notify(null);
+      notify({ id: 'not-a-vm' });
+      expect(changed.mock.calls).toEqual([[id], [id]]);
 
       mockFetch.mockReturnValueOnce(jsonResponse({ token: 'new-token' }));
+      const previousMessage = wsOnMessage;
       wsOnClose?.();
       await vi.advanceTimersByTimeAsync(5000);
 
       expect(mockWsUrls.at(-1)).toContain('token=new-token');
       expect(mockFetch.mock.calls.some(call => String(call[0]).endsWith('/token'))).toBe(true);
+      wsOnOpen?.();
+      expect(reconnect).toHaveBeenCalledTimes(2);
+      previousMessage?.({ data: JSON.stringify({ type: 'approval-pending', payload: { id } }) });
+      unsubscribe();
+      notify({ id });
+      expect(changed).toHaveBeenCalledTimes(2);
     });
   });
 

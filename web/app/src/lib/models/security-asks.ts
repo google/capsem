@@ -44,6 +44,7 @@ export class ApprovalQueue {
     const request=list?.requests.find(request=>request.ask_id===askId);
     if(!list || !request || this.state.resolving || this.state.loading
       || request.status!==SecurityAskStatus.PENDING || request.expires_at_unix_ms<=this.now())return;
+    const revision=this.revision;
     this.publish({resolving:askId,error:null});
     let error:string|null=null;
     try {await this.resolve(list.vm_id,askId,list.generation,decision);}
@@ -52,11 +53,69 @@ export class ApprovalQueue {
         ? 'Request changed. Review its current state before deciding.'
         : 'Decision could not be confirmed. Check its current state before trying again.';
     }
-    if(this.vmId!==list.vm_id)return;
-    await this.load(list.vm_id);
-    if(this.vmId===list.vm_id)this.publish({resolving:null,error:error??this.state.error});
+    if(this.revision!==revision)return;
+    const reloading=this.load(list.vm_id);
+    const reloadRevision=this.revision;
+    await reloading;
+    if(this.revision===reloadRevision)this.publish({resolving:null,error:error??this.state.error});
+  }
+  synchronize(list: SecurityAskListResponse): void {
+    if (list.vm_id !== this.vmId || this.state.resolving) return;
+    ++this.revision;
+    this.publish({ response: list, loading: false, error: this.state.response ? this.state.error : null });
   }
   dispose() {++this.revision;this.vmId=null;}
+}
+
+/** Serialize queue reads and recheck a VM when it changes during a read. */
+export class ApprovalRefresh {
+  private readonly pending = new Set<string>();
+  private running = false;
+  private stopped = false;
+  private reading: string | null = null;
+
+  constructor(
+    private read: (vmId: string) => Promise<SecurityAskListResponse | null>,
+    private publish: (vmId: string, list: SecurityAskListResponse | null) => void,
+    private paused: (vmId: string) => boolean,
+  ) {}
+
+  async enqueue(vmIds: Iterable<string>, changed = false): Promise<void> {
+    if (this.stopped) return;
+    for (const id of vmIds) {
+      if (changed || id !== this.reading) this.pending.add(id);
+    }
+    if (this.running) return;
+    this.running = true;
+    try {
+      for (const id of this.pending) {
+        if (this.paused(id)) continue;
+        this.pending.delete(id);
+        this.reading = id;
+        let list: SecurityAskListResponse | null;
+        try {
+          list = await this.read(id);
+        } catch {
+          continue;
+        } finally {
+          this.reading = null;
+        }
+        if (this.stopped) return;
+        if (this.paused(id)) {
+          this.pending.add(id);
+          continue;
+        }
+        if (!this.pending.has(id) && (!list || list.vm_id === id)) this.publish(id, list);
+      }
+    } finally {
+      this.running = false;
+    }
+  }
+
+  dispose(): void {
+    this.stopped = true;
+    this.pending.clear();
+  }
 }
 
 /** Client-local notice identity only; never persists request summaries or decisions. */

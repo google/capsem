@@ -1,6 +1,6 @@
 import {describe, expect, it, vi} from 'vitest';
 import {SecurityAskStatus, SecurityAskDecision, type SecurityAskListResponse} from '@capsem/sdk';
-import {ApprovalQueue, ApprovalNotices, approvalKey} from '../models/security-asks';
+import {ApprovalQueue, ApprovalNotices, ApprovalRefresh, approvalKey} from '../models/security-asks';
 import {render} from 'svelte/server';
 import Panel from '../components/shell/ApprovalPanel.svelte';
 
@@ -43,12 +43,70 @@ describe('generation-bound approval actions',()=>{
     const loading=queue.load('vm-a');queue.dispose();finish(response);await loading;
     expect(queue.state.response).toBeNull();
   });
+  it('does not let an old decision reload a reopened panel for the same VM', async () => {
+    const replacement = {...response, generation:'replacement-generation'};
+    const read = vi.fn().mockResolvedValueOnce(response).mockResolvedValue(replacement);
+    let finish!: () => void;
+    const resolve = vi.fn(() => new Promise<void>(done => { finish = done; }));
+    const queue = new ApprovalQueue(read, resolve, () => {}, () => 100);
+    await queue.load('vm-a');
+    const decision = queue.decide('ask-a', SecurityAskDecision.APPROVE);
+    queue.dispose();
+    await queue.load('vm-a');
+    finish();
+    await decision;
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(resolve).toHaveBeenCalledExactlyOnceWith('vm-a', 'ask-a', 'generation-a', SecurityAskDecision.APPROVE);
+    expect(queue.state.response).toEqual(replacement);
+  });
   it('rejects a different VM response and keys notices by VM, generation and ask',async()=>{
     const queue=new ApprovalQueue(async()=>response,vi.fn(),()=>{});
     await queue.load('other-vm');expect(queue.state.response).toBeNull();expect(queue.state.error).toBeTruthy();
     expect(approvalKey(response,'ask-a')).not.toBe(approvalKey({...response,generation:'new'},'ask-a'));
     expect(approvalKey(response,'ask-a')).not.toBe(approvalKey({...response,vm_id:'new'},'ask-a'));
   });
+});
+
+it('rechecks a queue changed during a read and publishes only the newer result', async () => {
+  const settled = {...response, pending_count:0};
+  let finish!: (list: SecurityAskListResponse) => void;
+  const read = vi.fn().mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })).mockResolvedValue(settled);
+  const publish = vi.fn();
+  const refresh = new ApprovalRefresh(read, publish, () => false);
+  const first = refresh.enqueue(['vm-a']);
+  await refresh.enqueue(['vm-a']); // A scheduled refresh can share the in-flight read.
+  await refresh.enqueue(['vm-a'], true);
+  finish(response);
+  await first;
+  expect(read.mock.calls).toEqual([['vm-a'], ['vm-a']]);
+  expect(publish).toHaveBeenCalledExactlyOnceWith('vm-a', settled);
+});
+
+it('keeps notifications queued during a decision and cancels publication on disposal', async () => {
+  let resolving = true;
+  let finish!: (list: SecurityAskListResponse) => void;
+  const read = vi.fn(() => new Promise<SecurityAskListResponse>(resolve => { finish = resolve; }));
+  const publish = vi.fn();
+  const refresh = new ApprovalRefresh(read, publish, () => resolving);
+  await refresh.enqueue(['vm-a', 'vm-a']);
+  expect(read).not.toHaveBeenCalled();
+  resolving = false;
+  const running = refresh.enqueue([]);
+  expect(read).toHaveBeenCalledExactlyOnceWith('vm-a');
+  refresh.dispose();
+  finish(response);
+  await running;
+  expect(publish).not.toHaveBeenCalled();
+});
+
+it('continues to read other sessions while one session is resolving', async () => {
+  const other = {...response, vm_id:'vm-b'};
+  const read = vi.fn().mockResolvedValue(other);
+  const publish = vi.fn();
+  const refresh = new ApprovalRefresh(read, publish, id => id === 'vm-a');
+  await refresh.enqueue(['vm-a', 'vm-b']);
+  expect(read).toHaveBeenCalledExactlyOnceWith('vm-b');
+  expect(publish).toHaveBeenCalledExactlyOnceWith('vm-b', other);
 });
 
 it('announces a pending request once per VM and generation and skips expired receipts',()=>{

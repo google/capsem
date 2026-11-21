@@ -316,6 +316,7 @@ async function _refreshToken(): Promise<boolean> {
     }
     _applyToken(token);
     _connected = true;
+    _connectEventWs();
     return true;
   } catch {
     _connected = false;
@@ -680,6 +681,8 @@ interface VmStateEvent {
 
 let _eventWs: WebSocket | null = null;
 const _vmStateCallbacks: ((payload: VmStateEvent) => void)[] = [];
+const _approvalCallbacks = new Set<{ changed: (id: string) => void; connected: () => void }>();
+const sessionUuid = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 
 function _connectEventWs() {
   if (_eventWs) return;
@@ -687,34 +690,48 @@ function _connectEventWs() {
   const wsBase = _baseUrl.replace(/^http/, 'ws');
   const evUrl = `${wsBase}/events?token=${_token}`;
   console.log('[api] events-ws connecting url=%s', evUrl.replace(/token=[^&]+/, 'token=***'));
-  _eventWs = new WebSocket(evUrl);
-  _eventWs.onopen = () => {
+  const ws = new WebSocket(evUrl);
+  _eventWs = ws;
+  ws.onopen = () => {
+    if (_eventWs !== ws) return;
     console.log('[api] events-ws connected');
+    for (const listener of _approvalCallbacks) listener.connected();
   };
-  _eventWs.onmessage = (ev) => {
+  ws.onmessage = (ev) => {
+    if (_eventWs !== ws) return;
     try {
       const msg = JSON.parse(ev.data as string);
       if (msg.type === 'vm-state-changed') {
         for (const cb of _vmStateCallbacks) cb(msg.payload);
+      } else if (msg.type === 'approval-pending') {
+        const id: unknown = msg.payload?.id;
+        if (typeof id === 'string' && id !== '00000000-0000-0000-0000-000000000000' && sessionUuid.test(id)) {
+          for (const listener of _approvalCallbacks) listener.changed(id);
+        }
       }
     } catch {
       // Ignore malformed messages.
     }
   };
-  _eventWs.onerror = () => {
+  ws.onerror = () => {
     console.warn('[api] events-ws error');
   };
-  _eventWs.onclose = () => {
+  ws.onclose = () => {
+    if (_eventWs !== ws) return;
     console.log('[api] events-ws closed, reconnecting in 5s');
     _eventWs = null;
     // Auto-reconnect after 5s if still connected.
     if (_connected) {
-      setTimeout(async () => {
-        await _refreshToken();
-        _connectEventWs();
-      }, 5000);
+      setTimeout(() => { void _refreshToken(); }, 5000);
     }
   };
+}
+
+/** Refresh the named queue on an event and reconcile state when the feed opens. */
+export function onApprovalQueueChanged(changed: (id: string) => void, connected: () => void): () => void {
+  const listener = { changed, connected };
+  _approvalCallbacks.add(listener);
+  return () => { _approvalCallbacks.delete(listener); };
 }
 
 /** Subscribe to VM state change events. Returns an unsubscribe function. */
