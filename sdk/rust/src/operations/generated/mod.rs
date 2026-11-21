@@ -139,6 +139,8 @@ mod purge_vms;
 pub use purge_vms::{purge_vms, PurgeVmsParams};
 mod refresh_mcp_server;
 pub use refresh_mcp_server::{refresh_mcp_server, RefreshMcpServerParams};
+mod resolve_request;
+pub use resolve_request::{resolve_request, ResolveRequestParams};
 mod resolve_security_ask;
 pub use resolve_security_ask::{resolve_security_ask, ResolveSecurityAskParams};
 mod restart_hypervisor;

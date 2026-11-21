@@ -21,6 +21,22 @@ impl Requests<'_> {
         }
         Ok(response)
     }
+
+    pub async fn resolve(
+        &self,
+        id: &str,
+        request: models::RequestResolveRequest,
+    ) -> Result<models::EnvironmentMutationResponse> {
+        let input = api::ResolveRequestParams {
+            id: id.into(),
+            body: request,
+        };
+        let response = api::resolve_request(&self.0.transport, &input, self.0.options).await?;
+        if response.request_id != id {
+            return Err(Error::InvalidResponse("resolved request identity changed"));
+        }
+        Ok(response)
+    }
 }
 
 #[cfg(test)]
@@ -42,6 +58,9 @@ mod tests {
         let mut server = Server::respond(move |request| {
             let value = if request.uri.path() == "/requests/list" {
                 json!({"requests": [summary], "next_cursor": 9})
+            } else if request.method == axum::http::Method::POST {
+                json!({"request_id": ID, "environment_id": ID, "decision":"denied",
+                    "application":"pending", "result":null, "application_error":null})
             } else {
                 json!({
                     "summary": summary, "observed_revision": "0123456789ab", "disposition": null,
@@ -68,8 +87,24 @@ mod tests {
             hv.requests().info("other").await,
             Err(Error::InvalidResponse(_))
         ));
+        let decision = models::RequestResolveRequest {
+            observed_revision: "0123456789ab".into(),
+            decision: models::requests::RequestDecision::Deny,
+            reason: "keep the original configuration".into(),
+        };
+        let response = hv.requests().resolve(ID, decision.clone()).await.unwrap();
+        assert_eq!(response.decision, models::requests::RequestState::Denied);
         let (list, _) = server.received.recv().await.unwrap();
         assert_eq!(list.uri.query(), Some("after=7&limit=1&pending_only=true"));
         assert_eq!(list.headers["authorization"], "Bearer operator-token");
+        server.received.recv().await.unwrap();
+        server.received.recv().await.unwrap();
+        let (resolve, body) = server.received.recv().await.unwrap();
+        assert_eq!(resolve.uri.path(), format!("/requests/{ID}/resolve"));
+        assert_eq!(
+            serde_json::from_slice::<models::RequestResolveRequest>(&body).unwrap(),
+            decision
+        );
+        assert!(server.received.try_recv().is_err());
     }
 }

@@ -47,6 +47,9 @@ operation!(
 );
 operation!(create_environment, "createEnvironment", CreateEnvironmentParams);
 operation!(change_environment, "changeEnvironment", ChangeEnvironmentParams);
+operation!(list_requests, "listRequests", ListRequestsParams);
+operation!(get_request_info, "getRequestInfo", GetRequestInfoParams);
+operation!(resolve_request, "resolveRequest", ResolveRequestParams);
 operation!(create_agent_access, "createAgentAccess", CreateAgentAccessParams);
 operation!(revoke_agent_access, "revokeAgentAccess", RevokeAgentAccessParams);
 operation!(get_hypervisor_logs, "getHypervisorLogs", GetHypervisorLogsParams);
