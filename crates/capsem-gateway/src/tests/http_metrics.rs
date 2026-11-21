@@ -20,7 +20,7 @@ async fn actual_router_observes_auth_cors_and_rejections_with_finite_private_lab
             .oneshot(
                 http::Request::builder()
                     .method(format!("PRIVATE-METHOD-{index}").as_str())
-                    .uri(format!("/private-path-canary-{index}?token=query-canary"))
+                    .uri(format!("/private-path-canary-{index}?private-query=query-canary"))
                     .header("authorization", "Bearer test")
                     .body(Body::from("body-canary"))
                     .unwrap(),
