@@ -272,9 +272,15 @@ pub async fn auth_middleware(
     } else {
         match delegated::authenticate(&state, req.headers()).await {
             Ok(true) => {
+                if req.uri().path() == "/events" {
+                    return (
+                        StatusCode::FORBIDDEN,
+                        axum::Json(serde_json::json!({"error": "operator authority required"})),
+                    )
+                        .into_response();
+                }
                 // Streams retain their authenticated service tunnel. Every other
-                // delegated request goes to the service, never operator caches or
-                // the gateway's global event broadcast.
+                // delegated request goes to the service for target authorization.
                 return if is_stream_path(req.uri().path()) {
                     next.run(req).await
                 } else {
