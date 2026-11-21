@@ -6,17 +6,23 @@ import json
 import time
 import uuid
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from contextlib import closing
 
 import pytest
-from helpers.service import exec_output_text
+from helpers.service import exec_output_text, vm_session_db_path
+from helpers.session_ledger import open_session_ledger
+from websockets.sync.client import connect
 
 from tests.ironbank.approval_fixture import pending_original_operation
-from tests.ironbank.approval_native import assert_approval_audits
+from tests.ironbank.approval_native import (
+    assert_approval_audits,
+    native_approval_session,
+)
 from tests.ironbank.test_security_approval_lifecycle import (
     _echo_rows,
 )
 from tests.ironbank.test_security_approval_lifecycle import (
-    approval_vm as approval_vm,
+    approval_vm as approval_vm,  # noqa: PLC0414 - re-export the pytest fixture
 )
 
 pytestmark = pytest.mark.integration
@@ -81,6 +87,42 @@ def resolve(api, session_id, generation, receipt, decision, expected):
     )
     assert status == expected, (status, result)
     return result
+
+
+def test_committed_request_denial_arrives_without_status_polling():
+    with native_approval_session("""
+        [corp.rules.deny_native_mock_echo]
+        name = "deny_native_mock_echo"
+        action = "block"
+        priority = -100
+        match = 'http.host == "127.0.0.1" && tcp.port == "3713" && http.path == "/echo"'
+    """) as (service, client, api, session_id, ready):
+        endpoint = api.base_url.replace("http://", "ws://", 1) + "/events"
+        headers = {"Authorization": f"Bearer {api.token}"}
+        operation = original_http(client, api, session_id, ready, uuid.uuid4().hex)
+        with (
+            connect(endpoint, additional_headers=headers, open_timeout=5, close_timeout=2) as socket,
+            ThreadPoolExecutor(max_workers=1) as executor,
+        ):
+            original = executor.submit(operation)
+            assert json.loads(socket.recv(timeout=10)) == {
+                "type": "request-denied",
+                "payload": {"id": session_id},
+            }
+            ledger = vm_session_db_path(service.tmp_dir, client, session_id)
+            with closing(open_session_ledger(ledger)) as db:
+                count = db.execute(
+                    "SELECT count(*) FROM net_events WHERE path = ? AND decision = ?",
+                    ("/echo", "denied"),
+                ).fetchone()[0]
+                assert count == 1
+            assert response(original)["status"] == 403
+            assert _echo_rows(ready) == []
+        with (
+            connect(endpoint, additional_headers=headers, open_timeout=5, close_timeout=2) as socket,
+            pytest.raises(TimeoutError),
+        ):
+            socket.recv(timeout=0.75)
 
 
 def test_original_http_expires_without_dispatch_or_late_authorization(approval_vm):
