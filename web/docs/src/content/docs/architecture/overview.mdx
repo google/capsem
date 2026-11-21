@@ -27,6 +27,22 @@ helpers over vsock, a host–VM transport. Terminal input, commands, and file
 operations follow these channels. Image creation returns after the workload
 reports readiness.
 
+## Watch for approval and denial events
+
+In Capsem 0.7.3, the gateway sends these notifications to operator clients over
+the authenticated `/events` WebSocket. Each carries a `type` and a `payload`
+with an `id` field.
+
+| Type | `payload.id` | When it fires |
+|---|---|---|
+| `approval-pending` | VM ID | The actionable security approval queue changes. Read `/vms/{id}/security/asks` for the current queue. |
+| `request-denied` | VM ID | A network denial reaches the VM ledger. |
+| `environment-requests-changed` | Request ID | An environment request is submitted, decided, or records an application change. Read `/requests/list` or `/requests/{id}/info` for the current state. |
+
+These notifications arrive independently of `/status` reads. Fetch the current
+state after opening the socket and again after reconnecting. The event stream
+delivers changes observed during the connection and has no replay cursor.
+
 ## Process traffic
 
 Guest networking sends supported HTTP, HTTPS, and DNS traffic to the VM's
