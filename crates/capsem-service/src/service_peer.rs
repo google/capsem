@@ -119,13 +119,19 @@ pub(crate) async fn restrict_owner_routes(
                     .get::<axum::extract::MatchedPath>()
                     .is_some_and(|path| path.as_str() == "/environments/{id}/changes")
                 && crate::environment_routes::proposals::permits_submit(&actor);
+            let environment_listing = request.method() == axum::http::Method::GET
+                && request
+                    .extensions()
+                    .get::<axum::extract::MatchedPath>()
+                    .is_some_and(|path| path.as_str() == "/environments/list")
+                && crate::environment_routes::library::permits_list(&actor);
             let own_cancellation = request.method() == axum::http::Method::POST
                 && request
                     .extensions()
                     .get::<axum::extract::MatchedPath>()
                     .is_some_and(|path| path.as_str() == "/requests/{id}/resolve")
                 && crate::environment_routes::decisions::permits_cancel(&actor);
-            if !admitted && !environment_inspect && !environment_proposal && !own_cancellation {
+            if !admitted && !environment_inspect && !environment_listing && !environment_proposal && !own_cancellation {
                 return refuse(&state, request, Reason::ScopeRequired, Some(actor.evidence().clone())).await;
             }
         }

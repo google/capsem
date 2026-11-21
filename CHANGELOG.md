@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: List and search the committed saved environments visible to your gateway credential, including their revision and availability.
 - Added: The CLI lists and inspects environment requests and submits decisions with the exact reviewed observation.
 - Added: `capsem info` shows the VM's boot, live policy, and desired environment revisions and whether workload changes are pending restart.
 - Added: The web approval center receives environment request changes from the gateway and catches up after reconnecting.
