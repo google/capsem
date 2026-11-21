@@ -83,12 +83,12 @@ async fn registered_publication_reports_original_identity_and_cannot_revive_expi
 async fn live_queue_changes_are_observable_without_polling_ledger_rows() {
     let broker = ApprovalBroker::default();
     let owner = binding("session");
-    let mut changes = broker.subscribe();
+    let mut changes = broker.subscribe_queue_changes();
     let pending = broker.register(owner.clone(), request(1, 0)).unwrap();
-    changes.changed().await.unwrap();
+    assert_eq!(changes.try_recv().unwrap(), owner);
     assert_eq!(broker.pending_count(&owner), 1);
     broker.cancel_generation(&owner);
-    changes.changed().await.unwrap();
+    assert_eq!(changes.try_recv().unwrap(), owner);
     assert_eq!(broker.pending_count(&owner), 0);
     assert_eq!(pending.wait().await, ApprovalOutcome::Cancelled);
 }
@@ -97,25 +97,27 @@ async fn live_queue_changes_are_observable_without_polling_ledger_rows() {
 async fn only_actionable_queue_changes_notify_subscribers() {
     let broker = ApprovalBroker::default();
     let owner = binding("session");
-    let mut changes = broker.subscribe();
+    use broadcast::error::TryRecvError::Empty;
+
+    let mut changes = broker.subscribe_queue_changes();
     drop(broker.reserve(owner.clone(), request(1, 0)).unwrap());
     assert!(
-        !changes.has_changed().unwrap(),
+        matches!(changes.try_recv(), Err(Empty)),
         "an invisible reservation was cancelled"
     );
 
     let pending = broker.reserve(owner.clone(), request(2, 0)).unwrap();
     assert!(pending.publish());
-    changes.changed().await.unwrap();
+    assert_eq!(changes.try_recv().unwrap(), owner);
     assert!(pending.publish());
-    assert!(!changes.has_changed().unwrap(), "the ask was already visible");
+    assert!(matches!(changes.try_recv(), Err(Empty)), "the ask was already visible");
 
     let ticket = broker.claim(&owner, "000000000002").unwrap();
-    changes.changed().await.unwrap();
+    assert_eq!(changes.try_recv().unwrap(), owner);
     assert!(ticket.complete_after_audit(ApprovalOutcome::Denied));
     assert_eq!(pending.wait().await, ApprovalOutcome::Denied);
     assert!(
-        !changes.has_changed().unwrap(),
+        matches!(changes.try_recv(), Err(Empty)),
         "the resolver already removed the ask from the queue"
     );
 }

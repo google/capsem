@@ -70,7 +70,6 @@ struct State {
 pub struct ApprovalBroker {
     state: Arc<Mutex<State>>,
     limits: ApprovalLimits,
-    changes: watch::Sender<u64>,
     queue_changes: broadcast::Sender<ApprovalBinding>,
 }
 
@@ -97,14 +96,8 @@ impl ApprovalBroker {
         Ok(Self {
             state: Arc::default(),
             limits,
-            changes: watch::channel(0).0,
             queue_changes: broadcast::channel(capsem_proto::APPROVAL_PENDING_TOTAL).0,
         })
-    }
-
-    /// Live queue revisions contain no payloads and are not ledger data.
-    pub fn subscribe(&self) -> watch::Receiver<u64> {
-        self.changes.subscribe()
     }
 
     /// Queue invalidations identify only the owning session and generation.
@@ -117,8 +110,6 @@ impl ApprovalBroker {
         if self.queue_changes.receiver_count() > 0 {
             let _ = self.queue_changes.send(binding.clone());
         }
-        self.changes
-            .send_modify(|revision| *revision = revision.wrapping_add(1));
     }
 
     pub fn register(
