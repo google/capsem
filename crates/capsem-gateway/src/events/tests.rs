@@ -76,6 +76,10 @@ async fn one_feed_delivers_without_status_polling_and_legacy_lifecycle_events_st
     for (event, kind) in [
         (SessionEvent::ApprovalPending(*id.as_bytes()), "approval-pending"),
         (SessionEvent::RequestDenied(*id.as_bytes()), "request-denied"),
+        (
+            SessionEvent::EnvironmentRequestsChanged(*id.as_bytes()),
+            "environment-requests-changed",
+        ),
     ] {
         send.send(Bytes::from_owner(event.encode())).await.unwrap();
         for client in &mut clients {
