@@ -17,6 +17,34 @@ fn pending() -> String {
 }
 
 #[tokio::test]
+async fn plugin_defaults_and_saved_results_require_their_exact_revision_context() {
+    let mut server = Server::respond(|parts| {
+        let revision = if parts.uri.path() == "/environments/plugins/list" {
+            serde_json::Value::Null
+        } else {
+            json!({"environment_id": ENVIRONMENT, "revision_id": REQUEST})
+        };
+        Response::new(Body::from(json!({"revision": revision, "plugins": []}).to_string()))
+    }).await;
+    let hypervisor = Hypervisor::new(&server.url, "private-token").unwrap();
+    let environments = hypervisor.environments();
+    assert!(environments.plugins(None).await.unwrap().revision.is_none());
+    let reference = EnvironmentRevisionReference { environment_id: ENVIRONMENT.into(), revision_id: REQUEST.into() };
+    assert_eq!(environments.plugins(Some(&reference)).await.unwrap().revision, Some(reference));
+    let stale = EnvironmentRevisionReference { environment_id: ENVIRONMENT.into(), revision_id: ENVIRONMENT.into() };
+    assert!(matches!(environments.plugins(Some(&stale)).await, Err(Error::InvalidResponse(_))));
+
+    let (defaults, _) = server.received.recv().await.unwrap();
+    assert_eq!(defaults.uri.path(), "/environments/plugins/list");
+    let (saved, _) = server.received.recv().await.unwrap();
+    assert_eq!(saved.uri.path(), format!("/environments/{ENVIRONMENT}/plugins/list"));
+    assert_eq!(saved.uri.query().unwrap(), format!("revision_id={REQUEST}"));
+    let (stale, _) = server.received.recv().await.unwrap();
+    assert_eq!(stale.uri.query().unwrap(), format!("revision_id={ENVIRONMENT}"));
+    assert!(server.received.try_recv().is_err());
+}
+
+#[tokio::test]
 async fn facade_preserves_request_identity_application_state_and_explicit_reconciliation() {
     let mut server = Server::respond(|parts| {
         let response = if parts.uri.path() == "/environments/create" { pending() } else {
