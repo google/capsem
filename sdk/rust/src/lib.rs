@@ -19,6 +19,8 @@ pub use managed::ManagedSession;
 pub use tokio_util::sync::CancellationToken;
 pub mod operations;
 mod options;
+mod requests;
+pub use requests::Requests;
 pub mod resources;
 pub mod transport;
 mod vm;

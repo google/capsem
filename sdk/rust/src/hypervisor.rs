@@ -75,6 +75,10 @@ impl Hypervisor {
         crate::Environments(&self.client)
     }
 
+    pub fn requests(&self) -> crate::Requests<'_> {
+        crate::Requests(&self.client)
+    }
+
     pub fn images(&self) -> Images<'_> {
         Images(&self.client)
     }
