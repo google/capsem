@@ -1,12 +1,38 @@
 //! Run against the disposable stopped-workspace Ironbank fixture.
 
-use capsem_sdk::{DiagnosticOptions, Error, Hypervisor, TriageOptions, VmSelector};
+use capsem_sdk::{CreateOptions, DiagnosticOptions, Error, Hypervisor, TriageOptions, VmSelector};
+
+async fn cold_lifecycle(hv: &Hypervisor, id: String, action: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let vm = hv.vm(VmSelector::Id(id))?;
+    let target = match action {
+        "start" => vm.start().await?.id,
+        "resume" => vm.resume().await?.id,
+        "clone" => {
+            let clone = hv
+                .create(CreateOptions {
+                    from: Some(std::env::var("SDK_COLD_SOURCE_NAME")?),
+                    name: Some(std::env::var("SDK_COLD_TARGET_NAME")?),
+                    memory: Some(std::env::var("SDK_COLD_MEMORY_GIB")?.parse()?),
+                    cpus: Some(std::env::var("SDK_COLD_CPUS")?.parse()?),
+                    ..Default::default()
+                })
+                .await?;
+            clone.id().ok_or("clone SDK handle has no ID")?.to_owned()
+        }
+        _ => return Err(format!("unknown cold lifecycle action {action}").into()),
+    };
+    println!("{target}");
+    Ok(())
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let url = std::env::var("SDK_GATEWAY_URL")?;
     let token = std::env::var("SDK_GATEWAY_TOKEN")?;
     let id = std::env::var("SDK_VM_ID")?;
+    if let Some(action) = std::env::args().nth(1) {
+        return cold_lifecycle(&Hypervisor::new(&url, &token)?, id, &action).await;
+    }
     let local = Hypervisor::local()?;
     assert!(local.list().await?.sandboxes.iter().any(|vm| vm.id == id));
     println!("SDK_LOCAL_DISCOVERY_OK");
