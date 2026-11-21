@@ -113,7 +113,13 @@ pub(crate) async fn restrict_owner_routes(
                     .split('/')
                     .nth(2)
                     .is_some_and(|id| crate::environment_routes::permits_inspect(&actor, id));
-            if !admitted && !environment_inspect {
+            let environment_proposal = request.method() == axum::http::Method::POST
+                && request
+                    .extensions()
+                    .get::<axum::extract::MatchedPath>()
+                    .is_some_and(|path| path.as_str() == "/environments/{id}/changes")
+                && crate::environment_routes::proposals::permits_submit(&actor);
+            if !admitted && !environment_inspect && !environment_proposal {
                 return refuse(&state, request, Reason::ScopeRequired, Some(actor.evidence().clone())).await;
             }
         }

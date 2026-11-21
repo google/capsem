@@ -14,6 +14,7 @@ use capsem_api::{
 };
 use capsem_core::environment::EnvironmentResolutionError;
 use capsem_service::environment_revisions::{EnvironmentMutationCoordinator, EnvironmentMutationError};
+pub(crate) mod proposals;
 mod sources;
 use capsem_core::managed_sessions::LeaseClock;
 use capsem_logger::db::EnvironmentReferenceQuery;
@@ -135,14 +136,17 @@ pub(crate) async fn create(
     job.wait().await.map(Json).map_err(mutation_error)
 }
 
-/// Operator changes affect this blueprint's future creations. Running
-/// generations and agent approval/fork authority are separate operations.
+/// Operator changes publish a blueprint revision. Agents queue a proposal for
+/// review under the authenticated running generation.
 pub(crate) async fn change(
     actor: AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
     Json(request): Json<EnvironmentChangeRequest>,
 ) -> Result<Json<EnvironmentMutationResponse>, AppError> {
+    if actor.agent_grant().is_some() {
+        return proposals::submit(actor, state, id, request).await.map(Json);
+    }
     actor.require_operator()?;
     let owner = Arc::new(EnvironmentMutationCoordinator::new(state.environments.clone()));
     let job = owner
@@ -158,6 +162,7 @@ fn mutation_error(error: EnvironmentMutationError) -> AppError {
             StatusCode::BAD_REQUEST
         }
         Mutation::NotFound => StatusCode::NOT_FOUND,
+        Mutation::Refused => StatusCode::FORBIDDEN,
         Mutation::Conflict
         | Mutation::Publication(EnvironmentFileError::Changed | EnvironmentFileError::RecoveryRequired) => {
             StatusCode::CONFLICT

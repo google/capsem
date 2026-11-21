@@ -1,4 +1,4 @@
-//! Trusted operator coordination. Authenticated routes admit the caller before
+//! Trusted environment mutation coordination. Authenticated routes admit the caller before
 //! invoking this owner; no request-body actor or resolution proof is accepted.
 use super::*;
 use capsem_api::{
@@ -14,9 +14,13 @@ use capsem_logger::{
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod proposals;
+pub use proposals::EnvironmentProposalOrigin;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EnvironmentMutationError {
     InvalidIntent,
+    Refused,
     NotFound,
     Conflict,
     Resolution(EnvironmentResolutionError),
@@ -28,7 +32,8 @@ impl std::fmt::Display for EnvironmentMutationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::NotFound => "environment does not exist",
-            Self::InvalidIntent => "invalid operator environment mutation intent",
+            Self::InvalidIntent => "invalid environment mutation intent",
+            Self::Refused => "delegated session scope ended or does not cover this operation and owner",
             Self::Conflict => "request identity already has different or non-replayable intent",
             Self::Resolution(_) => "environment source resolution failed",
             Self::LedgerFailure => "environment request durability is unconfirmed",
@@ -43,6 +48,18 @@ pub struct EnvironmentMutationJob {
     receiver: oneshot::Receiver<Result<EnvironmentMutationResponse, EnvironmentMutationError>>,
 }
 impl EnvironmentMutationJob {
+    fn spawn(
+        work: impl std::future::Future<Output = Result<EnvironmentMutationResponse, EnvironmentMutationError>>
+            + Send
+            + 'static,
+    ) -> Self {
+        let (sender, receiver) = oneshot::channel();
+        tokio::spawn(async move {
+            let _ = sender.send(work.await);
+        });
+        Self { receiver }
+    }
+
     pub async fn wait(self) -> Result<EnvironmentMutationResponse, EnvironmentMutationError> {
         self.receiver
             .await
@@ -55,6 +72,27 @@ struct MutationIntent {
     specification: EnvironmentDraft,
     reason: String,
     base: Option<EnvironmentRevisionReference>,
+}
+
+impl MutationIntent {
+    fn change(environment_id: String, request: EnvironmentChangeRequest) -> Result<Self, EnvironmentMutationError> {
+        request
+            .validate()
+            .map_err(|_| EnvironmentMutationError::InvalidIntent)?;
+        validate_id(&environment_id).map_err(|_| EnvironmentMutationError::InvalidIntent)?;
+        if request.requesting_sandbox.is_some() {
+            return Err(EnvironmentMutationError::InvalidIntent);
+        }
+        Ok(Self {
+            request_id: request.request_id,
+            specification: request.specification,
+            reason: request.reason,
+            base: Some(EnvironmentRevisionReference {
+                environment_id,
+                revision_id: request.base_revision_id,
+            }),
+        })
+    }
 }
 
 pub struct EnvironmentMutationCoordinator {
@@ -101,25 +139,7 @@ impl EnvironmentMutationCoordinator {
     where
         R: EnvironmentPinResolver + Send + 'static,
     {
-        request
-            .validate()
-            .map_err(|_| EnvironmentMutationError::InvalidIntent)?;
-        validate_id(&environment_id).map_err(|_| EnvironmentMutationError::InvalidIntent)?;
-        if request.requesting_sandbox.is_some() {
-            return Err(EnvironmentMutationError::InvalidIntent);
-        }
-        self.enqueue(
-            MutationIntent {
-                request_id: request.request_id,
-                specification: request.specification,
-                reason: request.reason,
-                base: Some(EnvironmentRevisionReference {
-                    environment_id,
-                    revision_id: request.base_revision_id,
-                }),
-            },
-            sources,
-        )
+        self.enqueue(MutationIntent::change(environment_id, request)?, sources)
     }
 
     fn enqueue<R>(
@@ -131,13 +151,9 @@ impl EnvironmentMutationCoordinator {
         R: EnvironmentPinResolver + Send + 'static,
     {
         let owner = self.clone();
-        let (sender, receiver) = oneshot::channel();
-        tokio::spawn(async move {
-            let result = owner.mutate(request, sources).await;
-            drop(owner);
-            let _ = sender.send(result);
-        });
-        Ok(EnvironmentMutationJob { receiver })
+        Ok(EnvironmentMutationJob::spawn(async move {
+            owner.mutate(request, sources).await
+        }))
     }
 
     async fn mutate(
@@ -152,7 +168,7 @@ impl EnvironmentMutationCoordinator {
             .lock_for(&format!("request:{}", request.request_id))
             .map_err(EnvironmentMutationError::Publication)?;
         let _guard = lock.lock().await;
-        if let Some(saved) = self.reconcile(&request).await? {
+        if let Some(saved) = self.reconcile(&request, None).await? {
             return Ok(saved);
         }
         let base = if let Some(expected) = &request.base {
@@ -229,14 +245,7 @@ impl EnvironmentMutationCoordinator {
             requester: None,
             timestamp_unix_ms: at,
             // Operator intent is approved immediately, never held for human waiting.
-            expires_at_unix_ms: at
-                .checked_add(
-                    i64::try_from(capsem_proto::APPROVAL_TIMEOUT_SECONDS)
-                        .ok()
-                        .and_then(|seconds| seconds.checked_mul(1000))
-                        .ok_or(EnvironmentMutationError::WorkerFailed)?,
-                )
-                .ok_or(EnvironmentMutationError::WorkerFailed)?,
+            expires_at_unix_ms: expiry(at)?,
             actor: "operator".into(),
             reason: request.reason.clone(),
             payload_event_id: event_id(),
@@ -284,22 +293,13 @@ impl EnvironmentMutationCoordinator {
             self.revisions.commit(revision, at).wait().await
         }
         .map_err(EnvironmentMutationError::Publication)?;
-        let record = self
-            .revisions
-            .ledger
-            .environment_requests(EnvironmentRequestQuery::Get {
-                request_id: request.request_id,
-            })
-            .await
-            .map_err(|_| EnvironmentMutationError::LedgerFailure)?
-            .pop()
-            .ok_or(EnvironmentMutationError::LedgerFailure)?;
-        Ok(view(record))
+        Ok(view(self.read_request(request.request_id).await?))
     }
 
     async fn reconcile(
         &self,
         request: &MutationIntent,
+        origin: Option<&EnvironmentProposalOrigin>,
     ) -> Result<Option<EnvironmentMutationResponse>, EnvironmentMutationError> {
         let Some(saved) = self
             .revisions
@@ -317,8 +317,8 @@ impl EnvironmentMutationCoordinator {
         let EnvironmentRequestPayload::Change { specification } = *value else {
             return Err(EnvironmentMutationError::Conflict);
         };
-        if record.actor != "operator"
-            || record.requester.is_some()
+        if record.actor != origin.map_or("operator", EnvironmentProposalOrigin::actor)
+            || record.requester.as_ref() != origin.map(EnvironmentProposalOrigin::target)
             || record.base_revision_id.as_deref() != request.base.as_ref().map(|base| base.revision_id.as_str())
             || request
                 .base
@@ -335,26 +335,27 @@ impl EnvironmentMutationCoordinator {
                 EnvironmentRequestInvalidation {
                     request_id: request.request_id.clone(),
                     timestamp_unix_ms: at,
-                    actor: "operator".into(),
+                    actor: if origin.is_some() { "system" } else { "operator" }.into(),
                     kind: EnvironmentRequestInvalidationKind::Expired,
                     reason: "review deadline expired before an operator decision".into(),
                 },
             ))
             .await?;
-            record = self
-                .revisions
-                .ledger
-                .environment_requests(EnvironmentRequestQuery::Get {
-                    request_id: request.request_id.clone(),
-                })
-                .await
-                .map_err(|_| EnvironmentMutationError::LedgerFailure)?
-                .pop()
-                .ok_or(EnvironmentMutationError::LedgerFailure)?;
+            record = self.read_request(request.request_id.clone()).await?;
         }
         // Pending, interrupted or stale requests remain visible. Reconciliation
         // never casts another vote, creates a revision, or retries application.
         Ok(Some(view(record)))
+    }
+
+    async fn read_request(&self, request_id: String) -> Result<EnvironmentRequestRecord, EnvironmentMutationError> {
+        self.revisions
+            .ledger
+            .environment_requests(EnvironmentRequestQuery::Get { request_id })
+            .await
+            .map_err(|_| EnvironmentMutationError::LedgerFailure)?
+            .pop()
+            .ok_or(EnvironmentMutationError::LedgerFailure)
     }
 
     async fn write(&self, operation: WriteOp) -> Result<(), EnvironmentMutationError> {
@@ -370,6 +371,14 @@ impl EnvironmentMutationCoordinator {
             .map_err(|_| EnvironmentMutationError::LedgerFailure)
     }
 }
+fn expiry(at: i64) -> Result<i64, EnvironmentMutationError> {
+    i64::try_from(capsem_proto::APPROVAL_TIMEOUT_SECONDS)
+        .ok()
+        .and_then(|seconds| seconds.checked_mul(1000))
+        .and_then(|duration| at.checked_add(duration))
+        .ok_or(EnvironmentMutationError::WorkerFailed)
+}
+
 fn now() -> Result<i64, EnvironmentMutationError> {
     i64::try_from(
         SystemTime::now()

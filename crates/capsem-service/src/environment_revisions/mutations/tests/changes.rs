@@ -21,6 +21,54 @@ async fn seed(f: &Fixture) -> EnvironmentMutationResponse {
 }
 
 #[tokio::test]
+async fn delegated_proposal_rechecks_authority_after_source_resolution() {
+    use std::sync::atomic::AtomicBool;
+
+    let f = Fixture::new();
+    let base = seed(&f).await;
+    let mut intent = change(&base, 2);
+    intent.specification.image.as_mut().unwrap().reference = "development:next".into();
+    let pause = Arc::new((tokio::sync::Notify::new(), tokio::sync::Notify::new()));
+    let live = Arc::new(AtomicBool::new(true));
+    let authorization = live.clone();
+    let job = f
+        .creates
+        .submit_proposal(
+            base.environment_id,
+            intent,
+            EnvironmentProposalOrigin::delegated(
+                uuid::Uuid::parse_str(&id(10)).unwrap(),
+                id(11),
+                uuid::Uuid::parse_str(&id(12)).unwrap(),
+            ),
+            Source {
+                pause: Some(pause.clone()),
+                ..Source::default()
+            },
+            move |_| {
+                authorization
+                    .load(Ordering::SeqCst)
+                    .then_some(())
+                    .ok_or(EnvironmentMutationError::Refused)
+            },
+        )
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(10), pause.0.notified())
+        .await
+        .unwrap();
+    live.store(false, Ordering::SeqCst);
+    pause.1.notify_one();
+    assert_eq!(job.wait().await.unwrap_err(), EnvironmentMutationError::Refused);
+    assert!(f
+        .revisions
+        .ledger
+        .environment_request_history(&id(2))
+        .await
+        .unwrap()
+        .is_none());
+}
+
+#[tokio::test]
 async fn operator_change_retains_pins_and_reconciles_exact_frozen_intent() {
     let f = Fixture::new();
     let base = seed(&f).await;

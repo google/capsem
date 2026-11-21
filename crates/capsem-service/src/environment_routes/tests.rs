@@ -89,12 +89,21 @@ fn delegate(
     operation: capsem_api::AgentOperation,
     environments: Vec<String>,
 ) -> (uuid::Uuid, String) {
+    delegate_sessions(state, operation, environments, vec![])
+}
+
+fn delegate_sessions(
+    state: &crate::ServiceState,
+    operation: capsem_api::AgentOperation,
+    environments: Vec<String>,
+    sessions: Vec<capsem_api::AgentSessionScope>,
+) -> (uuid::Uuid, String) {
     use capsem_core::{
         agent_access::Reservation,
         managed_sessions::{Capability, LeaseClock},
     };
     let access = capsem_crypto::uuid_v4();
-    let scope = capsem_api::AgentAccessScope::new(vec![operation], environments, vec![]).unwrap();
+    let scope = capsem_api::AgentAccessScope::new(vec![operation], environments, sessions).unwrap();
     let Reservation::New(admission) = state
         .caller_authority
         .agents

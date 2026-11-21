@@ -17,7 +17,10 @@ use std::{
 use tokio::sync::oneshot;
 mod mutations;
 mod receipts;
-pub use mutations::{EnvironmentMutationCoordinator, EnvironmentMutationError, EnvironmentMutationJob};
+pub use mutations::{
+    EnvironmentMutationCoordinator, EnvironmentMutationError, EnvironmentMutationJob, EnvironmentProposalOrigin,
+};
+
 mod startup;
 pub use startup::RecoverySummary;
 
