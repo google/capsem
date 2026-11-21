@@ -88,6 +88,8 @@ const secret = 'fixture-injected-secret', reference = `credential:blake3:${'c'.r
 const received = [];
 let restoreEntered = () => {};
 const provision = {id: 'restore-vm', name: 'restore', status: 'Running', available_actions: []};
+const readinessPath = '/vms/restore-vm/readiness?intent=start';
+const selection = {id: 'restore-vm', generation: '00000000-0000-4000-8000-000000000001', running: false, environment: null};
 const server = createServer((request, response) => {
   void buffer(request).then(async bytes => {
     assert.equal(request.headers.authorization, 'Bearer fixture-token');
@@ -99,13 +101,17 @@ const server = createServer((request, response) => {
       return;
     }
     if (request.url?.startsWith('/vms/')) {
+      response.setHeader('Content-Type', 'application/json');
+      if (request.url === readinessPath) {
+        response.end(JSON.stringify({selection, startup_timeout_seconds: 0}));
+        return;
+      }
       if (request.url.endsWith('/start') || request.url.endsWith('/resume')) {
         restoreEntered();
         await delay(300);
       } else if (request.url === '/vms/slow/info') {
         await delay(300);
       }
-      response.setHeader('Content-Type', 'application/json');
       response.end(JSON.stringify(request.method === 'GET' ? {...provision, pid: 1} : provision));
       return;
     }
@@ -170,11 +176,15 @@ assert.equal(imageRequests.length + lifecycleRequests.length + credentialRequest
 assert.deepEqual(credentialRequests, ['memory', 'file'].map(storage => ({method: 'POST', path: '/credentials/inject', body: {provider: 'openai', value: secret, storage}})));
 assert.deepEqual(imageRequests.map(({method, path}) => [method, path]), [['GET', '/images?refresh=true'], ['POST', '/images/pull'], ['POST', '/images/pull']]);
 assert.deepEqual(lifecycleRequests, [
-  {method: 'POST', path: '/vms/restore-vm/start', body: null},
-  {method: 'POST', path: '/vms/restore-vm/resume', body: null},
-  {method: 'POST', path: '/vms/restore-vm/start', body: null},
+  {method: 'GET', path: readinessPath, body: null},
+  {method: 'POST', path: '/vms/restore-vm/start', body: {expected: selection}},
+  {method: 'GET', path: readinessPath, body: null},
+  {method: 'POST', path: '/vms/restore-vm/resume', body: {expected: selection}},
+  {method: 'GET', path: readinessPath, body: null},
+  {method: 'POST', path: '/vms/restore-vm/start', body: {expected: selection}},
   {method: 'GET', path: '/vms/restore-vm/info', body: null},
-  {method: 'POST', path: '/vms/restore-vm/resume', body: null},
+  {method: 'GET', path: readinessPath, body: null},
+  {method: 'POST', path: '/vms/restore-vm/resume', body: {expected: selection}},
   {method: 'GET', path: '/vms/restore-vm/info', body: null},
   {method: 'GET', path: '/vms/slow/info', body: null},
 ]);

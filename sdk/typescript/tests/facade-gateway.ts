@@ -1,4 +1,5 @@
 import type {ServerResponse} from 'node:http';
+import type {VmReadinessResponse} from '../src/models/index.js';
 import {routes, sample, schemas} from './contract.js';
 import type {Request} from './gateway.js';
 
@@ -8,6 +9,7 @@ export class FacadeGateway {
   previewSessionStatus: number | undefined;
   exposureDeleteStatus: number | undefined;
   readonly files = new Map<string, Buffer>();
+  readonly vmReadiness = new Map<string, VmReadinessResponse>();
 
   handle(request: Request, response: ServerResponse): void {
     const url = new URL(request.url, 'http://localhost');
@@ -28,6 +30,13 @@ export class FacadeGateway {
     const schema = operation.responses[status]?.content['application/json']?.schema;
     response.statusCode = Number(status);
     let value: unknown = sample(schema ?? schemas.UploadResponse ?? {});
+    if (operation.operationId === 'getVmReadiness') {
+      const id = url.pathname.split('/')[2] ?? '';
+      value = this.vmReadiness.get(id) ?? {
+        selection: {id, generation: null, running: false, environment: null},
+        startup_timeout_seconds: 0,
+      };
+    }
     if (operation.operationId === 'listVms') value = {
       sandboxes: this.names.map(name => ({...sample(schemas.SandboxInfo ?? {}) as object, id: 'vm-0', name})),
     };

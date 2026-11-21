@@ -11,6 +11,14 @@ import {Hypervisor, VM} from '../src/index.js';
 import {FacadeGateway} from './facade-gateway.js';
 import {gateway} from './gateway.js';
 
+const retained = {
+  id: 'vm-0', running: false, generation: '00000000-0000-4000-8000-000000000003',
+  environment: {
+    environment_id: '00000000-0000-4000-8000-000000000001',
+    revision_id: '00000000-0000-4000-8000-000000000002',
+  },
+};
+
 // Exec and run answer only when the command ends (service default: one hour).
 // A 30 s client deadline gave up while the command kept running, and a
 // retrying agent started it a second time.
@@ -92,13 +100,16 @@ it('honours explicit creation deadlines and cancellation without replay', async 
 
 it.each(['start', 'resume'] as const)('lets %s cover workload readiness without replay', async operation => {
   const state = new FacadeGateway();
+  state.vmReadiness.set('vm-0', {selection: retained, startup_timeout_seconds: 600});
   const path = `/vms/vm-0/${operation}`;
   await gateway(delayed(state, [path]), async (url, received) => {
     const vm = new VM(url, 'secret', {id: 'vm-0'}, {timeoutMs: 50});
     try {
       await vm[operation]();
-      expect(received.map(request => [request.method, request.url, request.body.toString()]))
-        .toEqual([['POST', path, '']]);
+      expect(received.map(request => [request.method, request.url]))
+        .toEqual([['GET', '/vms/vm-0/readiness?intent=start'], ['POST', path]]);
+      expect(received[0]?.body).toHaveLength(0);
+      expect(JSON.parse(received[1]?.body.toString() ?? '')).toEqual({expected: retained});
       expect(received[0]?.headers.authorization).toBe('Bearer secret');
     } finally {vm.close();}
   });
@@ -114,7 +125,19 @@ it.each(['start', 'resume'] as const)('keeps explicit deadlines and cancellation
       await expect(vm[operation]({signal: AbortSignal.abort()})).rejects.toMatchObject({name: 'AbortError'});
       await vm.info();
       expect(received.map(request => [request.method, request.url]))
-        .toEqual([['POST', path], ['GET', '/vms/vm-0/info']]);
+        .toEqual([['GET', '/vms/vm-0/readiness?intent=start'], ['POST', path], ['GET', '/vms/vm-0/info']]);
+    } finally {vm.close();}
+  });
+});
+
+it('refuses a different lifecycle target before sending the mutation', async () => {
+  const state = new FacadeGateway();
+  state.vmReadiness.set('vm-0', {selection: {...retained, id: 'other-vm'}, startup_timeout_seconds: 600});
+  await gateway((request, response) => state.handle(request, response), async (url, received) => {
+    const vm = new VM(url, 'secret', {id: 'vm-0'});
+    try {
+      await expect(vm.resume()).rejects.toThrow('Lifecycle readiness targets a different VM');
+      expect(received.map(request => request.url)).toEqual(['/vms/vm-0/readiness?intent=start']);
     } finally {vm.close();}
   });
 });

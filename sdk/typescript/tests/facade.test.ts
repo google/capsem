@@ -66,8 +66,8 @@ it('maps every facade method through HTTP and resolves a name once', async () =>
       await expect(vm.files.read('/missing')).rejects.toBeInstanceOf(HttpError);
       await vm.delete();
       const expected = [
-        '/vms/list', '/vms/vm-0/info', '/vms/vm-0/exec', '/vms/vm-0/exec', '/vms/vm-0/start',
-        '/vms/vm-0/save', '/vms/vm-0/pause', '/vms/vm-0/resume', '/vms/vm-0/stop',
+        '/vms/list', '/vms/vm-0/info', '/vms/vm-0/exec', '/vms/vm-0/exec', '/vms/vm-0/readiness', '/vms/vm-0/start',
+        '/vms/vm-0/save', '/vms/vm-0/pause', '/vms/vm-0/readiness', '/vms/vm-0/resume', '/vms/vm-0/stop',
         '/vms/vm-0/stats/summary', '/vms/vm-0/stats/detail',
         '/vms/vm-0/history', '/vms/vm-0/history',
       ];
@@ -77,11 +77,13 @@ it('maps every facade method through HTTP and resolves a name once', async () =>
       expect(received.some(request => request.url === '/vms/vm-0/files/list?path=%2Froot&exact=true')).toBe(true);
       expect(received.some(request => request.url.includes('layers=fs%2Cexec'))).toBe(true);
       const forks = received.filter(request => request.url === '/vms/vm-0/fork');
+      const original = {id: 'vm-0', generation: null, running: false, environment: null};
+      expect(received.filter(request => request.url === '/vms/vm-0/readiness?intent=fork')).toHaveLength(2);
       expect(JSON.parse(forks[0]?.body.toString() ?? '')).toEqual({
-        name: 'copy', description: 'checkpoint', labels: {suite: 'fork'},
+        name: 'copy', description: 'checkpoint', labels: {suite: 'fork'}, expected: original,
       });
       expect(JSON.parse(forks[1]?.body.toString() ?? '')).toEqual({
-        name: 'another', description: null,
+        name: 'another', description: null, expected: original,
       });
       await hv.info(); await hv.list(); await hv.log();
       await hv.log({source: HostLogSource.GATEWAY, tail: 2});

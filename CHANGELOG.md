@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added: The Rust SDK can create a VM from a persistent source, with startup timing taken from the inherited or explicitly selected destination revision.
 - Fixed: CLI resume, fork, and create-from carry the original VM selection and honor the retained startup budget where applicable.
 - Fixed: The Python SDK carries the selected VM generation and approved startup wait for lifecycle operations. VM creation can clone a persistent source by ID or name.
+- Fixed: The TypeScript SDK carries the selected VM generation and approved startup wait for lifecycle operations while preserving explicit deadlines and cancellation.
 
 - Fixed: Restore Inspect adapter PyPI publication and its clean public-registry consumer check now that the publisher is authorized for `inspect-capsem-sandbox` (#392).
 

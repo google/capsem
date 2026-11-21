@@ -76,7 +76,7 @@ export class ManagedSession {
       const response = await Promise.race([scope.#creation, scope.#ended]);
       scope.#session(response);
       if (scope.#failed) throw scope.#failure;
-      scope.#vm = VM.bind(transport, response.id, response.name, request.attach === true || request.container != null ? true : request.environment != null ? undefined : false);
+      scope.#vm = VM.bind(transport, response.id, response.name, request.attach === true || request.container != null ? true : request.environment != null || request.from != null ? undefined : false);
       return scope;
     } catch (error) {
       await scope.#join(options.signal?.aborted ? models.ManagedSessionOutcome.CANCELLED : models.ManagedSessionOutcome.FAILED, false);

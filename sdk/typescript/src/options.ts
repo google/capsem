@@ -7,6 +7,8 @@ export interface ImageListOptions extends CallOptions {refresh?: boolean}
 export interface ImagePullOptions extends CallOptions {registry?: Registry}
 export interface CreateOptions extends CallOptions {
   environment?: EnvironmentRevisionReference;
+  /** ID or name of a persistent VM to clone before launching the destination. */
+  from?: string;
   /** Stage the saved image for an attached container stream, without revising its content. */
   attach?: boolean;
   name?: string; cpus?: number; memory?: number;

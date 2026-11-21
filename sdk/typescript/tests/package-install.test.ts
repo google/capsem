@@ -132,9 +132,10 @@ it('installs and exercises the actual SDK tarball without checkout or developmen
     expect(report.httpPaths).toEqual(['/images?refresh=true', '/images/pull', '/images/pull']);
     expect(report.credentialPaths).toEqual(['/credentials/inject', '/credentials/inject']);
     expect(report.lifecyclePaths).toEqual([
-      '/vms/restore-vm/start', '/vms/restore-vm/resume',
-      '/vms/restore-vm/start', '/vms/restore-vm/info',
-      '/vms/restore-vm/resume', '/vms/restore-vm/info', '/vms/slow/info',
+      '/vms/restore-vm/readiness?intent=start', '/vms/restore-vm/start',
+      '/vms/restore-vm/readiness?intent=start', '/vms/restore-vm/resume',
+      '/vms/restore-vm/readiness?intent=start', '/vms/restore-vm/start', '/vms/restore-vm/info',
+      '/vms/restore-vm/readiness?intent=start', '/vms/restore-vm/resume', '/vms/restore-vm/info', '/vms/slow/info',
     ]);
     expect(sha(archive)).toBe(digest);
     if (selectedArchive) expect(sha(selectedArchive)).toBe(digest);

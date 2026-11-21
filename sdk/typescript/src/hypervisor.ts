@@ -61,7 +61,7 @@ export class Hypervisor extends Client {
     const body = provisionRequest(options);
     const timeoutMs = await creationDeadlineMs(this.transport, body, options);
     const response = await api.createVm(this.transport, {body}, {...options, timeoutMs});
-    return VM.bind(this.transport, response.id, response.name, body.attach === true || body.container != null ? true : body.environment != null ? undefined : false);
+    return VM.bind(this.transport, response.id, response.name, body.attach === true || body.container != null ? true : body.environment != null || body.from != null ? undefined : false);
   }
   async managed(options: ManagedCreateOptions = {}): Promise<ManagedSession> {
     if (options.name !== undefined) throw new TypeError('Managed sessions must be unnamed');
@@ -117,6 +117,7 @@ function provisionRequest(options: CreateOptions): models.ProvisionRequest {
   };
   return {
     ...(options.environment === undefined ? {} : {environment: options.environment}),
+    ...(options.from === undefined ? {} : {from: options.from}),
     ...(options.attach === true ? {attach: true} : {}),
     name: options.name || null, persistent: Boolean(options.name),
     cpus: options.cpus ?? null, ram_mb,

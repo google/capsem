@@ -1,12 +1,14 @@
 import {Client} from './client.js';
 import {CredentialGrants} from './connections.js';
-import {commandDeadlineMs, createDeadlineMs} from './execution.js';
+import {commandDeadlineMs} from './execution.js';
 import * as api from './operations/index.js';
 import * as models from './models/index.js';
 import type {HistoryOptions, LogOptions, TimelineOptions, VmSelector} from './options.js';
+import {lifecycleReadiness, prepareStart} from './readiness.js';
 import {Container, Files, Ports, Stats, VmNetworks, type VmContext} from './resources.js';
 import {HttpError, Transport, type CallOptions, type TransportOptions} from './transport.js';
 import {ExecRequestSchema} from './validation/ExecRequest.js';
+import {ForkRequestSchema} from './validation/ForkRequest.js';
 
 export class VM extends Client {
   #id: string | undefined;
@@ -89,8 +91,8 @@ export class VM extends Client {
   }
   async start(options: CallOptions = {}): Promise<models.ProvisionResponse> {
     const {transport, id} = await this.context(options);
-    return api.startVm(transport, {id}, {...options,
-      timeoutMs: options.timeoutMs ?? createDeadlineMs(transport.timeoutMs)});
+    const {body, timeoutMs} = await prepareStart(transport, id, options);
+    return api.startVm(transport, {id, body}, {...options, timeoutMs});
   }
   async persist(name: string, options: CallOptions = {}): Promise<models.PersistResponse> {
     const {transport, id} = await this.context(options);
@@ -106,20 +108,22 @@ export class VM extends Client {
   }
   async resume(options: CallOptions = {}): Promise<models.ProvisionResponse> {
     const {transport, id} = await this.context(options);
-    return api.resumeVm(transport, {id}, {...options,
-      timeoutMs: options.timeoutMs ?? createDeadlineMs(transport.timeoutMs)});
+    const {body, timeoutMs} = await prepareStart(transport, id, options);
+    return api.resumeVm(transport, {id, body}, {...options, timeoutMs});
   }
   async delete(options: CallOptions = {}): Promise<models.VmActionResponse> {
     const {transport, id} = await this.context(options);
     return api.deleteVm(transport, {id}, options);
   }
   async fork(name: string, options: CallOptions & {description?: string; labels?: Record<string, string>} = {}): Promise<VM> {
-    const {transport, id} = await this.context(options);
-    const response = await api.forkVm(transport, {id, body: {
+    const body = ForkRequestSchema.parse({
       name, description: options.description ?? null,
       ...(options.labels === undefined ? {} : {labels: options.labels}),
-    }}, options);
-    return VM.bind(transport, response.id, response.name, this.#hasContainer);
+    });
+    const {transport, id} = await this.context(options);
+    const {selection} = await lifecycleReadiness(transport, id, models.VmLifecycleIntent.FORK, options);
+    const response = await api.forkVm(transport, {id, body: {...body, expected: selection}}, options);
+    return VM.bind(transport, response.id, response.name, selection.environment != null ? undefined : this.#hasContainer);
   }
   async log(options: LogOptions = {}): Promise<models.LogsResponse> {
     const {transport, id} = await this.context(options);
