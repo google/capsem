@@ -67,8 +67,10 @@ impl LedgerServer {
     }
 
     /// Observe fresh committed network denials for this worker's ledger.
-    pub fn subscribe_denials(&self) -> tokio::sync::watch::Receiver<()> {
-        self.db.subscribe_denials()
+    /// Establish the baseline before the coordinator can attach any clients.
+    pub async fn subscribe_denials(&self) -> Result<tokio::sync::watch::Receiver<()>, String> {
+        self.db.ledger_counters().await?;
+        Ok(self.db.subscribe_denials())
     }
 
     /// Serve one descriptor whose expected authority came from the trusted
