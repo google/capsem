@@ -36,6 +36,8 @@ CREATE INDEX IF NOT EXISTS idx_environment_revisions_fork
     ON environment_revisions(fork_parent_revision_id);
 CREATE INDEX IF NOT EXISTS idx_environment_revisions_time
     ON environment_revisions(timestamp_unix_ms,id);
+CREATE INDEX IF NOT EXISTS idx_environment_revisions_committed_history
+    ON environment_revisions(environment_id,id) WHERE state='committed';
 CREATE UNIQUE INDEX IF NOT EXISTS idx_environment_revisions_request
     ON environment_revisions(request_id) WHERE request_id IS NOT NULL;
 

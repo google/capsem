@@ -29,6 +29,12 @@ pub enum EnvironmentRevisionQuery {
         after_id: i64,
         limit: u16,
     },
+    /// Committed revision history for one environment, newest first.
+    History {
+        environment_id: String,
+        before_id: Option<i64>,
+        limit: u16,
+    },
 }
 
 pub(crate) fn valid_id(value: &str) -> bool {
@@ -51,6 +57,16 @@ impl EnvironmentRevisionQuery {
             } => {
                 environment_id.as_deref().is_none_or(valid_id)
                     && *after_id >= 0
+                    && *limit > 0
+                    && usize::from(*limit) <= crate::ledger_protocol::MAX_LEDGER_QUERY_ROWS
+            }
+            Self::History {
+                environment_id,
+                before_id,
+                limit,
+            } => {
+                valid_id(environment_id)
+                    && before_id.is_none_or(|cursor| cursor > 0)
                     && *limit > 0
                     && usize::from(*limit) <= crate::ledger_protocol::MAX_LEDGER_QUERY_ROWS
             }
@@ -186,6 +202,18 @@ fn query_rows(
                 "SELECT {COLUMNS} FROM environment_revisions WHERE {environment}{state} AND id>?2 ORDER BY id LIMIT ?3"
             ))?;
             let rows = statement.query_map(rusqlite::params![environment_id, after_id, limit], from_row)?;
+            rows.collect()
+        }
+        EnvironmentRevisionQuery::History {
+            environment_id,
+            before_id,
+            limit,
+        } => {
+            let maximum = before_id.map_or(i64::MAX, |cursor| cursor.saturating_sub(1));
+            let mut statement = connection.prepare_cached(&format!(
+                "SELECT {COLUMNS} FROM environment_revisions WHERE environment_id=?1 AND state='committed' AND id<=?2 ORDER BY id DESC LIMIT ?3"
+            ))?;
+            let rows = statement.query_map(rusqlite::params![environment_id, maximum, limit], from_row)?;
             rows.collect()
         }
     }
