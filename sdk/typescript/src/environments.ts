@@ -2,9 +2,20 @@ import * as api from './operations/index.js';
 import type * as models from './models/index.js';
 import type {CallOptions, Transport} from './transport.js';
 
+export interface EnvironmentListOptions extends CallOptions {
+  search?: string;
+  after?: string;
+  limit?: number;
+}
+
 /** Canonical blueprints; requests retain caller-chosen reconciliation IDs. */
 export class Environments {
   constructor(private readonly transport: Transport) {}
+
+  /** List visible environments. Follow next_cursor even after an empty search page. */
+  async list({signal, timeoutMs, ...query}: EnvironmentListOptions = {}): Promise<models.EnvironmentListResponse> {
+    return api.listEnvironments(this.transport, query, {signal, timeoutMs});
+  }
 
   /** Approval can precede application. Reconcile explicitly after interruption. */
   async create(request: models.EnvironmentCreateRequest, options: CallOptions = {}): Promise<models.EnvironmentMutationResponse> {

@@ -55,6 +55,7 @@ export {getVmTimeline} from "./getVmTimeline.js";
 export {heartbeatProxy} from "./heartbeatProxy.js";
 export {injectCredential} from "./injectCredential.js";
 export {listConnections} from "./listConnections.js";
+export {listEnvironments} from "./listEnvironments.js";
 export {listImages} from "./listImages.js";
 export {listMcpServers} from "./listMcpServers.js";
 export {listMcpTools} from "./listMcpTools.js";

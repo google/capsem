@@ -1,5 +1,9 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+export type { PanicsResponse } from "./PanicsResponse.js";
+export type { PersistRequest } from "./PersistRequest.js";
+export type { PersistResponse } from "./PersistResponse.js";
+export type { PiiFilterConfiguration } from "./PiiFilterConfiguration.js";
 export type { PluginConfiguration_CredentialBrokerOptions } from "./PluginConfiguration_CredentialBrokerOptions.js";
 export type { PluginConfiguration_CredentialBrokerOptionsOptions } from "./PluginConfiguration_CredentialBrokerOptionsOptions.js";
 export type { PluginConfiguration_DummyPostAllowOptions } from "./PluginConfiguration_DummyPostAllowOptions.js";
