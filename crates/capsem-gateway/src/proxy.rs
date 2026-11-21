@@ -149,7 +149,6 @@ fn gateway_request_id() -> GatewayRequestId {
 }
 
 async fn forward(state: &AppState, mut req: Request) -> anyhow::Result<Response> {
-    let plans_create = req.method() == Method::POST && req.uri().path() == "/vms/create";
     let mut deadline = upstream_deadline(req.uri().path());
     let should_buffer_json = req.method() == Method::GET && {
         let path = req.uri().path();
@@ -175,22 +174,27 @@ async fn forward(state: &AppState, mut req: Request) -> anyhow::Result<Response>
     *req.uri_mut() =
         http::Uri::from_parts(upstream_uri).map_err(|error| anyhow::anyhow!("invalid upstream URI: {error}"))?;
 
-    let (parts, body) = req.into_parts();
+    let (mut parts, body) = req.into_parts();
+    let mutation = readiness::Mutation::for_request(&mut parts).await;
 
-    // Creation needs bounded timing planning before mutation. Other sized
+    // Long lifecycle operations plan their wait before dispatch. Other sized
     // uploads stream through under the same cap; unsized uploads are collected
     // here so excess bytes produce413 before any upstream operation starts.
-    let body = if !plans_create && parts.headers.contains_key(http::header::CONTENT_LENGTH) {
+    let body = if mutation.is_none() && parts.headers.contains_key(http::header::CONTENT_LENGTH) {
         axum::body::Body::new(Limited::new(body, MAX_BODY_SIZE))
     } else {
         match tokio::time::timeout(REQUEST_TIMEOUT, Limited::new(body, MAX_BODY_SIZE).collect()).await {
             Ok(Ok(collected)) => {
-                let bytes = collected.to_bytes();
-                if plans_create {
-                    deadline = match readiness::creation_deadline(state, &parts.headers, &bytes, deadline).await {
-                        Ok(deadline) => deadline,
+                let mut bytes = collected.to_bytes();
+                if let Some(mutation) = mutation {
+                    let original_len = bytes.len();
+                    (deadline, bytes) = match mutation.plan(state, &parts.headers, bytes, deadline).await {
+                        Ok(plan) => plan,
                         Err(response) => return Ok(response),
                     };
+                    if bytes.len() != original_len {
+                        parts.headers.remove(CONTENT_LENGTH);
+                    }
                 }
                 axum::body::Body::from(bytes)
             }

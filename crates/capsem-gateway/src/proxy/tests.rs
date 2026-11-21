@@ -30,6 +30,8 @@ fn proxy_app(uds_path: &str) -> Router {
         .route("/created", any(handle_proxy))
         .route("/custom", any(handle_proxy))
         .route("/vms/{id}/delete", any(handle_proxy))
+        .route("/vms/{id}/start", any(handle_proxy))
+        .route("/vms/{id}/resume", any(handle_proxy))
         .route("/echo", any(handle_proxy))
         .route("/empty", any(handle_proxy))
         .route("/err", any(handle_proxy))
