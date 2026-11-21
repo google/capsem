@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use tokio::sync::OnceCell;
 
-use crate::client::{lifecycle_readiness, preparation_call_options, Client};
+use crate::client::{prepare_fork, prepare_start, Client};
 use crate::resources::{Container, Files, Ports, Stats, VmNetworks};
 use crate::transport::CallOptions;
 use crate::{models, operations as api, Error, Result, VmSelector};
@@ -173,22 +173,8 @@ impl VM {
 
     async fn start_plan(&self) -> Result<(String, models::VmStartRequest, CallOptions)> {
         let id = self.resolve().await?;
-        let readiness = lifecycle_readiness(
-            &self.client.transport,
-            &id,
-            models::VmLifecycleIntent::Start,
-            self.client.options,
-        )
-        .await?;
-        let startup = readiness
-            .selection
-            .environment
-            .as_ref()
-            .map_or(0, |_| readiness.startup_timeout_seconds);
-        let body = models::VmStartRequest {
-            expected: Some(readiness.selection),
-        };
-        let options = preparation_call_options(&self.client.transport, startup, self.client.options);
+        let mut body = models::VmStartRequest::default();
+        let options = prepare_start(&self.client.transport, &id, &mut body, self.client.options).await?;
         Ok((id, body, options))
     }
 
@@ -252,32 +238,28 @@ impl VM {
         labels: Option<std::collections::HashMap<String, String>>,
     ) -> Result<Self> {
         let id = self.resolve().await?;
-        let readiness = lifecycle_readiness(
-            &self.client.transport,
-            &id,
-            models::VmLifecycleIntent::Fork,
-            self.client.options,
-        )
-        .await?;
-        let params = api::ForkVmParams {
-            id,
-            body: models::ForkRequest {
-                name: name.into(),
-                description,
-                labels,
-                expected: Some(readiness.selection),
-            },
+        let mut body = models::ForkRequest {
+            name: name.into(),
+            description,
+            labels,
+            expected: None,
         };
-        let result = api::fork_vm(&self.client.transport, &params, self.client.options).await?;
-        Self::created(
-            self.client.clone(),
-            result.id,
-            result.name,
+        prepare_fork(&self.client.transport, &id, &mut body, self.client.options).await?;
+        let has_container = if body
+            .expected
+            .as_ref()
+            .is_some_and(|selected| selected.environment.is_some())
+        {
+            None
+        } else {
             self.identity
                 .port_target
                 .get()
-                .map(|target| *target == models::ExposureTarget::Container),
-        )
+                .map(|target| *target == models::ExposureTarget::Container)
+        };
+        let params = api::ForkVmParams { id, body };
+        let result = api::fork_vm(&self.client.transport, &params, self.client.options).await?;
+        Self::created(self.client.clone(), result.id, result.name, has_container)
     }
 
     pub async fn persist(&self, name: &str) -> Result<models::PersistResponse> {

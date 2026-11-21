@@ -1,6 +1,8 @@
 use std::time::Duration;
 
-use capsem_api::{VmLifecycleIntent, VmReadinessResponse};
+use capsem_api::{
+    ForkRequest, ProvisionRequest, VmLifecycleIntent, VmLifecycleSelection, VmReadinessResponse, VmStartRequest,
+};
 
 use crate::transport::{CallOptions, Transport};
 use crate::{Error, Result};
@@ -34,6 +36,89 @@ pub async fn create_call_options(
     Ok(preparation_call_options(transport, startup, options))
 }
 
+/// Bind a create-from request to the source it observed, and plan the wait for
+/// the destination's approved startup.
+pub async fn prepare_create(
+    transport: &Transport,
+    request: &mut ProvisionRequest,
+    options: CallOptions,
+) -> Result<CallOptions> {
+    request.validate_environment().map_err(Error::InvalidInput)?;
+    if let Some(source) = request.from.as_deref() {
+        let readiness = lifecycle_readiness(
+            transport,
+            source,
+            VmLifecycleIntent::Clone,
+            request.expected_source.as_ref(),
+            options,
+        )
+        .await?;
+        let inherits_startup =
+            request.environment.is_none() && request.container.is_none() && readiness.selection.environment.is_some();
+        request.expected_source = Some(readiness.selection);
+        if inherits_startup {
+            return Ok(preparation_call_options(
+                transport,
+                readiness.startup_timeout_seconds,
+                options,
+            ));
+        }
+    }
+    create_call_options(transport, request, options).await
+}
+
+/// Bind start or resume to the original VM generation and plan its startup wait.
+pub async fn prepare_start(
+    transport: &Transport,
+    id: &str,
+    request: &mut VmStartRequest,
+    options: CallOptions,
+) -> Result<CallOptions> {
+    request.validate(id).map_err(Error::InvalidInput)?;
+    let readiness = lifecycle_readiness(
+        transport,
+        id,
+        VmLifecycleIntent::Start,
+        request.expected.as_ref(),
+        options,
+    )
+    .await?;
+    let startup = readiness
+        .selection
+        .environment
+        .as_ref()
+        .map_or(0, |_| readiness.startup_timeout_seconds);
+    request.expected = Some(readiness.selection);
+    Ok(preparation_call_options(transport, startup, options))
+}
+
+/// Bind a fork to the source generation and desired revision it observed.
+pub async fn prepare_fork(
+    transport: &Transport,
+    id: &str,
+    request: &mut ForkRequest,
+    options: CallOptions,
+) -> Result<()> {
+    request.validate_expected(id).map_err(Error::InvalidInput)?;
+    let readiness = lifecycle_readiness(
+        transport,
+        id,
+        VmLifecycleIntent::Fork,
+        request.expected.as_ref(),
+        options,
+    )
+    .await?;
+    request.expected = Some(readiness.selection);
+    Ok(())
+}
+
+fn selection_changed() -> Error {
+    Error::Http {
+        status: 409,
+        body: br#"{"error":"lifecycle selection changed; request a new readiness view"}"#.to_vec(),
+    }
+}
+
 pub(crate) fn preparation_call_options(
     transport: &Transport,
     startup_seconds: u32,
@@ -49,22 +134,33 @@ pub(crate) fn preparation_call_options(
     }
 }
 
-pub(crate) async fn lifecycle_readiness(
+async fn lifecycle_readiness(
     transport: &Transport,
     id: &str,
     intent: VmLifecycleIntent,
+    expected: Option<&VmLifecycleSelection>,
     options: CallOptions,
 ) -> Result<VmReadinessResponse> {
-    let readiness = crate::operations::get_vm_readiness(
+    capsem_api::validate_name("VM", id).map_err(|_| Error::InvalidInput("invalid VM identifier"))?;
+    let response = crate::operations::get_vm_readiness(
         transport,
         &crate::operations::GetVmReadinessParams { id: id.into(), intent },
         options,
     )
-    .await?;
-    readiness
-        .selection
-        .validate_target(id)
-        .map_err(Error::InvalidResponse)?;
+    .await;
+    let readiness = match response {
+        Err(Error::Http { status: 404, .. }) if expected.is_some() => return Err(selection_changed()),
+        result => result?,
+    };
+    if intent == VmLifecycleIntent::Clone {
+        readiness.selection.validate()
+    } else {
+        readiness.selection.validate_target(id)
+    }
+    .map_err(Error::InvalidResponse)?;
+    if expected.is_some_and(|value| *value != readiness.selection) {
+        return Err(selection_changed());
+    }
     Ok(readiness)
 }
 

@@ -62,6 +62,67 @@ async fn invalid_lifecycle_selection_does_not_dispatch_a_mutation() {
 }
 
 #[tokio::test]
+async fn create_from_binds_the_source_and_preserves_the_destination_override() {
+    use axum::{body::Body, http::Response};
+
+    let inherited = json!({
+        "environment_id": "00000000-0000-4000-8000-000000000001",
+        "revision_id": "00000000-0000-4000-8000-000000000002",
+    });
+    let selected = json!({
+        "id": "vm-1", "generation": "00000000-0000-4000-8000-000000000003",
+        "running": false, "environment": inherited,
+    });
+    let override_reference = json!({
+        "environment_id": "00000000-0000-4000-8000-000000000001",
+        "revision_id": "00000000-0000-4000-8000-000000000004",
+    });
+    let readiness_path =
+        "/environments/00000000-0000-4000-8000-000000000001/revisions/00000000-0000-4000-8000-000000000004/readiness";
+    let source = json!({"selection": selected, "startup_timeout_seconds": 600});
+    let destination = json!({"environment": override_reference, "startup_timeout_seconds": 20});
+    let mut server = Server::respond(move |parts| {
+        let response = match parts.uri.path() {
+            "/vms/source-name/readiness" => source.clone(),
+            path if path == readiness_path => destination.clone(),
+            "/vms/create" => reply("createVm"),
+            path => panic!("unexpected request: {path}"),
+        };
+        Response::new(Body::from(response.to_string()))
+    })
+    .await;
+    let hv = Hypervisor::new(&server.url, "private-token").unwrap();
+    for override_destination in [false, true] {
+        let environment = override_destination.then(|| serde_json::from_value(override_reference.clone()).unwrap());
+        hv.create(CreateOptions {
+            from: Some("source-name".into()),
+            environment,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+        let (parts, payload) = server.received.recv().await.unwrap();
+        assert_eq!(parts.uri, "/vms/source-name/readiness?intent=clone");
+        assert!(payload.is_empty());
+        if override_destination {
+            request(&mut server, readiness_path).await;
+        }
+        let body = request(&mut server, "/vms/create").await;
+        assert_eq!(body["from"], "source-name");
+        assert_eq!(body["expected_source"], selected);
+        assert_eq!(
+            &body["environment"],
+            if override_destination {
+                &override_reference
+            } else {
+                &serde_json::Value::Null
+            }
+        );
+    }
+    assert!(server.received.try_recv().is_err());
+}
+
+#[tokio::test]
 async fn environment_launch_preserves_revision_and_refuses_inline_overrides_before_http() {
     let mut server = gateway().await;
     let hv = Hypervisor::new(&server.url, "private-token").unwrap();

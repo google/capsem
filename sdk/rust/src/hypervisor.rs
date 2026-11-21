@@ -134,6 +134,7 @@ impl Hypervisor {
         let ram_mb = Self::memory_mb(options.memory)?;
         Ok(models::ProvisionRequest {
             environment: options.environment,
+            from: options.from,
             attach: options.attach,
             persistent: name.is_some(),
             name,
@@ -155,7 +156,7 @@ impl Hypervisor {
         // A saved revision may select an image without an inline container.
         if body.attach || body.container.is_some() {
             Some(true)
-        } else if body.environment.is_some() {
+        } else if body.environment.is_some() || body.from.is_some() {
             None
         } else {
             Some(false)
@@ -163,9 +164,9 @@ impl Hypervisor {
     }
 
     pub async fn create(&self, options: CreateOptions) -> Result<VM> {
-        let body = Self::provision_request(options)?;
+        let mut body = Self::provision_request(options)?;
         let has_container = Self::provision_has_container(&body);
-        let call_options = crate::create_call_options(&self.client.transport, &body, self.client.options).await?;
+        let call_options = crate::prepare_create(&self.client.transport, &mut body, self.client.options).await?;
         let result = api::create_vm(&self.client.transport, &api::CreateVmParams { body }, call_options).await?;
         VM::created(self.client.clone(), result.id, result.name, has_container)
     }

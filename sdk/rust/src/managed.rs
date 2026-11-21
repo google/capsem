@@ -228,7 +228,7 @@ impl Hypervisor {
         }
         let mut body = Self::provision_request(options)?;
         let client = self.managed_client();
-        let create_options = crate::create_call_options(&client.transport, &body, client.options).await?;
+        let create_options = crate::prepare_create(&client.transport, &mut body, client.options).await?;
         let mut session = ManagedSession::new(client)?;
         session.create_options = create_options;
         body.managed = Some(models::ManagedSessionCreate {
