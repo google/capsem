@@ -3,6 +3,7 @@ import {localConnection} from '#local';
 import {Debug} from './debug.js';
 import {Images} from './images.js';
 import {Environments} from './environments.js';
+import {Requests} from './requests.js';
 import {Credentials} from './credentials.js';
 import {Connections} from './connections.js';
 import {ManagedSession} from './managed.js';
@@ -31,6 +32,7 @@ export class Hypervisor extends Client {
   readonly debug: Debug;
   readonly images: Images;
   readonly environments: Environments;
+  readonly requests: Requests;
   readonly credentials: Credentials;
   readonly connections: Connections;
   constructor(url?: string, token?: string, options: TransportOptions = {}) {
@@ -45,6 +47,7 @@ export class Hypervisor extends Client {
     this.debug = new Debug(transport);
     this.images = new Images(transport);
     this.environments = new Environments(transport);
+    this.requests = new Requests(transport);
     this.credentials = new Credentials(transport);
     this.connections = new Connections(transport);
   }

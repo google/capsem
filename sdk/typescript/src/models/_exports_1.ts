@@ -1,5 +1,6 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+export type { PluginConfiguration_CredentialBrokerOptions } from "./PluginConfiguration_CredentialBrokerOptions.js";
 export type { PluginConfiguration_CredentialBrokerOptionsOptions } from "./PluginConfiguration_CredentialBrokerOptionsOptions.js";
 export type { PluginConfiguration_DummyPostAllowOptions } from "./PluginConfiguration_DummyPostAllowOptions.js";
 export { PluginConfiguration_DummyPostAllowOptionsMode } from "./PluginConfiguration_DummyPostAllowOptionsMode.js";
@@ -33,7 +34,13 @@ export { RawContentKind } from "./RawContentKind.js";
 export { RawContentReason } from "./RawContentReason.js";
 export type { RegistryAccess } from "./RegistryAccess.js";
 export { RequestApplicationState } from "./RequestApplicationState.js";
+export type { RequestDecisionDetails } from "./RequestDecisionDetails.js";
+export type { RequestDetailResponse } from "./RequestDetailResponse.js";
+export { RequestKind } from "./RequestKind.js";
+export type { RequestListResponse } from "./RequestListResponse.js";
+export { RequestReviewAvailability } from "./RequestReviewAvailability.js";
 export { RequestState } from "./RequestState.js";
+export type { RequestSummary } from "./RequestSummary.js";
 export type { ResourceSummary } from "./ResourceSummary.js";
 export { RestartAuthentication } from "./RestartAuthentication.js";
 export type { RestartResponse } from "./RestartResponse.js";

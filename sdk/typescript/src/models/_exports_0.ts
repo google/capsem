@@ -72,6 +72,7 @@ export type { EnvironmentMutationResponse } from "./EnvironmentMutationResponse.
 export type { EnvironmentPackages } from "./EnvironmentPackages.js";
 export type { EnvironmentPlugins } from "./EnvironmentPlugins.js";
 export type { EnvironmentReadinessResponse } from "./EnvironmentReadinessResponse.js";
+export type { EnvironmentReviewContent } from "./EnvironmentReviewContent.js";
 export type { EnvironmentRevisionReference } from "./EnvironmentRevisionReference.js";
 export type { EnvironmentRuleParameter } from "./EnvironmentRuleParameter.js";
 export type { EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRule } from "./EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRule.js";
@@ -199,4 +200,3 @@ export type { PanicsResponse } from "./PanicsResponse.js";
 export type { PersistRequest } from "./PersistRequest.js";
 export type { PersistResponse } from "./PersistResponse.js";
 export type { PiiFilterConfiguration } from "./PiiFilterConfiguration.js";
-export type { PluginConfiguration_CredentialBrokerOptions } from "./PluginConfiguration_CredentialBrokerOptions.js";

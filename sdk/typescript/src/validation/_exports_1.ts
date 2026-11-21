@@ -1,5 +1,6 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+export {PluginConfiguration_CredentialBrokerOptionsSchema} from "./PluginConfiguration_CredentialBrokerOptions.js";
 export {PluginConfiguration_CredentialBrokerOptionsOptionsSchema} from "./PluginConfiguration_CredentialBrokerOptionsOptions.js";
 export {PluginConfiguration_DummyPostAllowOptionsSchema} from "./PluginConfiguration_DummyPostAllowOptions.js";
 export {PluginConfiguration_DummyPostAllowOptionsModeSchema} from "./PluginConfiguration_DummyPostAllowOptionsMode.js";
@@ -33,7 +34,13 @@ export {RawContentKindSchema} from "./RawContentKind.js";
 export {RawContentReasonSchema} from "./RawContentReason.js";
 export {RegistryAccessSchema} from "./RegistryAccess.js";
 export {RequestApplicationStateSchema} from "./RequestApplicationState.js";
+export {RequestDecisionDetailsSchema} from "./RequestDecisionDetails.js";
+export {RequestDetailResponseSchema} from "./RequestDetailResponse.js";
+export {RequestKindSchema} from "./RequestKind.js";
+export {RequestListResponseSchema} from "./RequestListResponse.js";
+export {RequestReviewAvailabilitySchema} from "./RequestReviewAvailability.js";
 export {RequestStateSchema} from "./RequestState.js";
+export {RequestSummarySchema} from "./RequestSummary.js";
 export {ResourceSummarySchema} from "./ResourceSummary.js";
 export {RestartAuthenticationSchema} from "./RestartAuthentication.js";
 export {RestartResponseSchema} from "./RestartResponse.js";

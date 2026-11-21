@@ -68,6 +68,31 @@ it('refuses a substituted environment identity', async () => {
   });
 });
 
+it('reads review provenance and refuses a changed request identity', async () => {
+  const summary = {
+    request_id: requestId, kind: 'environment_change', environment_id: environmentId, actor: 'operator',
+    reason: 'test review', timestamp_unix_ms: 1, expires_at_unix_ms: 1000, decision: 'pending', application: 'pending',
+  };
+  const detail = {
+    summary, observed_revision: '0123456789ab',
+    proposed: {availability: 'complete', purged_variables: [], specification: {name: 'development', variables: {EDITOR: 'emacs'}}},
+    targets: [],
+  };
+  await gateway((request, response) => response.end(JSON.stringify(
+    request.url?.startsWith('/requests/list') ? {requests: [summary], next_cursor: 9} : detail,
+  )), async (url, received) => {
+    const hv = new Hypervisor(url, 'token');
+    try {
+      expect(await hv.requests.list({after: 7, limit: 1, pendingOnly: true})).toMatchObject({next_cursor: 9});
+      expect(await hv.requests.info(requestId)).toEqual(detail);
+      await expect(hv.requests.info(environmentId)).rejects.toThrow('identity changed');
+      expect(received.map(request => request.url)).toEqual([
+        '/requests/list?after=7&limit=1&pending_only=true', `/requests/${requestId}/info`, `/requests/${environmentId}/info`,
+      ]);
+    } finally { hv.close(); }
+  });
+});
+
 it.each(['create', 'change'] as const)('retains the %s budget, deadlines and cancellation without replay', async mutation => {
   await gateway((_request, response) => {setTimeout(() => response.end(JSON.stringify(pending)), 150);}, async (url, received) => {
     const hv = new Hypervisor(url, 'token', {timeoutMs: 30});

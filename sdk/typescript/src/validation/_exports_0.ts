@@ -72,6 +72,7 @@ export {EnvironmentMutationResponseSchema} from "./EnvironmentMutationResponse.j
 export {EnvironmentPackagesSchema} from "./EnvironmentPackages.js";
 export {EnvironmentPluginsSchema} from "./EnvironmentPlugins.js";
 export {EnvironmentReadinessResponseSchema} from "./EnvironmentReadinessResponse.js";
+export {EnvironmentReviewContentSchema} from "./EnvironmentReviewContent.js";
 export {EnvironmentRevisionReferenceSchema} from "./EnvironmentRevisionReference.js";
 export {EnvironmentRuleParameterSchema} from "./EnvironmentRuleParameter.js";
 export {EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRuleSchema} from "./EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRule.js";
@@ -199,4 +200,3 @@ export {PanicsResponseSchema} from "./PanicsResponse.js";
 export {PersistRequestSchema} from "./PersistRequest.js";
 export {PersistResponseSchema} from "./PersistResponse.js";
 export {PiiFilterConfigurationSchema} from "./PiiFilterConfiguration.js";
-export {PluginConfiguration_CredentialBrokerOptionsSchema} from "./PluginConfiguration_CredentialBrokerOptions.js";
