@@ -15,6 +15,7 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 use tokio::sync::oneshot;
+mod history;
 mod mutations;
 mod receipts;
 mod reviews;

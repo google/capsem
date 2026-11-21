@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Operators can inspect committed environment revisions and validate canonical TOML edits against the exact saved base through the gateway and SDKs.
 - Added: Create and edit saved environments in the desktop, with review before saving and safe reconciliation if a save response is lost.
 - Added: Browse saved environments in the desktop and launch the exact revision you select, even after refreshing the library.
 - Added: List and search the committed saved environments visible to your gateway credential, including their revision and availability.

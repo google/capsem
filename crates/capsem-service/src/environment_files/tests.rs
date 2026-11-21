@@ -224,6 +224,23 @@ async fn current_environment_keeps_clean_values_after_historical_value_purge() {
             .payload,
         capsem_logger::db::EnvironmentHistoryPayload::Purged { .. }
     ));
+    let revisions = crate::environment_revisions::EnvironmentRevisions::new(
+        Arc::new(EnvironmentFiles::open(f.path.parent().unwrap().parent().unwrap()).unwrap()),
+        f.ledger.clone(),
+    );
+    let purged = revisions.revision_detail(&id(1), &id(2)).await.unwrap().unwrap();
+    assert_eq!(
+        purged.availability,
+        capsem_api::requests::RequestReviewAvailability::Purged
+    );
+    assert!(purged.canonical_toml.is_none());
+    assert_eq!(purged.purged_variables, ["PRIVATE"]);
+    let partial = purged.partial_specification.unwrap();
+    assert!(!partial.variables.contains_key("PRIVATE"));
+    assert_eq!(partial.variables["KEPT"], "retained-value");
+    let page = revisions.list_history(id(1), None, 2).await.unwrap();
+    assert_eq!(page.revisions[0].environment.revision_id, id(4));
+    assert!(!page.revisions[1].replayable);
     assert_eq!(
         current.document.specification.variables["PRIVATE"],
         "different legitimate current value"

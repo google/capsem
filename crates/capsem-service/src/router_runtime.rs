@@ -18,6 +18,18 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/environments/list", get(environment_routes::library::list))
         .route("/environments/{id}/info", get(environment_routes::info))
         .route(
+            "/environments/{id}/revisions/list",
+            get(environment_routes::history::list),
+        )
+        .route(
+            "/environments/{id}/revisions/{revision_id}/info",
+            get(environment_routes::history::info),
+        )
+        .route(
+            "/environments/{id}/revisions/{revision_id}/validate",
+            post(environment_routes::history::validate_toml),
+        )
+        .route(
             "/environments/{id}/revisions/{revision_id}/readiness",
             get(environment_routes::readiness),
         )
