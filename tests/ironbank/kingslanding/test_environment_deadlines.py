@@ -11,11 +11,20 @@ from pathlib import Path
 import psutil
 import pytest
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.gateway import TcpHttpClient
 from helpers.sdk_packages import python_gateway, typescript_gateway
 from helpers.service import exec_output_text, vm_name
+from helpers.service_gateway import ServiceGateway
 
 from tests.fixtures.oci.registry import publish_catalog, registry
-from tests.ironbank.kingslanding.test_environment_startup import request, save
+from tests.ironbank.kingslanding.test_environment_startup import (
+    IMAGE_CONFIG,
+    STARTUP,
+    create,
+    observe,
+    request,
+    save,
+)
 from tests.ironbank.kingslanding.test_image_catalog import entry, use_catalog
 from tests.ironbank.kingslanding.test_run import cli, environment, service
 
@@ -25,6 +34,8 @@ ROOT = Path(__file__).resolve().parents[3]
 IMAGE = {"Env": ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],
          "WorkingDir": "/workspace", "Entrypoint": ["/bin/sh", "-c"],
          "Cmd": ['test "$(cat /workspace/long-startup)" = retained; exec redis-server --loglevel warning']}
+OLD_GATEWAY_BUDGET = 120
+COLD_STARTUP_SECONDS = OLD_GATEWAY_BUDGET + 8
 
 
 def retained(service, image, certificate, artifacts):
@@ -94,3 +105,102 @@ def test_installed_sdk_renews_long_preparation_and_cancels_original_owner(langua
                      success_marker="SDK_STARTUP_DEADLINE_OK", timeout_seconds=360)
         assert "SDK_IMAGE_PACKAGE_ACCEPTANCE_OK" in output and "SDK_STARTUP_DEADLINE_OK" in output
         assert_no_native_owner(service)
+
+
+@pytest.mark.parametrize("operation", ["start", "resume", "clone"])
+def test_gateway_cold_lifecycle_waits_for_the_retained_revision(
+    operation, service, tmp_path
+):
+    artifacts = {}
+    with registry(tmp_path, image_config=IMAGE_CONFIG, artifacts=artifacts) as (
+        image,
+        certificate,
+        _,
+    ):
+        authority = image.split("/", 1)[0]
+        publish_catalog(artifacts, "library/catalog", "stable", entry(image))
+        use_catalog(service, f"{authority}/library/catalog:stable", certificate)
+        script = STARTUP.removesuffix("sleep 3\n") + (
+            f'if [ "$count" -gt 0 ]; then sleep {COLD_STARTUP_SECONDS}; fi\n'
+        )
+        specification = {
+            "name": "cold-startup",
+            "image": {"reference": "redis"},
+            "startup": {"script": script, "timeout_seconds": COLD_STARTUP_SECONDS + 30},
+            "variables": {"BOUND_REVISION": "retained-variable"},
+        }
+        selected = save(service, specification)
+        source_name = vm_name("cold-startup")
+        source = create(service, selected, source_name)
+        original_generation = observe(service, source, selected, 1)
+        request(service, "POST", f"/vms/{source}/stop", {})
+        changed = {
+            **specification,
+            "startup": {"script": "exit 99", "timeout_seconds": 1},
+        }
+        head = request(
+            service,
+            "POST",
+            f"/environments/{selected['environment_id']}/changes",
+            {
+                "request_id": str(uuid.uuid4()),
+                "base_revision_id": selected["revision_id"],
+                "specification": changed,
+                "reason": "the shared head must not retarget a cold launch",
+            },
+        )["result"]
+        assert head != selected
+
+        gateway = ServiceGateway(service)
+        gateway.start()
+        api = TcpHttpClient(gateway.base_url, gateway.token)
+        try:
+            intent = "clone" if operation == "clone" else "start"
+            lookup = source_name if operation == "clone" else source
+            readiness = api.get(f"/vms/{lookup}/readiness?intent={intent}")
+            assert readiness == {
+                "selection": {
+                    "id": source,
+                    "generation": original_generation,
+                    "running": False,
+                    "environment": selected,
+                },
+                "startup_timeout_seconds": COLD_STARTUP_SECONDS + 30,
+            }
+            if operation == "clone":
+                path = "/vms/create"
+                payload = {
+                    "name": vm_name("cold-clone"),
+                    "from": source_name,
+                    "ram_mb": DEFAULT_RAM_MB,
+                    "cpus": DEFAULT_CPUS,
+                }
+            else:
+                path = f"/vms/{source}/{operation}"
+                payload = (
+                    {"expected": readiness["selection"]}
+                    if operation == "resume"
+                    else {}
+                )
+            started = time.monotonic()
+            code, result = api.call_json(
+                "POST", path, payload, timeout=COLD_STARTUP_SECONDS + 75
+            )
+            assert code == 200, (code, result)
+            assert time.monotonic() - started >= COLD_STARTUP_SECONDS
+            target = result["id"]
+            assert (target != source) == (operation == "clone")
+            try:
+                generation = observe(service, target, selected, 2)
+                assert generation != original_generation
+                if operation != "clone":
+                    code, error = api.call_json(
+                        "POST", path, {"expected": readiness["selection"]}
+                    )
+                    assert code == 409, (code, error)
+                    assert observe(service, target, selected, 2) == generation
+            finally:
+                request(service, "DELETE", f"/vms/{target}/delete")
+        finally:
+            api.close()
+            gateway.stop()
