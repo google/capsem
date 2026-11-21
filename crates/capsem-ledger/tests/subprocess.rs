@@ -77,6 +77,18 @@ fn body_event() -> WriteOp {
     })
 }
 
+fn denied_event() -> WriteOp {
+    let WriteOp::NetEvent(mut event) = body_event() else {
+        unreachable!()
+    };
+    event.event_id = Some("0123456789ac".into());
+    event.decision = Decision::Denied;
+    event.path = Some("/denied".into());
+    event.status_code = Some(403);
+    event.request_body = None;
+    WriteOp::NetEvent(event)
+}
+
 #[tokio::test]
 async fn executable_opens_one_ledger_and_reports_durable_stop() {
     let dir = tempfile::tempdir().unwrap();
@@ -150,6 +162,13 @@ async fn executable_opens_one_ledger_and_reports_durable_stop() {
             },
         ),
         (2, LedgerCommand::Flush),
+        (
+            3,
+            LedgerCommand::Admit {
+                event: Box::new(denied_event()),
+            },
+        ),
+        (4, LedgerCommand::Flush),
     ] {
         sender
             .send(LedgerClientMessage::Request {
@@ -167,6 +186,18 @@ async fn executable_opens_one_ledger_and_reports_durable_stop() {
             }
         ));
     }
+    assert_eq!(
+        event(&events).await,
+        LedgerControlEvent::DenialObserved { generation: GENERATION }
+    );
+    let observer = capsem_logger::DbHandle::open_external_reader(&database).unwrap();
+    observer.ready().await.unwrap();
+    let rows = observer
+        .query("SELECT path FROM net_events WHERE decision = 'denied'", &[])
+        .await
+        .unwrap();
+    assert!(rows.contains("/denied"), "{rows}");
+    drop(observer);
     requests
         .send(
             &encode_ledger_control_request(LedgerControlRequest::Shutdown { generation: GENERATION }),

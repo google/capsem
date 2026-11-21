@@ -165,6 +165,11 @@ async fn run_control(
     generation: LedgerGeneration,
     client_limit: usize,
 ) -> Result<()> {
+    let mut denials = server
+        .subscribe_denials()
+        .await
+        .map_err(anyhow::Error::msg)
+        .context("load initial ledger denial count")?;
     let shutdown = control.try_clone()?;
     let sender = ControlSender::new(control.try_clone()?)?;
     let receiver = ControlReceiver::new(control)?;
@@ -178,12 +183,15 @@ async fn run_control(
         let mut active_ids = HashSet::new();
         let mut seen_ids = HashSet::new();
         loop {
-            let next = if clients.is_empty() {
-                ControlInput::Frame(frames.recv().await.context("ledger control channel closed")?)
-            } else {
-                tokio::select! {
-                    frame = frames.recv() => ControlInput::Frame(frame.context("ledger control channel closed")?),
-                    result = clients.join_next() => ControlInput::Client(result.expect("nonempty ledger client set")),
+            let next = tokio::select! {
+                frame = frames.recv() => ControlInput::Frame(frame.context("ledger control channel closed")?),
+                result = clients.join_next(), if !clients.is_empty() => {
+                    ControlInput::Client(result.expect("nonempty ledger client set"))
+                }
+                observed = denials.changed() => {
+                    observed.context("ledger denial observation closed")?;
+                    send_event(&sender, LedgerControlEvent::DenialObserved { generation }).await?;
+                    continue;
                 }
             };
             match next {
