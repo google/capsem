@@ -70,6 +70,13 @@ export class Environments {
     verifyRevision(base, result.base);
     return result;
   }
+
+  /** Read the rules compiled for an exact current environment revision. */
+  async rules(reference: models.EnvironmentRevisionReference, options: CallOptions = {}): Promise<models.EnvironmentRuleListResponse> {
+    const result = await api.listEnvironmentRules(this.transport, {id: reference.environment_id, revision_id: reference.revision_id}, options);
+    verifyRevision(reference, result.revision);
+    return result;
+  }
 }
 
 function verifyRevision(expected: models.EnvironmentRevisionReference, actual: models.EnvironmentRevisionReference): void {

@@ -27,7 +27,7 @@ async fn launch_policy_uses_pinned_rule_content_and_current_catalog_admission() 
     let original = fx.registry.publish(kind, document(kind, false));
     let app = crate::router_runtime::build_service_router(fx.state.clone());
     let intent = json!({"request_id":id(401),"reason":"pinned runtime rule","specification":{"name":"runtime-rules","access":{"catalog":{"selected":[{"id":"review","version":"1.0.0"}]}}}});
-    let (status, body) = route_request(app, Method::POST, "/environments/create", Some(intent)).await;
+    let (status, body) = route_request(app.clone(), Method::POST, "/environments/create", Some(intent)).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let response: capsem_api::EnvironmentMutationResponse = serde_json::from_value(body).unwrap();
     let reference = response.result.unwrap();
@@ -38,6 +38,14 @@ async fn launch_policy_uses_pinned_rule_content_and_current_catalog_admission() 
     let mut changed = document(kind, false);
     changed["entries"][0]["definition"]["rule"]["action"] = "block".into();
     assert_ne!(fx.registry.publish(kind, changed), original);
+    let route = format!("/environments/{}/rules/list?revision_id={}", reference.environment_id, reference.revision_id);
+    let (status, projected) = route_request(app.clone(), Method::GET, &route, None).await;
+    assert_eq!(status, StatusCode::OK, "{projected}");
+    let projected: capsem_api::EnvironmentRuleListResponse = serde_json::from_value(projected).unwrap();
+    let selected = projected.access.iter().find(|rule| rule.id == "environment.access.catalog.review").unwrap();
+    assert_eq!(selected.action, capsem_config::SecurityRuleAction::Allow);
+    assert_eq!(selected.source, capsem_api::environments::EnvironmentRuleSource::Catalog);
+    assert!(selected.editable_key.is_none());
     let compile = || {
         let reference = reference.clone();
         let session = directory.path().join("launch");
@@ -67,6 +75,8 @@ async fn launch_policy_uses_pinned_rule_content_and_current_catalog_admission() 
         compile().await.unwrap().is_err(),
         "known revocation survives catalog rollback"
     );
+    let (status, _) = route_request(app, Method::GET, &route, None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
     fx.corporate.lock().unwrap().catalogs = Some(CatalogSources {
         rules: Some(descriptor(format!("{}/team/private:stable", fx.registry.address))),
         ..Default::default()

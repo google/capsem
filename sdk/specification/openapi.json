@@ -940,6 +940,62 @@
         }
       }
     },
+    "/environments/{id}/rules/list": {
+      "get": {
+        "description": "Compile the saved environment's rules using current corporate policy and admitted catalog definitions. Supply revision_id to require the exact current revision.",
+        "operationId": "listEnvironmentRules",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "revision_id",
+            "in": "query",
+            "description": "Require the current environment to match this saved revision.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentRuleListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/host-logs/{name}": {
       "get": {
         "description": "Send Accept: application/json for the typed response. Without it the route returns plain text.",
@@ -6122,6 +6178,105 @@
         },
         "additionalProperties": false
       },
+      "EnvironmentEffectiveAccessRule": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "condition",
+          "action",
+          "priority",
+          "enabled",
+          "source",
+          "locked",
+          "detection_level",
+          "editable_key"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/SecurityRuleAction"
+          },
+          "condition": {
+            "type": "string"
+          },
+          "detection_level": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/DetectionLevel"
+              }
+            ]
+          },
+          "editable_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A direct custom rule's key in the saved specification, when editable."
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "locked": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "source": {
+            "$ref": "#/components/schemas/EnvironmentRuleSource"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentEffectiveDetectionRule": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "condition",
+          "level",
+          "enabled",
+          "source",
+          "editable_key"
+        ],
+        "properties": {
+          "condition": {
+            "type": "string"
+          },
+          "editable_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "level": {
+            "$ref": "#/components/schemas/DetectionLevel"
+          },
+          "name": {
+            "type": "string"
+          },
+          "source": {
+            "$ref": "#/components/schemas/EnvironmentRuleSource"
+          }
+        },
+        "additionalProperties": false
+      },
       "EnvironmentIdentity": {
         "type": "object",
         "required": [
@@ -7036,6 +7191,35 @@
         },
         "additionalProperties": false
       },
+      "EnvironmentRuleListResponse": {
+        "type": "object",
+        "description": "Compiled rules for a saved blueprint under current corporate policy.\nA running VM can still be bound to an older revision or policy snapshot.",
+        "required": [
+          "revision",
+          "access",
+          "detection"
+        ],
+        "properties": {
+          "access": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentEffectiveAccessRule"
+            },
+            "description": "Enforcement order, with lower priorities evaluated first."
+          },
+          "detection": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentEffectiveDetectionRule"
+            },
+            "description": "Observations have severity and do not make access decisions."
+          },
+          "revision": {
+            "$ref": "#/components/schemas/EnvironmentRevisionReference"
+          }
+        },
+        "additionalProperties": false
+      },
       "EnvironmentRuleParameter": {
         "oneOf": [
           {
@@ -7056,6 +7240,16 @@
           }
         ],
         "description": "Parameter kinds supported by the initial rule catalogs. The registry's\ntyped descriptor additionally validates names, choices and numeric bounds."
+      },
+      "EnvironmentRuleSource": {
+        "type": "string",
+        "enum": [
+          "builtin",
+          "corporate",
+          "environment",
+          "catalog",
+          "environment_mcp"
+        ]
       },
       "EnvironmentRules_EnvironmentCatalogPin_EnvironmentAccessRule": {
         "type": "object",
@@ -11765,6 +11959,17 @@
           "ask",
           "block",
           "rewrite"
+        ]
+      },
+      "SecurityRuleAction": {
+        "type": "string",
+        "enum": [
+          "allow",
+          "ask",
+          "block",
+          "preprocess",
+          "rewrite",
+          "postprocess"
         ]
       },
       "ServiceAvailability": {

@@ -78,6 +78,7 @@ from .list_environment_plugins import (
 from .list_environment_revisions import (
     list_environment_revisions as list_environment_revisions,
 )
+from .list_environment_rules import list_environment_rules as list_environment_rules
 from .list_environments import list_environments as list_environments
 from .list_images import list_images as list_images
 from .list_mcp_servers import list_mcp_servers as list_mcp_servers

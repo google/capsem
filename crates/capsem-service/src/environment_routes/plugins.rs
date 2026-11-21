@@ -3,7 +3,7 @@ use super::*;
 use axum::extract::Query;
 use capsem_api::environments::{
     EnvironmentPluginDescriptor, EnvironmentPluginDirectionState, EnvironmentPluginEntry, EnvironmentPluginFieldValue,
-    EnvironmentPluginListQuery, EnvironmentPluginListResponse, EnvironmentRevisionReference,
+    EnvironmentPluginListResponse,
 };
 use capsem_config::plugins::{plugin_descriptors, EnvironmentPluginSource, EnvironmentPlugins, PluginDirection};
 use capsem_core::{environment::CompiledEnvironmentPlugins, net::policy_config::load_corp_policy_files};
@@ -25,31 +25,13 @@ pub(crate) async fn list(
     actor: AuthenticatedActor,
     State(state): State<Arc<ServiceState>>,
     Path(id): Path<String>,
-    Query(query): Query<EnvironmentPluginListQuery>,
+    Query(query): Query<EnvironmentPolicyListQuery>,
 ) -> Result<Json<EnvironmentPluginListResponse>, AppError> {
-    let Json(current) = super::info(actor.clone(), State(state.clone()), Path(id.clone())).await?;
-    let revision_id = current.document.identity.revision_id;
-    if let Some(expected) = query.revision_id {
-        EnvironmentRevisionReference {
-            environment_id: id.clone(),
-            revision_id: expected.clone(),
-        }
-        .validate()
-        .map_err(|error| AppError::new(StatusCode::BAD_REQUEST, error.into()))?;
-        if expected != revision_id {
-            return Err(AppError::new(
-                StatusCode::CONFLICT,
-                "saved environment revision changed".into(),
-            ));
-        }
-    }
-    let resolved = read(&state, current.document.specification.plugins).await;
-    authorize(&actor, &id)?;
+    let (reference, specification) = policy_document(&actor, &state, id, query).await?;
+    let resolved = read(&state, specification.plugins).await;
+    authorize(&actor, &reference.environment_id)?;
     Ok(Json(EnvironmentPluginListResponse {
-        revision: Some(EnvironmentRevisionReference {
-            environment_id: id,
-            revision_id,
-        }),
+        revision: Some(reference),
         plugins: resolved?,
     }))
 }

@@ -19,6 +19,7 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/environments/{id}/info", get(environment_routes::info))
         .route("/environments/plugins/list", get(environment_routes::plugins::defaults))
         .route("/environments/{id}/plugins/list", get(environment_routes::plugins::list))
+        .route("/environments/{id}/rules/list", get(environment_routes::rules::list))
         .route(
             "/environments/{id}/revisions/list",
             get(environment_routes::history::list),

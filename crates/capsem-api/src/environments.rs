@@ -5,6 +5,8 @@ mod plugins;
 pub use plugins::*;
 mod revisions;
 pub use revisions::*;
+mod rules;
+pub use rules::*;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
@@ -81,6 +83,14 @@ pub struct EnvironmentRevisionReference {
     pub environment_id: String,
     #[schema(format = "uuid")]
     pub revision_id: String,
+}
+
+#[derive(Debug, Deserialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentPolicyListQuery {
+    /// Require the current environment to match this saved revision.
+    #[param(format = "uuid")]
+    pub revision_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, IntoParams)]

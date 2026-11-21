@@ -99,3 +99,15 @@ class Environments:
         if result.base != base:
             raise ValueError("environment revision identity changed")
         return result
+
+    async def rules(
+        self, reference: models.EnvironmentRevisionReference, *, request_timeout: float | None = None,
+    ) -> models.EnvironmentRuleListResponse:
+        """Read the rules compiled for an exact current environment revision."""
+        result = await api.list_environment_rules(
+            self._transport, id=reference.environment_id, revision_id=reference.revision_id,
+            request_timeout=request_timeout,
+        )
+        if result.revision != reference:
+            raise ValueError("environment rule revision identity changed")
+        return result

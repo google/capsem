@@ -68,6 +68,8 @@ from .environment_change_request import EnvironmentChangeRequest
 from .environment_create_request import EnvironmentCreateRequest
 from .environment_current_response import EnvironmentCurrentResponse
 from .environment_document import EnvironmentDocument
+from .environment_effective_access_rule import EnvironmentEffectiveAccessRule
+from .environment_effective_detection_rule import EnvironmentEffectiveDetectionRule
 from .environment_identity import EnvironmentIdentity
 from .environment_image import EnvironmentImage
 from .environment_image_update_policy import EnvironmentImageUpdatePolicy
@@ -90,8 +92,6 @@ from .environment_plugin_descriptor import EnvironmentPluginDescriptor
 from .environment_plugin_direction_state import EnvironmentPluginDirectionState
 from .environment_plugin_entry import EnvironmentPluginEntry
 from .environment_plugin_field import EnvironmentPluginField
-from .environment_plugin_field_dependency import EnvironmentPluginFieldDependency
-from .environment_plugin_field_value import EnvironmentPluginFieldValue
 
 __all__ = [
     'AgentAccessScope',
@@ -154,6 +154,8 @@ __all__ = [
     'EnvironmentCreateRequest',
     'EnvironmentCurrentResponse',
     'EnvironmentDocument',
+    'EnvironmentEffectiveAccessRule',
+    'EnvironmentEffectiveDetectionRule',
     'EnvironmentIdentity',
     'EnvironmentImage',
     'EnvironmentImageUpdatePolicy',
@@ -172,6 +174,4 @@ __all__ = [
     'EnvironmentPluginDirectionState',
     'EnvironmentPluginEntry',
     'EnvironmentPluginField',
-    'EnvironmentPluginFieldDependency',
-    'EnvironmentPluginFieldValue',
 ]

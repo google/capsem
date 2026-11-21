@@ -77,6 +77,12 @@ inspect its options, protocol coverage, and any saved values overridden by
 corporate policy. Editable options are included in the same review before
 saving.
 
+Open **Access rules** or **Detection rules** on a saved environment to see
+the compiled rules under current corporate policy. Access rules appear in
+enforcement order, with lower priorities first. Detection rules show the
+severity they report. You can filter by rule name or source and stage a
+custom rule's enabled state before reviewing and saving.
+
 To edit a saved revision as text, open **TOML** in its editor. Keep the
 revision identity fields as shown. When changing an image, repository, or
 catalog selector, remove its old resolution fields so Capsem can resolve the

@@ -7,7 +7,7 @@ pub mod environments;
 pub use environments::{
     EnvironmentChangeRequest, EnvironmentCreateRequest, EnvironmentCurrentResponse, EnvironmentListResponse,
     EnvironmentMutationResponse, EnvironmentPluginListResponse, EnvironmentReadinessResponse, EnvironmentRevisionDetailResponse,
-    EnvironmentRevisionListResponse, EnvironmentTomlValidationRequest, EnvironmentTomlValidationResponse,
+    EnvironmentRevisionListResponse, EnvironmentRuleListResponse, EnvironmentTomlValidationRequest, EnvironmentTomlValidationResponse,
 };
 pub mod requests;
 pub use agent_access::*;

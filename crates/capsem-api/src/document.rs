@@ -32,8 +32,13 @@ pub fn openapi() -> OpenApi {
     let plugins = doc
         .operation::<environments::EnvironmentPluginListResponse>("/environments/{id}/plugins/list", "listEnvironmentPlugins")
         .description(Some("Inspect configured and effective plugins for a saved environment under current corporate policy. Supply revision_id to require the exact current revision."))
-        .parameters(Some(environments::EnvironmentPluginListQuery::into_params(|| Some(ParameterIn::Query))));
+        .parameters(Some(environments::EnvironmentPolicyListQuery::into_params(|| Some(ParameterIn::Query))));
     doc.add("/environments/{id}/plugins/list", HttpMethod::Get, plugins);
+    let rules = doc
+        .operation::<EnvironmentRuleListResponse>("/environments/{id}/rules/list", "listEnvironmentRules")
+        .description(Some("Compile the saved environment's rules using current corporate policy and admitted catalog definitions. Supply revision_id to require the exact current revision."))
+        .parameters(Some(environments::EnvironmentPolicyListQuery::into_params(|| Some(ParameterIn::Query))));
+    doc.add("/environments/{id}/rules/list", HttpMethod::Get, rules);
     let revisions = doc
         .operation::<EnvironmentRevisionListResponse>("/environments/{id}/revisions/list", "listEnvironmentRevisions")
         .description(Some("List committed revisions newest first for the operator."))

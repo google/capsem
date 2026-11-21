@@ -9,6 +9,7 @@ use axum::{
 use capsem_api::{
     environments::{
         EnvironmentChangeRequest, EnvironmentCreateRequest, EnvironmentCurrentResponse, EnvironmentMutationResponse,
+        EnvironmentPolicyListQuery, EnvironmentRevisionReference, EnvironmentSpecification,
     },
     AgentOperation,
 };
@@ -21,6 +22,7 @@ pub(crate) mod library;
 pub(crate) mod plugins;
 pub(crate) mod proposals;
 pub(crate) mod reviews;
+pub(crate) mod rules;
 mod sources;
 use capsem_core::managed_sessions::LeaseClock;
 use capsem_logger::db::EnvironmentReferenceQuery;
@@ -101,6 +103,24 @@ pub(crate) async fn info(
         reason: current.revision.reason,
         request_id: current.revision.request_id,
     }))
+}
+
+async fn policy_document(
+    actor: &AuthenticatedActor,
+    state: &Arc<ServiceState>,
+    id: String,
+    query: EnvironmentPolicyListQuery,
+) -> Result<(EnvironmentRevisionReference, EnvironmentSpecification), AppError> {
+    let Json(current) = info(actor.clone(), State(state.clone()), Path(id.clone())).await?;
+    let reference = EnvironmentRevisionReference { environment_id: id, revision_id: current.document.identity.revision_id };
+    if let Some(expected) = query.revision_id {
+        EnvironmentRevisionReference { environment_id: reference.environment_id.clone(), revision_id: expected.clone() }
+            .validate().map_err(|error| AppError::new(StatusCode::BAD_REQUEST, error.into()))?;
+        if expected != reference.revision_id {
+            return Err(AppError::new(StatusCode::CONFLICT, "saved environment revision changed".into()));
+        }
+    }
+    Ok((reference, current.document.specification))
 }
 
 /// Exact historical timing is data, not launch permission. Never consult the

@@ -1,5 +1,9 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .image_package_inventory import ImagePackageInventory
+from .image_pull_request import ImagePullRequest
+from .image_pull_response import ImagePullResponse
+from .image_surface import ImageSurface
 from .image_tool import ImageTool
 from .interaction import Interaction
 from .interaction_block import InteractionBlock
@@ -114,12 +118,12 @@ from .plugin_configuration__utf8_guard_options_mode import (
 from .plugin_configuration__utf8_guard_options_options import (
     PluginConfiguration_Utf8GuardOptionsOptions,
 )
-from .plugin_control_group import PluginControlGroup
-from .plugin_detail_capability import PluginDetailCapability
-from .plugin_direction import PluginDirection
-from .plugin_event_family import PluginEventFamily
 
 __all__ = [
+    'ImagePackageInventory',
+    'ImagePullRequest',
+    'ImagePullResponse',
+    'ImageSurface',
     'ImageTool',
     'Interaction',
     'InteractionBlock',
@@ -196,8 +200,4 @@ __all__ = [
     'PluginConfiguration_Utf8GuardOptions',
     'PluginConfiguration_Utf8GuardOptionsMode',
     'PluginConfiguration_Utf8GuardOptionsOptions',
-    'PluginControlGroup',
-    'PluginDetailCapability',
-    'PluginDirection',
-    'PluginEventFamily',
 ]

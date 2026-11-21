@@ -58,6 +58,7 @@ export {injectCredential} from "./injectCredential.js";
 export {listConnections} from "./listConnections.js";
 export {listEnvironmentPlugins} from "./listEnvironmentPlugins.js";
 export {listEnvironmentRevisions} from "./listEnvironmentRevisions.js";
+export {listEnvironmentRules} from "./listEnvironmentRules.js";
 export {listEnvironments} from "./listEnvironments.js";
 export {listImages} from "./listImages.js";
 export {listMcpServers} from "./listMcpServers.js";

@@ -998,6 +998,9 @@ json = { count = 1, reason = "http" }
 [sources."sdk/rust/src/operations/generated/list_environment_revisions.rs"]
 json = { count = 1, reason = "http" }
 
+[sources."sdk/rust/src/operations/generated/list_environment_rules.rs"]
+json = { count = 1, reason = "http" }
+
 [sources."sdk/rust/src/operations/generated/list_environments.rs"]
 json = { count = 1, reason = "http" }
 

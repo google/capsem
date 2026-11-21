@@ -1,10 +1,36 @@
 <script lang="ts">
-  import type { EnvironmentRevisionReference } from '@capsem/sdk';
+  import { onDestroy } from 'svelte';
+  import type { EnvironmentRevisionReference, EnvironmentRuleListResponse } from '@capsem/sdk';
+  import { listEnvironmentRules } from '../../api';
   import { environmentSectionKeys, environmentSections, type EnvironmentFields } from '../../models/environment-editor';
+  import { sessionActionError } from '../../models/session-action-error';
   import EnvironmentPluginFields from './EnvironmentPluginFields.svelte';
+  import EnvironmentRuleView from './EnvironmentRuleView.svelte';
   let { fields = $bindable(), pin, reference }: { fields: EnvironmentFields; pin?: string; reference: EnvironmentRevisionReference | null } = $props();
   const id = $props.id();
   const input = 'w-full rounded-lg border border-line-2 bg-background-1 px-3 py-2 text-sm text-foreground outline-hidden focus:border-primary';
+  let effectiveRules = $state<EnvironmentRuleListResponse | null>(null);
+  let rulesError = $state<string | null>(null);
+  let rulesLoading = $state(false);
+  let rulesReader: AbortController | null = null;
+
+  async function loadRules() {
+    if (!reference || rulesLoading) return;
+    const controller = new AbortController();
+    rulesReader = controller;
+    rulesLoading = true;
+    rulesError = null;
+    try {
+      const result = await listEnvironmentRules(reference, controller.signal);
+      if (!controller.signal.aborted) effectiveRules = result;
+    } catch (error) {
+      if (!controller.signal.aborted) rulesError = sessionActionError(error);
+    } finally {
+      if (!controller.signal.aborted) rulesLoading = false;
+    }
+  }
+
+  onDestroy(() => rulesReader?.abort());
 </script>
 
 <div class="space-y-4">
@@ -53,6 +79,28 @@
     {#each environmentSectionKeys as key (key)}
       {#if key === 'plugins'}
       <EnvironmentPluginFields {reference} bind:value={fields.sections.plugins} />
+      {:else if reference && (key === 'access' || key === 'detection')}
+      <details class="rounded-lg border border-line-2" ontoggle={event => {
+        if (event.currentTarget.open && !effectiveRules && !rulesError) void loadRules();
+      }}>
+        <summary class="cursor-pointer px-3 py-2 text-sm font-medium">{environmentSections[key]}</summary>
+        <div class="space-y-3 p-3 pt-0">
+          {#if effectiveRules}
+            <p class="text-xs text-muted-foreground-1">Effective rules for the saved revision under current corporate policy.</p>
+            <EnvironmentRuleView rules={effectiveRules[key]} bind:value={fields.sections[key]} />
+          {:else if rulesError}
+            <p role="alert" class="text-xs text-destructive-text">{rulesError}</p>
+            <button type="button" class="text-xs text-primary hover:underline" onclick={loadRules}>Retry effective rules</button>
+          {:else}
+            <p role="status" class="text-xs text-muted-foreground-1">Loading effective rules…</p>
+          {/if}
+          <details class="rounded-md border border-line-2 p-2">
+            <summary class="cursor-pointer text-xs font-medium">Edit rule definitions</summary>
+            <label for={`${id}-${key}`} class="mt-2 block text-xs text-muted-foreground-1">{environmentSections[key]} (JSON)</label>
+            <textarea id={`${id}-${key}`} class={`${input} font-mono`} bind:value={fields.sections[key]} rows="5" spellcheck="false"></textarea>
+          </details>
+        </div>
+      </details>
       {:else}
       <details class="rounded-lg border border-line-2">
         <summary class="cursor-pointer px-3 py-2 text-sm font-medium">{environmentSections[key]}</summary>

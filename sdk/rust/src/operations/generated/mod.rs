@@ -115,6 +115,8 @@ mod list_environment_plugins;
 pub use list_environment_plugins::{list_environment_plugins, ListEnvironmentPluginsParams};
 mod list_environment_revisions;
 pub use list_environment_revisions::{list_environment_revisions, ListEnvironmentRevisionsParams};
+mod list_environment_rules;
+pub use list_environment_rules::{list_environment_rules, ListEnvironmentRulesParams};
 mod list_environments;
 pub use list_environments::{list_environments, ListEnvironmentsParams};
 mod list_images;

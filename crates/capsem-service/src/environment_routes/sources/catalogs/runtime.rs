@@ -18,7 +18,10 @@ pub(crate) async fn launch_policy(
         .chain(&inputs.detection_rules().catalog.selected)
         .collect::<Vec<_>>();
     if pins.is_empty() {
-        return ActivePolicyFile::from_environment(inputs, None).map_err(|_| Error::InvalidIntent);
+        return ActivePolicyFile::from_environment(inputs, None).map_err(|error| {
+            tracing::warn!(%error, "could not compile saved environment policy");
+            Error::InvalidIntent
+        });
     }
     let kind = CatalogKind::Rules;
     let selected = source(state, kind).await?;
@@ -62,5 +65,8 @@ pub(crate) async fn launch_policy(
     }
     let pinned = retained.iter().collect::<Vec<_>>();
     let catalogs = RuleCatalogInputs::new(&[&current], &pinned).map_err(|_| Error::InvalidPin)?;
-    ActivePolicyFile::from_environment(inputs, Some(&catalogs)).map_err(|_| Error::InvalidPin)
+    ActivePolicyFile::from_environment(inputs, Some(&catalogs)).map_err(|error| {
+        tracing::warn!(%error, "could not compile saved environment policy with admitted catalogs");
+        Error::InvalidPin
+    })
 }

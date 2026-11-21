@@ -114,6 +114,20 @@ impl Environments<'_> {
         Ok(result)
     }
 
+    /// Read the rules compiled for an exact current environment revision.
+    pub async fn rules(&self, reference: &EnvironmentRevisionReference) -> Result<models::EnvironmentRuleListResponse> {
+        reference.validate().map_err(Error::InvalidInput)?;
+        let input = api::ListEnvironmentRulesParams {
+            id: reference.environment_id.clone(),
+            revision_id: Some(reference.revision_id.clone()),
+        };
+        let result = api::list_environment_rules(&self.0.transport, &input, self.0.options).await?;
+        if result.revision != *reference {
+            return Err(Error::InvalidResponse("environment rule revision identity changed"));
+        }
+        Ok(result)
+    }
+
     pub async fn validate_toml(
         &self,
         base: &EnvironmentRevisionReference,

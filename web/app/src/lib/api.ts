@@ -81,6 +81,10 @@ export function listEnvironmentPlugins(reference: EnvironmentRevisionReference |
   return _sdk.call(transport => new Environments(transport).plugins(reference, { signal }));
 }
 
+export function listEnvironmentRules(reference: EnvironmentRevisionReference, signal: AbortSignal) {
+  return _sdk.call(transport => new Environments(transport).rules(reference, { signal }));
+}
+
 export function listSavedEnvironmentRevisions(id: string, options: EnvironmentRevisionListOptions) {
   return _sdk.call(transport => new Environments(transport).listRevisions(id, options));
 }

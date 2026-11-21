@@ -8,15 +8,7 @@ use capsem_config::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use utoipa::{IntoParams, ToSchema};
-
-#[derive(Debug, Deserialize, IntoParams)]
-#[serde(deny_unknown_fields)]
-pub struct EnvironmentPluginListQuery {
-    /// Require the current environment to match this saved revision.
-    #[param(format = "uuid")]
-    pub revision_id: Option<String>,
-}
+use utoipa::ToSchema;
 
 /// Policy inputs for a new or saved environment under current corporate policy.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, ToSchema)]
