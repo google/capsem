@@ -81,6 +81,120 @@ def observe(service, vm, reference, count):
     return info["owner_generation"]
 
 
+def test_clone_uses_new_approved_controls_from_carried_image_bytes(service, tmp_path):
+    artifacts = {}
+    with registry(tmp_path, image_config=IMAGE_CONFIG, artifacts=artifacts) as (
+        image,
+        certificate,
+        requests,
+    ):
+        authority, repository = image.split("@", 1)[0].split("/", 1)
+        publish_catalog(artifacts, "library/catalog", "stable", entry(image))
+        use_catalog(service, f"{authority}/library/catalog:stable", certificate)
+        initial = {
+            "name": "carried-revision",
+            "image": {"reference": "redis"},
+            "startup": {
+                "script": STARTUP.replace("sleep 3\n", ""),
+                "timeout_seconds": 10,
+            },
+            "variables": {"BOUND_REVISION": "retained-variable", "OLD_ONLY": "old"},
+        }
+        original = save(service, initial)
+        name = vm_name("carried-source")
+        source = create(service, original, name)
+        generation = observe(service, source, original, 1)
+        request(service, "POST", f"/vms/{source}/stop", {})
+
+        def revise(base, specification):
+            return request(
+                service,
+                "POST",
+                f"/environments/{base['environment_id']}/changes",
+                {
+                    "request_id": str(uuid.uuid4()),
+                    "base_revision_id": base["revision_id"],
+                    "specification": specification,
+                    "reason": "verify fresh carried workload controls",
+                },
+            )["result"]
+
+        next_script = (
+            'set -eu\ntest -z "${OLD_ONLY+x}"\n'
+            'test "$(cat /workspace/prepared-value)" = retained-variable\n'
+            "printf next-approved > /workspace/choice\n" + initial["startup"]["script"]
+        )
+        next_revision = revise(
+            original,
+            {
+                **initial,
+                "startup": {"script": next_script, "timeout_seconds": 20},
+                "variables": {"BOUND_REVISION": "next-variable"},
+            },
+        )
+        head = revise(
+            next_revision,
+            {**initial, "startup": {"script": "exit 99", "timeout_seconds": 1}},
+        )
+        assert (
+            len(
+                {
+                    original["revision_id"],
+                    next_revision["revision_id"],
+                    head["revision_id"],
+                }
+            )
+            == 3
+        )
+
+        blobs = service.home_dir / "cache" / "oci-images" / "blobs"
+        assert blobs.is_dir() and any(path.is_file() for path in blobs.rglob("*"))
+        blobs.rename(blobs.with_name("test-original-blobs"))
+        prefix = f"/v2/{repository}/"
+        before = [path for path in requests if path.startswith(prefix)]
+        assert before, requests
+
+        clone = request(
+            service,
+            "POST",
+            "/vms/create",
+            {
+                "from": name,
+                "name": vm_name("carried-clone"),
+                "environment": next_revision,
+                "ram_mb": DEFAULT_RAM_MB,
+                "cpus": DEFAULT_CPUS,
+            },
+        )["id"]
+        try:
+            info = request(service, "GET", f"/vms/{clone}/info")["environment"]
+            assert (
+                info["boot"] == next_revision and info["owner_generation"] != generation
+            )
+            result = request(
+                service,
+                "POST",
+                f"/vms/{clone}/exec",
+                {
+                    "command": (
+                        'set -eu; test -z "${OLD_ONLY+x}"; test "$BOUND_REVISION" = next-variable; '
+                        'test "$(cat /workspace/entrypoint-count)" = 2; '
+                        'test "$(cat /workspace/choice)" = next-approved; redis-cli PING'
+                    )
+                },
+            )
+            assert (
+                result["exit_code"] == 0 and exec_output_text(result).strip() == "PONG"
+            ), result
+            assert (
+                request(service, "GET", f"/vms/{clone}/container")["state"] == "running"
+            )
+            assert [path for path in requests if path.startswith(prefix)] == before
+            assert not any(path.is_file() for path in blobs.rglob("*"))
+        finally:
+            request(service, "DELETE", f"/vms/{clone}/delete")
+
+
 def test_saved_startup_precedes_entrypoint_on_create_cold_resume_and_fork(service, tmp_path):
     artifacts = {}
     with registry(tmp_path, image_config=IMAGE_CONFIG, artifacts=artifacts) as (image, certificate, requests):
