@@ -42,4 +42,10 @@ ignore = [
   "RUSTSEC-2025-0100",
   "RUSTSEC-2025-0098",
 
+  # chrono is absent from the product, OCI and Linux desktop Cargo graphs.
+  # serde_with 3.23/3.24 records its disabled optional chrono feature in all
+  # three lockfiles, which lockfile-only scanners cannot distinguish from an
+  # enabled dependency. Recheck this upstream metadata hold by 2026-12-21.
+  "RUSTSEC-2026-0543",
+
 ]

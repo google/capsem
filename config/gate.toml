@@ -1939,6 +1939,7 @@ lockfiles = [
     "third_party/rust/alacritty_terminal/Cargo.lock",
     "third_party/rust/vte/Cargo.lock",
     "third_party/rust/oci-client/Cargo.lock",
+    "third_party/rust/rmcp/Cargo.lock",
     "third_party/rust/tauri-plugin-single-instance/Cargo.lock",
     "build_system/uv.lock",
     "integrations/inspect-ai/uv.lock",

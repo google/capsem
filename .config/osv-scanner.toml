@@ -9,16 +9,6 @@
 # all of this.
 
 [[IgnoredVulns]]
-id = "GHSA-fc5q-39xc-vjpf"
-ignoreUntil = 2026-12-17T00:00:00Z
-reason = "picomatch 2.3.2 and 4.0.5/4.0.7 occur only in upstream build/test tooling: Astro -> unstorage -> anymatch, Astro internal helpers, Vite -> tinyglobby/fdir, and Vitest. The web/app, web/docs, web/marketing and release-site builds emit static assets; their Node build dependencies are not shipped as runtime bundles. The locked mcp/typescript and sdk/typescript production dependency graphs contain no picomatch; their affected uses are dev tooling. Rechecked npm and GHSA-fc5q-39xc-vjpf on 2026-11-17: latest/dist-tag is 4.0.7 and the advisory lists no patched version. RELEASE.md section 8.2 permits this upstream build-time-only exception through 2026-12-17; recheck by then."
-
-[[IgnoredVulns]]
-id = "GHSA-gcqx-w48m-w2h4"
-ignoreUntil = 2026-12-16T00:00:00Z
-reason = "deepmerge 4.3.1 is used only for build-configuration merging by @astrojs/svelte 9.1.2 -> @sveltejs/vite-plugin-svelte 7.3.1 in web/app and web/marketing. The Vite plugin runs on the build host; it is not part of emitted static browser assets, native binaries or the VM runtime. Rechecked 2026-11-16 against npm: 4.3.1 remains the latest published version and the advisory lists no patched release. RELEASE.md section 8.2 permits this build-time-only upstream exception for at most 30 days. Recheck by 2026-12-16."
-
-[[IgnoredVulns]]
 id = "RUSTSEC-2024-0429"
 ignoreUntil = 2026-12-15T00:00:00Z
 reason = "glib 0.18 VariantStrIter unsoundness via the gtk-rs 0.18 stack Tauri, wry and tray-icon pin on Linux; we never use VariantStrIter"
@@ -52,6 +42,11 @@ reason = "unic-ucd-ident unmaintained, via urlpattern in tauri-utils; no replace
 id = "RUSTSEC-2025-0098"
 ignoreUntil = 2026-12-15T00:00:00Z
 reason = "unic-ucd-version unmaintained, via urlpattern in tauri-utils; no replacement until Tauri moves"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0543"
+ignoreUntil = 2026-12-21T00:00:00Z
+reason = "chrono is absent from Capsem, the vendored OCI client, patched rmcp and Linux desktop dependency graphs: all timestamp owners use jiff and cargo tree -i chrono is empty. Their lockfiles retain chrono only because serde_with 3.23/3.24 records its disabled optional chrono feature alongside active jiff support. OSV scans lock metadata without Cargo feature reachability. Recheck serde_with and the four exact graphs by 2026-12-21; remove this hold when serde_with drops the optional chrono feature."
 
 # Upstream container test harness, never part of the shipped OCI client.
 [[IgnoredVulns]]

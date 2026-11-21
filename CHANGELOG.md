@@ -121,7 +121,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Fixed: Asynchronous MCP replies delivered over GET now report oversized responses explicitly and reopen only the receive channel, preserving later calls without replaying operations.
 
-- Security: Time-box the unpatched Picomatch advisory in upstream static-site and JavaScript build/test tooling through December 17, 2026; shipped Node runtime dependency graphs do not contain it.
+- Security: Replace active `humantime` and `chrono` timestamp dependencies with `jiff` across Capsem, the OCI client and MCP runtime. Cargo graphs are chrono-free; the disabled optional chrono feature recorded by upstream `serde_with` remains under a bounded lockfile-only review through December 21, 2026.
 
 - Fixed: Oversized HTTP and SSE MCP replies return correlated Capsem transport errors without closing the tool peer or replaying the operation. Refused POST streams drop immediately; later calls remain usable.
 
@@ -281,7 +281,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Security: Update QUIC packet handling and Unix dependency resolutions to patched quinn-proto, quinn-udp, and rustix releases across the audited Rust lockfiles.
 
-- Security: Update Astro, its Svelte integration, and the host MCP server's HTTP dependencies to patched releases; keep the remaining build-only deepmerge advisory under a freshly reviewed, bounded exception.
+- Security: Update Astro, its Svelte integration, and the host MCP server's HTTP dependencies to patched releases; remove the previous build-only deepmerge hold once the live scanner no longer reports it.
 
 - Reuse the supported public release HTTP reader for client continuation and isolate npm publisher configuration from legacy registry credentials while preserving GitHub OIDC authority.
 
@@ -370,8 +370,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve the selected native binary's startup provenance across per-test gate-environment isolation, preventing packaged gateway, benchmark and mock-server tests from requesting unrelated rebuilds.
 
 - Honor the gateway's complete-token readiness marker in test fixtures before parsing prepared port files, preventing startup races from aborting release qualification.
-
-- Security: Except unpatched deepmerge 4.3.1 advisory GHSA-gcqx-w48m-w2h4 only in Svelte/Vite build tooling until November 10, 2026; the dependency does not ship in the static app, native binaries or VM runtime.
 
 - Give the standalone runtime boot probe a real descriptor-confined metadata authority for its writable VirtioFS share, preserving KVM admission and guest boot verification.
 
