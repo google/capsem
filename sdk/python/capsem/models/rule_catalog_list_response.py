@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from pydantic import ConfigDict, StrictStr
 
+from .catalog_snapshot import CatalogSnapshot
 from .model_base import Model
+from .rule_catalog_summary import RuleCatalogSummary
 
 
-class SkillCatalogSnapshot(Model):
+class RuleCatalogListResponse(Model):
     model_config = ConfigDict(strict=True, populate_by_name=True, extra="forbid")
-    digest: StrictStr
-    reference: StrictStr
-    snapshot: StrictStr
+    catalog: CatalogSnapshot
+    next_cursor: StrictStr | None = None
+    rules: list[RuleCatalogSummary]

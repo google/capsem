@@ -286,7 +286,7 @@ async fn catalog_skills_use_the_exact_listed_version_and_source() {
     }).await;
     let hv = Hypervisor::new(&server.url, "private-token").unwrap();
     let skills = hv.skills();
-    let page = skills.list(models::environments::SkillCatalogListQuery {
+    let page = skills.list(models::environments::CatalogListQuery {
         search: Some("review".into()), after: Some("page".into()), limit: Some(1),
     }).await.unwrap();
     assert_eq!(page.next_cursor.as_deref(), Some("next"));
@@ -301,4 +301,42 @@ async fn catalog_skills_use_the_exact_listed_version_and_source() {
     let mut wrong = page.catalog;
     wrong.digest = format!("sha256:{}", "1".repeat(64));
     assert!(matches!(skills.get("review", "1.0.0+preview", &wrong).await, Err(Error::InvalidResponse(_))));
+}
+
+#[tokio::test]
+async fn global_rules_return_typed_definitions_from_the_listed_catalog() {
+    let mut server = Server::respond(|parts| {
+        let reference = "registry.example/rules:stable";
+        let digest = format!("sha256:{}", "0".repeat(64));
+        let metadata = json!({"id":"review","version":"1.0.0","name":"Review","status":"active",
+            "publisher":"fixture","provenance":"fixture","license":"Apache-2.0","compatibility":{"min_runtime_contract":1}});
+        let body = if parts.uri.path() == "/rules/list" {
+            json!({"catalog":{"reference":reference,"digest":digest,"snapshot":"listed-snapshot"},
+                "rules":[{"metadata":metadata,"kind":"detection"}]})
+        } else {
+            json!({"selection":{"id":"review","version":"1.0.0","catalog_reference":reference,"resolved_digest":digest},
+                "metadata":metadata,"parameters":{"host":{"type":"text","default":"api.example","max_bytes":70}},
+                "definition":{"kind":"detection","rule":{"name":"Review","match":"http.host == {{host}}","level":"high"}}})
+        };
+        Response::new(Body::from(body.to_string()))
+    }).await;
+    let hv = Hypervisor::new(&server.url, "private-token").unwrap();
+    let rules = hv.rules();
+    let page = rules.list(models::environments::CatalogListQuery {
+        search: Some("review".into()), after: Some("first".into()), limit: Some(12),
+    }).await.unwrap();
+    assert_eq!(page.rules[0].kind, models::environments::CatalogRuleKind::Detection);
+    let (request, _) = server.received.recv().await.unwrap();
+    assert_eq!(request.uri.path(), "/rules/list");
+    assert_eq!(request.uri.query().unwrap(), "search=review&after=first&limit=12");
+    let detail = rules.get("review", "1.0.0", &page.catalog).await.unwrap();
+    let definition = serde_json::to_value(detail.definition).unwrap();
+    assert_eq!(definition["rule"]["match"], "http.host == {{host}}");
+    assert_eq!(serde_json::to_value(&detail.parameters["host"]).unwrap()["default"], "api.example");
+    let (request, _) = server.received.recv().await.unwrap();
+    assert_eq!(request.uri.path(), "/rules/review/info");
+    assert_eq!(request.uri.query().unwrap(), "version=1.0.0&snapshot=listed-snapshot");
+    let mut wrong = page.catalog;
+    wrong.reference = "registry.example/other:stable".into();
+    assert!(matches!(rules.get("review", "1.0.0", &wrong).await, Err(Error::InvalidResponse(_))));
 }

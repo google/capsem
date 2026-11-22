@@ -16,6 +16,7 @@ use capsem_api::{
 use capsem_core::environment::EnvironmentResolutionError;
 use capsem_service::environment_revisions::{EnvironmentMutationCoordinator, EnvironmentMutationError};
 mod application;
+pub(crate) mod catalog_discovery;
 pub(crate) mod decisions;
 pub(crate) mod history;
 pub(crate) mod library;

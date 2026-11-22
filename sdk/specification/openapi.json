@@ -2430,6 +2430,131 @@
         }
       }
     },
+    "/rules/list": {
+      "get": {
+        "description": "Discover available access and detection rules in the configured OCI catalog. Continue with next_cursor against the same source and digest.",
+        "operationId": "listCatalogRules",
+        "parameters": [
+          {
+            "name": "search",
+            "in": "query",
+            "description": "Case-insensitive match on catalog entry metadata.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "Continue with the cursor for the same source and catalog digest.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Number of matches per page, from 1 to 64. Defaults to 24.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuleCatalogListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/rules/{rule_id}/info": {
+      "get": {
+        "description": "Read the typed template and parameter definitions for an exact rule version. A moved catalog snapshot returns a conflict.",
+        "operationId": "getCatalogRule",
+        "parameters": [
+          {
+            "name": "rule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "Exact published entry version.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "snapshot",
+            "in": "query",
+            "description": "Source and digest token returned by the list.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RuleCatalogDetailResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/run": {
       "post": {
         "operationId": "runVm",
@@ -2561,7 +2686,7 @@
           {
             "name": "snapshot",
             "in": "query",
-            "description": "Source and digest token returned by the catalog list.",
+            "description": "Source and digest token returned by the list.",
             "required": true,
             "schema": {
               "type": "string"
@@ -5725,6 +5850,137 @@
           }
         }
       },
+      "CatalogRuleKind": {
+        "type": "string",
+        "description": "The family of facts and decisions described by a published rule.",
+        "enum": [
+          "access",
+          "detection"
+        ]
+      },
+      "CatalogRuleParameter": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "default",
+              "type"
+            ],
+            "properties": {
+              "default": {
+                "type": "boolean"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "boolean"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "default",
+              "min",
+              "max",
+              "type"
+            ],
+            "properties": {
+              "default": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "max": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "min": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "integer"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "default",
+              "max_bytes",
+              "type"
+            ],
+            "properties": {
+              "allow_empty": {
+                "type": "boolean"
+              },
+              "default": {
+                "type": "string"
+              },
+              "max_bytes": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "text"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "default",
+              "choices",
+              "type"
+            ],
+            "properties": {
+              "choices": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "default": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "choice"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "CatalogSnapshot": {
+        "type": "object",
+        "required": [
+          "reference",
+          "digest",
+          "snapshot"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "string"
+          },
+          "snapshot": {
+            "type": "string",
+            "description": "Supply this token when reading an entry from the snapshot."
+          }
+        },
+        "additionalProperties": false
+      },
       "ConnectionListResponse": {
         "type": "object",
         "required": [
@@ -6487,6 +6743,36 @@
           "native_consumer_sign_in"
         ]
       },
+      "EnvironmentAccessRule": {
+        "type": "object",
+        "required": [
+          "name",
+          "action",
+          "match"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/EnvironmentCapabilityDecision"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "match": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "priority": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
       "EnvironmentArchiveAction": {
         "type": "string",
         "enum": [
@@ -6723,6 +7009,29 @@
           "timestamp_unix_ms": {
             "type": "integer",
             "format": "int64"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentDetectionRule": {
+        "type": "object",
+        "required": [
+          "name",
+          "match",
+          "level"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "level": {
+            "$ref": "#/components/schemas/DetectionLevel"
+          },
+          "match": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
           }
         },
         "additionalProperties": false
@@ -12041,6 +12350,119 @@
           "revoked"
         ]
       },
+      "RuleCatalogDefinition": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "rule",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "access"
+                ]
+              },
+              "rule": {
+                "$ref": "#/components/schemas/EnvironmentAccessRule"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "rule",
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "detection"
+                ]
+              },
+              "rule": {
+                "$ref": "#/components/schemas/EnvironmentDetectionRule"
+              }
+            }
+          }
+        ]
+      },
+      "RuleCatalogDetailResponse": {
+        "type": "object",
+        "required": [
+          "selection",
+          "metadata",
+          "parameters",
+          "definition"
+        ],
+        "properties": {
+          "definition": {
+            "$ref": "#/components/schemas/RuleCatalogDefinition",
+            "description": "Published, validated rule template with parameter placeholders intact."
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/CatalogEntryMetadata"
+          },
+          "parameters": {
+            "type": "object",
+            "description": "Typed inputs available when selecting this version.",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/CatalogRuleParameter"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "selection": {
+            "$ref": "#/components/schemas/EnvironmentCatalogPin"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuleCatalogListResponse": {
+        "type": "object",
+        "required": [
+          "catalog",
+          "rules"
+        ],
+        "properties": {
+          "catalog": {
+            "$ref": "#/components/schemas/CatalogSnapshot"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rules": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuleCatalogSummary"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "RuleCatalogSummary": {
+        "type": "object",
+        "required": [
+          "metadata",
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/CatalogRuleKind"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/CatalogEntryMetadata"
+          }
+        },
+        "additionalProperties": false
+      },
       "RunRequest": {
         "type": "object",
         "required": [
@@ -12813,7 +13235,7 @@
         ],
         "properties": {
           "catalog": {
-            "$ref": "#/components/schemas/SkillCatalogSnapshot"
+            "$ref": "#/components/schemas/CatalogSnapshot"
           },
           "next_cursor": {
             "type": [
@@ -12826,27 +13248,6 @@
             "items": {
               "$ref": "#/components/schemas/CatalogEntryMetadata"
             }
-          }
-        },
-        "additionalProperties": false
-      },
-      "SkillCatalogSnapshot": {
-        "type": "object",
-        "required": [
-          "reference",
-          "digest",
-          "snapshot"
-        ],
-        "properties": {
-          "digest": {
-            "type": "string"
-          },
-          "reference": {
-            "type": "string"
-          },
-          "snapshot": {
-            "type": "string",
-            "description": "Supply this token when reading a skill from the snapshot."
           }
         },
         "additionalProperties": false

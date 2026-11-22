@@ -1,5 +1,16 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .environment_image_update_policy import EnvironmentImageUpdatePolicy
+from .environment_list_item import EnvironmentListItem
+from .environment_list_response import EnvironmentListResponse
+from .environment_list_summary import EnvironmentListSummary
+from .environment_mcp_definition import EnvironmentMcpDefinition
+from .environment_mcp_definition_remote import EnvironmentMcpDefinitionRemote
+from .environment_mcp_definition_sandbox import EnvironmentMcpDefinitionSandbox
+from .environment_mcp_permissions import EnvironmentMcpPermissions
+from .environment_mcps__environment_catalog_pin import (
+    EnvironmentMcps_EnvironmentCatalogPin,
+)
 from .environment_mcps__environment_catalog_selection import (
     EnvironmentMcps_EnvironmentCatalogSelection,
 )
@@ -101,17 +112,17 @@ from .fork_request import ForkRequest
 from .fork_response import ForkResponse
 from .grant_state import GrantState
 from .history_details import HistoryDetails
-from .history_entry import HistoryEntry
-from .history_layer import HistoryLayer
-from .history_layer_filter import HistoryLayerFilter
-from .history_response import HistoryResponse
-from .host_log_source import HostLogSource
-from .host_logs_response import HostLogsResponse
-from .host_triage_response import HostTriageResponse
-from .http_event import HttpEvent
-from .hypervisor_info import HypervisorInfo
 
 __all__ = [
+    'EnvironmentImageUpdatePolicy',
+    'EnvironmentListItem',
+    'EnvironmentListResponse',
+    'EnvironmentListSummary',
+    'EnvironmentMcpDefinition',
+    'EnvironmentMcpDefinitionRemote',
+    'EnvironmentMcpDefinitionSandbox',
+    'EnvironmentMcpPermissions',
+    'EnvironmentMcps_EnvironmentCatalogPin',
     'EnvironmentMcps_EnvironmentCatalogSelection',
     'EnvironmentMutationResponse',
     'EnvironmentPackages',
@@ -183,13 +194,4 @@ __all__ = [
     'ForkResponse',
     'GrantState',
     'HistoryDetails',
-    'HistoryEntry',
-    'HistoryLayer',
-    'HistoryLayerFilter',
-    'HistoryResponse',
-    'HostLogSource',
-    'HostLogsResponse',
-    'HostTriageResponse',
-    'HttpEvent',
-    'HypervisorInfo',
 ]

@@ -71,6 +71,8 @@ pub const ROUTES: &[&str] = &[
     "/requests/{id}/info",
     "/requests/{id}/resolve",
     "/restart",
+    "/rules/list",
+    "/rules/{rule_id}/info",
     "/run",
     "/security/latest",
     "/security/status",

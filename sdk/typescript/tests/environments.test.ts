@@ -278,8 +278,32 @@ it('reads global catalog skills for the exact selected source, version, and dige
         {...detail, selection: {...selection, resolved_digest: `sha256:${'1'.repeat(64)}`}},
       ]) {
         payload = invalid;
-        await expect(hv.skills.get('review', selection.version, page.catalog)).rejects.toThrow('Catalog skill identity changed');
+        await expect(hv.skills.get('review', selection.version, page.catalog)).rejects.toThrow('Catalog entry identity changed');
       }
+    } finally { hv.close(); }
+  });
+});
+
+it('reads typed published rules from the listed catalog snapshot', async () => {
+  const catalog = {reference: 'registry.example/rules:stable', digest: `sha256:${'0'.repeat(64)}`, snapshot: 'listed-snapshot'};
+  const selection = {id: 'review', version: '1.0.0', catalog_reference: catalog.reference, resolved_digest: catalog.digest};
+  const metadata = {id: selection.id, version: selection.version, name: 'Review', publisher: 'Fixture', provenance: 'Fixture catalog',
+    license: 'Apache-2.0', compatibility: {min_runtime_contract: 1}, status: 'active'};
+  const definition = {kind: 'detection', rule: {name: 'Review', match: 'http.host == {{host}}', level: 'high'}};
+  const parameters = {host: {type: 'text', default: 'api.example', max_bytes: 70}};
+  let payload: unknown = {catalog, rules: [{metadata, kind: 'detection'}], next_cursor: 'next'};
+  await gateway((_request, reply) => reply.end(JSON.stringify(payload)), async (url, received) => {
+    const hv = new Hypervisor(url, 'token');
+    try {
+      const page = await hv.rules.list({search: 'review', after: 'first', limit: 12});
+      expect(page.rules[0]?.kind).toBe('detection');
+      expect(received[0]?.url).toBe('/rules/list?search=review&after=first&limit=12');
+      const detail = {selection, metadata, definition, parameters};
+      payload = detail;
+      expect(await hv.rules.get('review', '1.0.0', page.catalog)).toMatchObject(detail);
+      expect(received[1]?.url).toBe('/rules/review/info?version=1.0.0&snapshot=listed-snapshot');
+      payload = {...detail, selection: {...selection, catalog_reference: 'registry.example/other:stable'}};
+      await expect(hv.rules.get('review', '1.0.0', page.catalog)).rejects.toThrow('Catalog entry identity changed');
     } finally { hv.close(); }
   });
 });

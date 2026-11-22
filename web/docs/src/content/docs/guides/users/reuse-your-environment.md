@@ -93,6 +93,11 @@ Open **Change history** to inspect older revisions. Complete revisions show
 canonical TOML. When values have been purged, the view identifies the removed
 variables and shows the remaining content when it is available.
 
+Use the SDK's `rules.list` method to browse the configured rule catalog.
+`rules.get` takes an entry's ID, version, and the listing's `catalog`, then
+returns its access or detection template and typed parameter definitions.
+Add a rule through an environment change request to put it into effect.
+
 Use the SDK's `skills.list` method to search the configured OCI catalog before
 selecting a skill. Pass the returned `next_cursor` as `after` to continue the
 same search. To read an entry, pass its ID and version and the page's `catalog`

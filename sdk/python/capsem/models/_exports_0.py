@@ -26,6 +26,13 @@ from .catalog_compatibility import CatalogCompatibility
 from .catalog_entry_metadata import CatalogEntryMetadata
 from .catalog_entry_status import CatalogEntryStatus
 from .catalog_info import CatalogInfo
+from .catalog_rule_kind import CatalogRuleKind
+from .catalog_rule_parameter import CatalogRuleParameter
+from .catalog_rule_parameter_boolean import CatalogRuleParameterBoolean
+from .catalog_rule_parameter_choice import CatalogRuleParameterChoice
+from .catalog_rule_parameter_integer import CatalogRuleParameterInteger
+from .catalog_rule_parameter_text import CatalogRuleParameterText
+from .catalog_snapshot import CatalogSnapshot
 from .connection_list_response import ConnectionListResponse
 from .connection_provider import ConnectionProvider
 from .connection_state import ConnectionState
@@ -54,6 +61,7 @@ from .detection_level import DetectionLevel
 from .disconnect_response import DisconnectResponse
 from .dns_event import DnsEvent
 from .enrollment_kind import EnrollmentKind
+from .environment_access_rule import EnvironmentAccessRule
 from .environment_archive_action import EnvironmentArchiveAction
 from .environment_archive_request import EnvironmentArchiveRequest
 from .environment_capability_decision import EnvironmentCapabilityDecision
@@ -74,22 +82,12 @@ from .environment_change_intent import EnvironmentChangeIntent
 from .environment_change_request import EnvironmentChangeRequest
 from .environment_create_request import EnvironmentCreateRequest
 from .environment_current_response import EnvironmentCurrentResponse
+from .environment_detection_rule import EnvironmentDetectionRule
 from .environment_document import EnvironmentDocument
 from .environment_effective_access_rule import EnvironmentEffectiveAccessRule
 from .environment_effective_detection_rule import EnvironmentEffectiveDetectionRule
 from .environment_identity import EnvironmentIdentity
 from .environment_image import EnvironmentImage
-from .environment_image_update_policy import EnvironmentImageUpdatePolicy
-from .environment_list_item import EnvironmentListItem
-from .environment_list_response import EnvironmentListResponse
-from .environment_list_summary import EnvironmentListSummary
-from .environment_mcp_definition import EnvironmentMcpDefinition
-from .environment_mcp_definition_remote import EnvironmentMcpDefinitionRemote
-from .environment_mcp_definition_sandbox import EnvironmentMcpDefinitionSandbox
-from .environment_mcp_permissions import EnvironmentMcpPermissions
-from .environment_mcps__environment_catalog_pin import (
-    EnvironmentMcps_EnvironmentCatalogPin,
-)
 
 __all__ = [
     'AgentAccessScope',
@@ -118,6 +116,13 @@ __all__ = [
     'CatalogEntryMetadata',
     'CatalogEntryStatus',
     'CatalogInfo',
+    'CatalogRuleKind',
+    'CatalogRuleParameter',
+    'CatalogRuleParameterBoolean',
+    'CatalogRuleParameterChoice',
+    'CatalogRuleParameterInteger',
+    'CatalogRuleParameterText',
+    'CatalogSnapshot',
     'ConnectionListResponse',
     'ConnectionProvider',
     'ConnectionState',
@@ -146,6 +151,7 @@ __all__ = [
     'DisconnectResponse',
     'DnsEvent',
     'EnrollmentKind',
+    'EnvironmentAccessRule',
     'EnvironmentArchiveAction',
     'EnvironmentArchiveRequest',
     'EnvironmentCapabilityDecision',
@@ -158,18 +164,10 @@ __all__ = [
     'EnvironmentChangeRequest',
     'EnvironmentCreateRequest',
     'EnvironmentCurrentResponse',
+    'EnvironmentDetectionRule',
     'EnvironmentDocument',
     'EnvironmentEffectiveAccessRule',
     'EnvironmentEffectiveDetectionRule',
     'EnvironmentIdentity',
     'EnvironmentImage',
-    'EnvironmentImageUpdatePolicy',
-    'EnvironmentListItem',
-    'EnvironmentListResponse',
-    'EnvironmentListSummary',
-    'EnvironmentMcpDefinition',
-    'EnvironmentMcpDefinitionRemote',
-    'EnvironmentMcpDefinitionSandbox',
-    'EnvironmentMcpPermissions',
-    'EnvironmentMcps_EnvironmentCatalogPin',
 ]

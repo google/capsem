@@ -1,5 +1,6 @@
 //! Inspect the rules compiled for launch without publishing to a running VM.
 use super::*;
+pub(crate) mod catalog;
 use axum::extract::Query;
 use capsem_api::environments::{
     EnvironmentEffectiveAccessRule, EnvironmentEffectiveDetectionRule, EnvironmentRuleListResponse,

@@ -79,6 +79,10 @@ impl Hypervisor {
         crate::Skills(&self.client)
     }
 
+    pub fn rules(&self) -> crate::Rules<'_> {
+        crate::Rules(&self.client)
+    }
+
     pub fn requests(&self) -> crate::Requests<'_> {
         crate::Requests(&self.client)
     }

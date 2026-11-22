@@ -1,5 +1,14 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+export {JsonContentSchema} from "./JsonContent.js";
+export {JsonContentKindSchema} from "./JsonContentKind.js";
+export {ListResponseSchema} from "./ListResponse.js";
+export {LocalCredentialAuthoritySchema} from "./LocalCredentialAuthority.js";
+export {LogsResponseSchema} from "./LogsResponse.js";
+export {ManagedSessionClaimRequestSchema} from "./ManagedSessionClaimRequest.js";
+export {ManagedSessionClaimResponseSchema} from "./ManagedSessionClaimResponse.js";
+export {ManagedSessionCloseRequestSchema} from "./ManagedSessionCloseRequest.js";
+export {ManagedSessionCloseResponseSchema} from "./ManagedSessionCloseResponse.js";
 export {ManagedSessionClosedStateSchema} from "./ManagedSessionClosedState.js";
 export {ManagedSessionCreateSchema} from "./ManagedSessionCreate.js";
 export {ManagedSessionErrorCodeSchema} from "./ManagedSessionErrorCode.js";
@@ -87,6 +96,12 @@ export {RestartResponseSchema} from "./RestartResponse.js";
 export {RestartStatusSchema} from "./RestartStatus.js";
 export {RevokeSessionGrantResponseSchema} from "./RevokeSessionGrantResponse.js";
 export {RevokedCredentialAuthoritySchema} from "./RevokedCredentialAuthority.js";
+export {RuleCatalogDefinitionSchema} from "./RuleCatalogDefinition.js";
+export {RuleCatalogDefinitionAccessSchema} from "./RuleCatalogDefinitionAccess.js";
+export {RuleCatalogDefinitionDetectionSchema} from "./RuleCatalogDefinitionDetection.js";
+export {RuleCatalogDetailResponseSchema} from "./RuleCatalogDetailResponse.js";
+export {RuleCatalogListResponseSchema} from "./RuleCatalogListResponse.js";
+export {RuleCatalogSummarySchema} from "./RuleCatalogSummary.js";
 export {RunRequestSchema} from "./RunRequest.js";
 export {SandboxEnvironmentSchema} from "./SandboxEnvironment.js";
 export {SandboxInfoSchema} from "./SandboxInfo.js";
@@ -105,7 +120,6 @@ export {SessionGrantListResponseSchema} from "./SessionGrantListResponse.js";
 export {SessionGrantSummarySchema} from "./SessionGrantSummary.js";
 export {SkillCatalogDetailResponseSchema} from "./SkillCatalogDetailResponse.js";
 export {SkillCatalogListResponseSchema} from "./SkillCatalogListResponse.js";
-export {SkillCatalogSnapshotSchema} from "./SkillCatalogSnapshot.js";
 export {SlowOpEventSchema} from "./SlowOpEvent.js";
 export {StopProxyResponseSchema} from "./StopProxyResponse.js";
 export {StopResponseSchema} from "./StopResponse.js";

@@ -3,10 +3,10 @@
 import {z} from "zod";
 import type {SkillCatalogListResponse} from "../models/SkillCatalogListResponse.js";
 import {CatalogEntryMetadataSchema} from "./CatalogEntryMetadata.js";
-import {SkillCatalogSnapshotSchema} from "./SkillCatalogSnapshot.js";
+import {CatalogSnapshotSchema} from "./CatalogSnapshot.js";
 
 export const SkillCatalogListResponseSchema: z.ZodType<SkillCatalogListResponse> = z.strictObject({
-  "catalog": z.lazy(() => SkillCatalogSnapshotSchema),
+  "catalog": z.lazy(() => CatalogSnapshotSchema),
   "next_cursor": z.string().nullable().exactOptional(),
   "skills": z.array(z.lazy(() => CatalogEntryMetadataSchema)),
 });

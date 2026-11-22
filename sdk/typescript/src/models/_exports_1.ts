@@ -1,5 +1,14 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+export type { JsonContent } from "./JsonContent.js";
+export { JsonContentKind } from "./JsonContentKind.js";
+export type { ListResponse } from "./ListResponse.js";
+export { LocalCredentialAuthority } from "./LocalCredentialAuthority.js";
+export type { LogsResponse } from "./LogsResponse.js";
+export type { ManagedSessionClaimRequest } from "./ManagedSessionClaimRequest.js";
+export type { ManagedSessionClaimResponse } from "./ManagedSessionClaimResponse.js";
+export type { ManagedSessionCloseRequest } from "./ManagedSessionCloseRequest.js";
+export type { ManagedSessionCloseResponse } from "./ManagedSessionCloseResponse.js";
 export { ManagedSessionClosedState } from "./ManagedSessionClosedState.js";
 export type { ManagedSessionCreate } from "./ManagedSessionCreate.js";
 export { ManagedSessionErrorCode } from "./ManagedSessionErrorCode.js";
@@ -87,6 +96,12 @@ export type { RestartResponse } from "./RestartResponse.js";
 export { RestartStatus } from "./RestartStatus.js";
 export type { RevokeSessionGrantResponse } from "./RevokeSessionGrantResponse.js";
 export { RevokedCredentialAuthority } from "./RevokedCredentialAuthority.js";
+export type { RuleCatalogDefinition } from "./RuleCatalogDefinition.js";
+export type { RuleCatalogDefinitionAccess } from "./RuleCatalogDefinitionAccess.js";
+export type { RuleCatalogDefinitionDetection } from "./RuleCatalogDefinitionDetection.js";
+export type { RuleCatalogDetailResponse } from "./RuleCatalogDetailResponse.js";
+export type { RuleCatalogListResponse } from "./RuleCatalogListResponse.js";
+export type { RuleCatalogSummary } from "./RuleCatalogSummary.js";
 export type { RunRequest } from "./RunRequest.js";
 export type { SandboxEnvironment } from "./SandboxEnvironment.js";
 export type { SandboxInfo } from "./SandboxInfo.js";
@@ -105,7 +120,6 @@ export type { SessionGrantListResponse } from "./SessionGrantListResponse.js";
 export type { SessionGrantSummary } from "./SessionGrantSummary.js";
 export type { SkillCatalogDetailResponse } from "./SkillCatalogDetailResponse.js";
 export type { SkillCatalogListResponse } from "./SkillCatalogListResponse.js";
-export type { SkillCatalogSnapshot } from "./SkillCatalogSnapshot.js";
 export type { SlowOpEvent } from "./SlowOpEvent.js";
 export type { StopProxyResponse } from "./StopProxyResponse.js";
 export type { StopResponse } from "./StopResponse.js";

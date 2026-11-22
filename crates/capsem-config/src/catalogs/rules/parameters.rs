@@ -5,6 +5,7 @@ use capsem_proto::{
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CatalogRuleParameter {

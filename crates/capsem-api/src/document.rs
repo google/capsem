@@ -52,13 +52,23 @@ pub fn openapi() -> OpenApi {
     let catalog_skills = doc
         .operation::<environments::SkillCatalogListResponse>("/skills/list", "listCatalogSkills")
         .description(Some("Discover available skill versions in the currently configured OCI catalog. Continue with next_cursor against the same source and digest."))
-        .parameters(Some(environments::SkillCatalogListQuery::into_params(|| Some(ParameterIn::Query))));
+        .parameters(Some(environments::CatalogListQuery::into_params(|| Some(ParameterIn::Query))));
     doc.add("/skills/list", HttpMethod::Get, catalog_skills);
     let catalog_skill = doc
         .operation::<environments::SkillCatalogDetailResponse>("/skills/{skill_id}/info", "getCatalogSkill")
         .description(Some("Read every UTF-8 file for an exact skill version from the listed OCI catalog snapshot. A moved snapshot returns a conflict."))
-        .parameters(Some(environments::SkillCatalogDetailQuery::into_params(|| Some(ParameterIn::Query))));
+        .parameters(Some(environments::CatalogEntryQuery::into_params(|| Some(ParameterIn::Query))));
     doc.add("/skills/{skill_id}/info", HttpMethod::Get, catalog_skill);
+    let catalog_rules = doc
+        .operation::<RuleCatalogListResponse>("/rules/list", "listCatalogRules")
+        .description(Some("Discover available access and detection rules in the configured OCI catalog. Continue with next_cursor against the same source and digest."))
+        .parameters(Some(environments::CatalogListQuery::into_params(|| Some(ParameterIn::Query))));
+    doc.add("/rules/list", HttpMethod::Get, catalog_rules);
+    let catalog_rule = doc
+        .operation::<RuleCatalogDetailResponse>("/rules/{rule_id}/info", "getCatalogRule")
+        .description(Some("Read the typed template and parameter definitions for an exact rule version. A moved catalog snapshot returns a conflict."))
+        .parameters(Some(environments::CatalogEntryQuery::into_params(|| Some(ParameterIn::Query))));
+    doc.add("/rules/{rule_id}/info", HttpMethod::Get, catalog_rule);
     let revisions = doc
         .operation::<EnvironmentRevisionListResponse>("/environments/{id}/revisions/list", "listEnvironmentRevisions")
         .description(Some("List committed revisions newest first for the operator."))

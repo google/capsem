@@ -1,5 +1,19 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .slow_op_event import SlowOpEvent
+from .stop_proxy_response import StopProxyResponse
+from .stop_response import StopResponse
+from .storage_diagnostics import StorageDiagnostics
+from .stream_control import StreamControl
+from .stream_control_close_stdin import StreamControlCloseStdin
+from .stream_control_focus import StreamControlFocus
+from .stream_control_resize import StreamControlResize
+from .stream_control_start import StreamControlStart
+from .stream_kind import StreamKind
+from .stream_status import StreamStatus
+from .stream_status_error import StreamStatusError
+from .stream_status_exit import StreamStatusExit
+from .stream_status_started import StreamStatusStarted
 from .stream_status_terminal import StreamStatusTerminal
 from .supply_chain_channel_evidence import SupplyChainChannelEvidence
 from .supply_chain_evidence import SupplyChainEvidence
@@ -55,6 +69,20 @@ from .vm_summary import VmSummary
 from .widget import Widget
 
 __all__ = [
+    'SlowOpEvent',
+    'StopProxyResponse',
+    'StopResponse',
+    'StorageDiagnostics',
+    'StreamControl',
+    'StreamControlCloseStdin',
+    'StreamControlFocus',
+    'StreamControlResize',
+    'StreamControlStart',
+    'StreamKind',
+    'StreamStatus',
+    'StreamStatusError',
+    'StreamStatusExit',
+    'StreamStatusStarted',
     'StreamStatusTerminal',
     'SupplyChainChannelEvidence',
     'SupplyChainEvidence',

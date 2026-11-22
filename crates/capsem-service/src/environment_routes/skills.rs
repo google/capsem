@@ -5,6 +5,7 @@ use capsem_api::environments::{
     EnvironmentCatalogPin, EnvironmentSkillAvailability as Availability, EnvironmentSkillDetailResponse,
     EnvironmentSkillListQuery, EnvironmentSkillListResponse, EnvironmentSkillSummary,
 };
+use catalog_discovery::{metadata_matches, page_options, valid_id as valid_skill_id};
 use sources::catalogs::skills::PinnedSkills;
 mod applied;
 pub(crate) mod catalog;
@@ -195,10 +196,6 @@ fn read_error(error: EnvironmentResolutionError) -> AppError {
     mutation_error(EnvironmentMutationError::Resolution(error))
 }
 
-fn valid_skill_id(id: &str) -> bool {
-    id.len() <= capsem_proto::CATALOG_MAX_IDENTIFIER_BYTES && capsem_config::validate_identifier_shape(id).is_ok()
-}
-
 fn parse_cursor(cursor: &str) -> Result<(&str, &str), AppError> {
     let (revision, id) = cursor.split_once(':').ok_or_else(invalid)?;
     let identity = EnvironmentRevisionReference {
@@ -222,15 +219,6 @@ fn stale_cursor() -> AppError {
     )
 }
 
-fn page_options(search: Option<&str>, limit: Option<u16>) -> Result<(String, usize), AppError> {
-    let search = search.unwrap_or_default();
-    let limit = usize::from(limit.unwrap_or(24));
-    if search.len() > 64 || search.chars().any(char::is_control) || !(1..=64).contains(&limit) {
-        return Err(invalid());
-    }
-    Ok((search.trim().to_lowercase(), limit))
-}
-
 fn matches_search(summary: &EnvironmentSkillSummary, search: &str) -> bool {
     search.is_empty()
         || summary.selection.id.to_lowercase().contains(search)
@@ -239,18 +227,4 @@ fn matches_search(summary: &EnvironmentSkillSummary, search: &str) -> bool {
             .metadata
             .as_ref()
             .is_some_and(|metadata| metadata_matches(metadata, search))
-}
-
-fn metadata_matches(metadata: &capsem_config::catalogs::CatalogEntryMetadata, search: &str) -> bool {
-    search.is_empty()
-        || [
-            &metadata.id,
-            &metadata.version,
-            &metadata.name,
-            &metadata.description,
-            &metadata.publisher,
-        ]
-        .into_iter()
-        .chain(&metadata.tags)
-        .any(|value| value.to_lowercase().contains(search))
 }

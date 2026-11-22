@@ -1,5 +1,7 @@
 """Typed async access to the Capsem HTTP gateway."""
 
+from ._catalogs import Rules as Rules
+from ._catalogs import Skills as Skills
 from ._connections import Connections as Connections
 from ._connections import CredentialGrants as CredentialGrants
 from ._credentials import Credentials as Credentials
@@ -9,7 +11,6 @@ from ._mcp import McpServer as McpServer
 from ._mcp import McpTools as McpTools
 from ._ports import Port as Port
 from ._requests import Requests as Requests
-from ._skills import Skills as Skills
 from ._transport import CapsemError as CapsemError
 from ._transport import HttpError as HttpError
 from .discovery import DEFAULT_GATEWAY_PORT as DEFAULT_GATEWAY_PORT

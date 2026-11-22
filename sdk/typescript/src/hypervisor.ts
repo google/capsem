@@ -3,7 +3,7 @@ import {localConnection} from '#local';
 import {Debug} from './debug.js';
 import {Images} from './images.js';
 import {Environments} from './environments.js';
-import {Skills} from './skills.js';
+import {Rules, Skills} from './catalogs.js';
 import {Requests} from './requests.js';
 import {Credentials} from './credentials.js';
 import {Connections} from './connections.js';
@@ -34,6 +34,7 @@ export class Hypervisor extends Client {
   readonly images: Images;
   readonly environments: Environments;
   readonly skills: Skills;
+  readonly rules: Rules;
   readonly requests: Requests;
   readonly credentials: Credentials;
   readonly connections: Connections;
@@ -50,6 +51,7 @@ export class Hypervisor extends Client {
     this.images = new Images(transport);
     this.environments = new Environments(transport);
     this.skills = new Skills(transport);
+    this.rules = new Rules(transport);
     this.requests = new Requests(transport);
     this.credentials = new Credentials(transport);
     this.connections = new Connections(transport);

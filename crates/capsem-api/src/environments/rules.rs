@@ -55,3 +55,47 @@ pub struct EnvironmentEffectiveDetectionRule {
     #[schema(required = true)]
     pub editable_key: Option<String>,
 }
+
+/// The family of facts and decisions described by a published rule.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CatalogRuleKind {
+    Access,
+    Detection,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RuleCatalogSummary {
+    pub metadata: capsem_config::catalogs::CatalogEntryMetadata,
+    pub kind: CatalogRuleKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RuleCatalogListResponse {
+    pub catalog: super::CatalogSnapshot,
+    pub rules: Vec<RuleCatalogSummary>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RuleCatalogDetailResponse {
+    pub selection: super::EnvironmentCatalogPin,
+    pub metadata: capsem_config::catalogs::CatalogEntryMetadata,
+    /// Typed inputs available when selecting this version.
+    pub parameters: std::collections::BTreeMap<String, capsem_config::catalogs::CatalogRuleParameter>,
+    /// Published, validated rule template with parameter placeholders intact.
+    pub definition: capsem_config::catalogs::RuleCatalogDefinition,
+}
+
+impl std::fmt::Debug for RuleCatalogDetailResponse {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RuleCatalogDetailResponse")
+            .field("rule_id", &self.selection.id)
+            .field("parameter_count", &self.parameters.len())
+            .finish_non_exhaustive()
+    }
+}

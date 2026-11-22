@@ -2,7 +2,7 @@
 
 
 
-export interface SkillCatalogSnapshot {
+export interface CatalogSnapshot {
   "digest": string;
   "reference": string;
   "snapshot": string;

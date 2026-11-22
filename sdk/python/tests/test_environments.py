@@ -277,7 +277,39 @@ def test_catalog_skill_methods_bind_source_version_and_digest():
             ):
                 original = record[key]
                 record[key] = wrong
-                with pytest.raises(ValueError, match="catalog skill identity changed"):
+                with pytest.raises(ValueError, match="catalog entry identity changed"):
                     await hv.skills.get("review", "1.0.0+preview", page.catalog)
                 record[key] = original
+    asyncio.run(run())
+
+
+def test_global_rules_return_typed_definitions_and_bind_catalog_identity():
+    async def run():
+        catalog = {"reference": "registry.example/rules:stable", "digest": "sha256:" + "0" * 64,
+                   "snapshot": "listed-snapshot"}
+        selection = {"id": "review", "version": "1.0.0", "catalog_reference": catalog["reference"],
+                     "resolved_digest": catalog["digest"]}
+        metadata = {"id": "review", "version": "1.0.0", "name": "Review", "publisher": "Fixture",
+                    "provenance": "Fixture catalog", "license": "Apache-2.0",
+                    "compatibility": {"min_runtime_contract": 1}, "status": "active"}
+        definition = {"kind": "detection", "rule": {
+            "name": "Review", "match": "http.host == {{host}}", "level": "high",
+        }}
+        parameters = {"host": {"type": "text", "default": "api.example", "max_bytes": 70}}
+        response = {"catalog": catalog, "rules": [{"metadata": metadata, "kind": "detection"}]}
+        async with gateway(response=response) as (url, received), Hypervisor(url, "gateway-token") as hv:
+            page = await hv.rules.list(search="review", after="first", limit=12)
+            assert page.rules[0].kind == models.CatalogRuleKind.DETECTION
+            assert received[-1][1] == "/rules/list?search=review&after=first&limit=12"
+            response.clear()
+            response.update(selection=selection, metadata=metadata, definition=definition, parameters=parameters)
+            detail = await hv.rules.get("review", "1.0.0", page.catalog)
+            assert isinstance(detail.definition, models.RuleCatalogDefinitionDetection)
+            assert detail.definition.rule.match == "http.host == {{host}}"
+            assert isinstance(detail.parameters["host"], models.CatalogRuleParameterText)
+            assert detail.parameters["host"].default == "api.example"
+            assert received[-1][1] == "/rules/review/info?version=1.0.0&snapshot=listed-snapshot"
+            selection["catalog_reference"] = "registry.example/other:stable"
+            with pytest.raises(ValueError, match="catalog entry identity changed"):
+                await hv.rules.get("review", "1.0.0", page.catalog)
     asyncio.run(run())

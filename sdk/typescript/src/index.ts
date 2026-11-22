@@ -6,7 +6,7 @@ export {delegatedBearer} from './identity.js';
 export {ManagedSession} from './managed.js';
 export {Images} from './images.js';
 export {Environments, type EnvironmentListOptions, type EnvironmentRevisionListOptions} from './environments.js';
-export {Skills, type SkillCatalogListOptions} from './skills.js';
+export {Rules, Skills, type CatalogListOptions} from './catalogs.js';
 export {
   EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelectionSchema as EnvironmentDraftSchema,
 } from './validation/EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection.js';
