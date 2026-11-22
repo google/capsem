@@ -6,6 +6,7 @@ workspace: the guest can write the workspace, and cannot write the share.
 
 import contextlib
 import ctypes
+import errno
 import fcntl
 import hashlib
 import json
@@ -23,6 +24,7 @@ import sys
 import termios
 import time
 import tty
+import uuid
 from pathlib import Path
 
 # Load sibling controller modules directly without a writable import cache.
@@ -70,6 +72,10 @@ IMAGE_SHARE_TAG = "capsem-image"
 IMAGE_SHARE = Path("/run/capsem-image")
 LAUNCH_CONTROL_LIMIT = 16 * 1024 * 1024
 MCP_SETUP_LIMIT = 1024 * 1024
+MCP_START_TIMEOUT = 10
+MCP_STOP_TIMEOUT = 3
+WORKLOAD_CGROUP = "/capsem-container"
+CGROUP_ROOT = Path("/sys/fs/cgroup")
 # A manifest is JSON of a few KiB; never read an unbounded one.
 MANIFEST_LIMIT = 4 * 1024 * 1024
 OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json"
@@ -362,7 +368,7 @@ def configure(unpacked, image, options, detached=False):
             ],
             "uidMappings": [id_map],
             "gidMappings": [id_map],
-            "cgroupsPath": "/capsem-container",
+            "cgroupsPath": WORKLOAD_CGROUP,
             "resources": {
                 "memory": {"limit": resources["memory_bytes"], "swap": resources["memory_bytes"]},
                 "pids": {"limit": resources["pids"]},
@@ -1182,7 +1188,93 @@ def exec_mcp_workload(fd=0):
         argv, workdir, variables = read_mcp_setup(fd)
     except (OSError, ValueError, RecursionError):
         raise SystemExit("capsem: invalid sandbox MCP process setup") from None
-    exec_running_workload(argv, False, workdir=workdir, variables=variables)
+    bundle = workload_bundle()
+    if bundle is None:
+        raise SystemExit("capsem: no container workload is running in this session")
+    try:
+        spec = process_spec(bundle, argv, False, workdir=workdir, variables=variables)
+        try:
+            status = supervise_mcp(spec)
+        finally:
+            os.close(spec)
+    except (OSError, subprocess.TimeoutExpired):
+        raise SystemExit("capsem: sandbox MCP process supervision unavailable") from None
+    if status == 255:
+        print("capsem: sandbox MCP launch failed; check the executable and working directory", file=sys.stderr)
+    return status
+
+
+def create_mcp_cgroup():
+    group = CGROUP_ROOT / WORKLOAD_CGROUP.lstrip("/") / f"mcp-{uuid.uuid4().hex}"
+    group.mkdir()
+    if not (group / "cgroup.kill").is_file():
+        group.rmdir()
+        raise OSError("MCP process retirement unavailable")
+    return group
+
+
+def retire_mcp_cgroup(group):
+    deadline = time.monotonic() + MCP_STOP_TIMEOUT
+    while True:
+        try:
+            (group / "cgroup.kill").write_text("1")
+            group.rmdir()
+            return
+        except FileNotFoundError:
+            # A removed cgroup cannot contain a live process.
+            return
+        except OSError as error:
+            if error.errno not in (errno.EBUSY, errno.ENOTEMPTY) or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.02)
+
+
+def supervise_mcp(spec):
+    """Keep a reaping parent outside the workload cgroup and own its entire leaf."""
+    received = None
+
+    def stop(number, _frame):
+        nonlocal received
+        received = number
+
+    with contextlib.ExitStack() as cleanup:
+        for number in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+            cleanup.callback(signal.signal, number, signal.signal(number, stop))
+        group = create_mcp_cgroup()
+        process = None
+        try:
+            if received is not None:
+                return 128 + received
+            argv = [*RUNC, "exec", "--cgroup", group.name, "--process", f"/proc/self/fd/{spec}", CONTAINER]
+            # Keep the runtime in its own group so canceling the outer guest exec
+            # wakes this supervisor before it can lose the workload's descendants.
+            process = subprocess.Popen(argv, pass_fds=(spec,), stderr=subprocess.DEVNULL, start_new_session=True)
+            started = False
+            deadline = time.monotonic() + MCP_START_TIMEOUT
+            while received is None:
+                code = process.poll()
+                if code is not None:
+                    return code if code >= 0 else 128 - code
+                if not started:
+                    started = "populated 1" in (group / "cgroup.events").read_text().splitlines()
+                    if not started and time.monotonic() >= deadline:
+                        return 124
+                time.sleep(0.05)
+            return 128 + received
+        finally:
+            running = process is not None and process.poll() is None
+            try:
+                if running:
+                    with contextlib.suppress(ProcessLookupError):
+                        os.killpg(process.pid, signal.SIGKILL)
+            finally:
+                try:
+                    # Even a stalled runc wait must not delay stopping the MCP
+                    # descendants or leave an empty cgroup available for a late join.
+                    retire_mcp_cgroup(group)
+                finally:
+                    if running:
+                        process.wait(timeout=MCP_STOP_TIMEOUT)
 
 
 def exec_running_workload(argv, tty, *, workdir=None, variables=None):
@@ -1299,7 +1391,7 @@ def main():
     elif len(sys.argv) == 3 and sys.argv[1] == "--exec":
         exec_workload(sys.argv[2])
     elif sys.argv[1:] == ["--mcp-stdio"]:
-        exec_mcp_workload()
+        return exec_mcp_workload()
     elif sys.argv[1:] == ["--attach"]:
         attach()
     elif len(sys.argv) == 3 and sys.argv[1] == "--detached":

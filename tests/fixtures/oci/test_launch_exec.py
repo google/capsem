@@ -8,8 +8,10 @@ refuse plainly when there is no workload to enter, never fall back to the VM.
 
 import json
 import os
+import signal
 import struct
 import subprocess
+from types import SimpleNamespace
 
 import pytest
 
@@ -190,10 +192,8 @@ def test_mcp_exec_consumes_only_setup_and_preserves_the_workload_boundary(launch
     inbound.write_bytes(mcp_record(request) + rpc)
 
     with inbound.open("rb", buffering=0) as stream:
-        def execvp(program, arguments):
-            assert program == "runc" and arguments[-1] == launcher.CONTAINER
-            descriptor = int(arguments[arguments.index("--process") + 1].rsplit("/", 1)[1])
-            with os.fdopen(descriptor, "rb") as spec:
+        def supervise(descriptor):
+            with os.fdopen(descriptor, "rb", closefd=False) as spec:
                 spec.seek(0)
                 process = json.load(spec)
             expected = launcher.exec_process(config, argv, False)
@@ -202,12 +202,10 @@ def test_mcp_exec_consumes_only_setup_and_preserves_the_workload_boundary(launch
             expected["env"].extend(["APP=changed", "LABEL=local"])
             assert process == expected
             assert stream.read() == rpc
-            raise SystemExit(0)
+            return 0
 
-        monkeypatch.setattr(launcher.os, "execvp", execvp)
-        with pytest.raises(SystemExit) as exited:
-            launcher.exec_mcp_workload(stream.fileno())
-        assert exited.value.code == 0
+        monkeypatch.setattr(launcher, "supervise_mcp", supervise)
+        assert launcher.exec_mcp_workload(stream.fileno()) == 0
     assert json.loads(config_path.read_text()) == config
 
 
@@ -239,6 +237,57 @@ def test_mcp_exec_refuses_incomplete_or_oversized_setup(launcher, tmp_path, reco
     path.write_bytes(record)
     with path.open("rb", buffering=0) as stream, pytest.raises(SystemExit, match="invalid sandbox MCP process setup"):
         launcher.exec_mcp_workload(stream.fileno())
+
+
+def test_mcp_supervision_retires_members_after_normal_exit(launcher, tmp_path, monkeypatch):
+    class Process:
+        def poll(self):
+            return 7
+
+    commands = []
+    group = tmp_path / "mcp-process"
+    group.mkdir()
+    (group / "cgroup.events").write_text("populated 1\nfrozen 0\n")
+    (group / "cgroup.kill").touch()
+    monkeypatch.setattr(launcher, "create_mcp_cgroup", lambda: group)
+    monkeypatch.setattr(launcher, "retire_mcp_cgroup", lambda path: commands.append(("retire", path)))
+
+    def spawn(argv, **options):
+        commands.append((argv, options))
+        return Process()
+
+    monkeypatch.setattr(launcher.subprocess, "Popen", spawn)
+    assert launcher.supervise_mcp(10) == 7
+    argv, options = commands[0]
+    assert argv[-6:] == ["exec", "--cgroup", group.name, "--process", "/proc/self/fd/10", launcher.CONTAINER]
+    assert options == {"pass_fds": (10,), "stderr": subprocess.DEVNULL, "start_new_session": True}
+    assert commands[1:] == [("retire", group)]
+
+
+def test_mcp_supervision_times_out_unattached_start_and_retires_before_wait(launcher, tmp_path, monkeypatch):
+    cleanup = []
+
+    class Process:
+        pid = 123
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout):
+            cleanup.append(("wait", timeout))
+
+    (tmp_path / "cgroup.events").write_text("populated 0\n")
+    times = iter((0, launcher.MCP_START_TIMEOUT))
+    monkeypatch.setattr(launcher, "time", SimpleNamespace(monotonic=lambda: next(times)))
+    monkeypatch.setattr(launcher, "create_mcp_cgroup", lambda: tmp_path)
+    monkeypatch.setattr(launcher, "retire_mcp_cgroup", lambda path: cleanup.append(("retire", path)))
+    monkeypatch.setattr(launcher.subprocess, "Popen", lambda *args, **kwargs: Process())
+    monkeypatch.setattr(launcher.os, "killpg", lambda pid, sig: cleanup.append(("kill", pid, sig)))
+
+    assert launcher.supervise_mcp(10) == 124
+    assert cleanup == [
+        ("kill", 123, signal.SIGKILL), ("retire", tmp_path), ("wait", launcher.MCP_STOP_TIMEOUT),
+    ]
 
 
 def test_an_image_terminal_type_is_kept(launcher):
