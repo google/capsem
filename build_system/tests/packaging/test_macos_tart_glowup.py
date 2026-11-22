@@ -754,6 +754,26 @@ def test_installed_winterfell_runner_loads_without_pytest_path_side_effects() ->
     assert module.WINTERFELL_TESTS == ("tests/capsem-installed/test_winterfell_gateway.py",)
 
 
+def test_installed_winterfell_resolves_artifacts_from_an_isolated_interpreter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("CAPSEM_REPOSITORY_ROOT", str(PROJECT_ROOT))
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            "from capsem_builder.image.tools.build import run_installed_winterfell as probe; "
+            "assert not probe._resolve_winterfell_artifact_roots({}).installed",
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_installed_winterfell_does_not_write_pytest_state_to_source(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
