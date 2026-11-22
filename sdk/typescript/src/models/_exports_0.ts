@@ -86,7 +86,9 @@ export type { EnvironmentEffectiveAccessRule } from "./EnvironmentEffectiveAcces
 export type { EnvironmentEffectiveDetectionRule } from "./EnvironmentEffectiveDetectionRule.js";
 export type { EnvironmentIdentity } from "./EnvironmentIdentity.js";
 export type { EnvironmentImage } from "./EnvironmentImage.js";
+export { EnvironmentImageUpdateAction } from "./EnvironmentImageUpdateAction.js";
 export { EnvironmentImageUpdatePolicy } from "./EnvironmentImageUpdatePolicy.js";
+export type { EnvironmentImageUpdateRequest } from "./EnvironmentImageUpdateRequest.js";
 export type { EnvironmentImageUpdateResponse } from "./EnvironmentImageUpdateResponse.js";
 export type { EnvironmentListItem } from "./EnvironmentListItem.js";
 export type { EnvironmentListResponse } from "./EnvironmentListResponse.js";
@@ -198,5 +200,3 @@ export type { ImageTool } from "./ImageTool.js";
 export type { Interaction } from "./Interaction.js";
 export type { InteractionBlock } from "./InteractionBlock.js";
 export { InteractionBlockKind } from "./InteractionBlockKind.js";
-export type { InteractionBody } from "./InteractionBody.js";
-export type { InteractionContent } from "./InteractionContent.js";

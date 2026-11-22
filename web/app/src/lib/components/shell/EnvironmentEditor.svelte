@@ -1,9 +1,12 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { EnvironmentArchiveAction, RequestApplicationState, RequestReviewAvailability, RequestState, type CatalogSnapshot, type EnvironmentArchiveRequest, type EnvironmentCreateRequest, type EnvironmentCurrentResponse,
-    type EnvironmentMutationResponse, type EnvironmentRevisionReference } from '@capsem/sdk';
+  import { EnvironmentArchiveAction, EnvironmentImageUpdateAction, EnvironmentImageUpdatePolicy,
+    RequestApplicationState, RequestReviewAvailability, RequestState, type CatalogSnapshot,
+    type EnvironmentArchiveRequest, type EnvironmentCreateRequest, type EnvironmentCurrentResponse, type EnvironmentImage,
+    type EnvironmentImageUpdateRequest, type EnvironmentMutationResponse, type EnvironmentRevisionReference } from '@capsem/sdk';
   import X from 'phosphor-svelte/lib/X';
-  import { archiveEnvironment, getPublishedMcp, getSavedEnvironment, getSavedEnvironmentRevision, listEnvironmentCatalog, saveEnvironment, validateSavedEnvironmentToml } from '../../api';
+  import { approveEnvironmentImageUpdate, archiveEnvironment, checkSavedEnvironmentImageUpdate, getPublishedMcp,
+    getSavedEnvironment, getSavedEnvironmentRevision, listEnvironmentCatalog, saveEnvironment, validateSavedEnvironmentToml } from '../../api';
   import { ApiError } from '../../gateway-sdk';
   import { editableFields, environmentChanges, environmentSections, reviewedDraft, type EnvironmentDraft } from '../../models/environment-editor';
   import { prepareMcpCatalogReview, type McpLaunchReview } from '../../models/environment-mcp-review';
@@ -22,8 +25,10 @@
   let current = $state<EnvironmentCurrentResponse | null>(null);
   let fields = $state(editableFields());
   let draft = $state<EnvironmentDraft | null>(null);
-  let attempt = $state<EnvironmentCreateRequest | EnvironmentArchiveRequest | null>(null);
+  let attempt = $state<EnvironmentCreateRequest | EnvironmentArchiveRequest | EnvironmentImageUpdateRequest | null>(null);
   let archiveReview = $state(false);
+  let imageReview = $state<{ current: EnvironmentImage; available: EnvironmentImage } | null>(null);
+  let imageStatus = $state('');
   let saved = $state<EnvironmentRevisionReference | null>(null);
   let reason = $state('');
   let error = $state<string | null>(null);
@@ -77,6 +82,8 @@
       mcpLaunches = [];
       attempt = null;
       archiveReview = false;
+      imageReview = null;
+      imageStatus = '';
       reason = '';
       source = 'fields';
       showHistory = value.archived;
@@ -178,6 +185,7 @@
       draft = next;
       attempt = null;
       archiveReview = false;
+      imageReview = null;
       phase = 'reviewing';
       focusTitle();
     } catch (err) {
@@ -197,11 +205,54 @@
   function reviewArchive() {
     if (phase !== 'editing' || !base || current?.archived) return;
     archiveReview = true;
+    imageReview = null;
     attempt = null;
     reason = '';
     error = null;
     phase = 'reviewing';
     focusTitle();
+  }
+
+  async function reviewImageUpdate() {
+    const reference = base;
+    if (phase !== 'editing' || !reference || current?.archived) return;
+    try {
+      if (environmentChanges(original, reviewedDraft(fields)).length) throw new Error();
+    } catch {
+      error = 'Review or discard the current settings draft before checking for an image update.';
+      return;
+    }
+    const controller = new AbortController();
+    reviewReader = controller;
+    phase = 'validating';
+    reviewStatus = 'Checking for an image update…';
+    imageStatus = '';
+    error = null;
+    try {
+      const update = await checkSavedEnvironmentImageUpdate(reference, controller.signal);
+      if (controller.signal.aborted) return;
+      if (!update.current || !update.available) {
+        imageStatus = 'No compatible image update is available.';
+        phase = 'editing';
+        return;
+      }
+      imageReview = { current: update.current, available: update.available };
+      archiveReview = false;
+      draft = null;
+      attempt = null;
+      reason = '';
+      phase = 'reviewing';
+      focusTitle();
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      if (err instanceof ApiError && err.status === 409) {
+        phase = 'stale';
+        error = 'The saved revision changed. Reload the current revision to check for updates.';
+      } else {
+        phase = 'editing';
+        error = sessionActionError(err);
+      }
+    }
   }
 
   async function save() {
@@ -211,6 +262,9 @@
       const identity = { request_id: crypto.randomUUID(), reason: reason.trim() };
       if (archiveReview && base) {
         attempt = { ...identity, action: EnvironmentArchiveAction.ARCHIVE, base_revision_id: base.revision_id };
+      } else if (imageReview && base) {
+        attempt = { ...identity, action: EnvironmentImageUpdateAction.UPDATE_IMAGE, base_revision_id: base.revision_id,
+          expected_digest: imageReview.available.resolved_digest };
       } else if (draft) {
         attempt = { ...identity, specification: draft };
       } else return;
@@ -221,7 +275,9 @@
     try {
       let receipt: EnvironmentMutationResponse;
       if ('action' in attempt) {
-        receipt = await archiveEnvironment(base!.environment_id, attempt);
+        receipt = attempt.action === EnvironmentArchiveAction.ARCHIVE
+          ? await archiveEnvironment(base!.environment_id, attempt)
+          : await approveEnvironmentImageUpdate(base!.environment_id, attempt);
       } else {
         receipt = await saveEnvironment(attempt, base);
       }
@@ -245,7 +301,8 @@
         focusTitle();
       } else if (err instanceof ApiError && err.status === 409) {
         phase = 'stale';
-        error = 'The saved environment changed. Reload the current revision.';
+        error = imageReview ? 'The saved revision or available image changed. Reload and check again.'
+          : 'The saved environment changed. Reload the current revision.';
       } else if (err instanceof ApiError && [400, 403, 404, 413, 422].includes(err.status)) {
         phase = 'reviewing';
         error = sessionActionError(err);
@@ -274,7 +331,7 @@
   <div class="flex h-full flex-col">
   <header class="flex shrink-0 items-center justify-between gap-3 border-b border-overlay-border p-4">
     <h2 id={`${id}-title`} bind:this={title} tabindex="-1" class="text-lg font-medium">
-      {phase === 'reviewing' ? (archiveReview ? 'Review environment archive' : 'Review environment changes')
+      {phase === 'reviewing' ? (imageReview ? 'Review image update' : archiveReview ? 'Review environment archive' : 'Review environment changes')
         : current?.archived ? 'Archived environment' : selection ? 'Edit saved environment' : 'New saved environment'}
     </h2>
     <button type="button" aria-label="Close environment editor" class="rounded-lg p-2 hover:bg-muted-hover disabled:opacity-50" disabled={phase === 'saving'} onclick={close}><X size={18} /></button>
@@ -308,8 +365,26 @@
         <button type="button" class="text-primary hover:underline" onclick={loadToml}>Retry canonical TOML</button>
       {/if}
     {:else if phase === 'editing'}
+      {#if base && !current?.archived && current?.document.specification.image && current.document.specification.image.update_policy !== EnvironmentImageUpdatePolicy.PINNED}
+        <div class="space-y-2">
+          <button type="button" class={secondary} onclick={reviewImageUpdate}>Check for image update</button>
+          {#if imageStatus}<p role="status">{imageStatus}</p>{/if}
+        </div>
+      {/if}
       <EnvironmentFields bind:fields reference={base} pin={current?.document.specification.image?.resolved_digest}
         savedMcpPins={current?.document.specification.mcps?.catalog?.selected} />
+    {:else if imageReview && phase !== 'saved'}
+      <p><strong>{imageReview.available.reference}</strong> will use this digest in new sandboxes. Existing sandboxes keep their selected revision after restart.</p>
+      <dl class="space-y-2">
+        <dt>Current digest</dt><dd class="break-all font-mono text-xs">{imageReview.current.resolved_digest}</dd>
+        <dt>Available digest</dt><dd class="break-all font-mono text-xs">{imageReview.available.resolved_digest}</dd>
+      </dl>
+      <div class="space-y-1">
+        <label for={`${id}-image-reason`} class="text-sm font-medium">Reason for updating</label>
+        <textarea id={`${id}-image-reason`} class="w-full rounded-lg border border-line-2 bg-background-1 p-2 text-sm" rows="2"
+          bind:value={reason} disabled={phase !== 'reviewing'}></textarea>
+      </div>
+      {#if attempt && phase === 'unconfirmed'}<p class="break-all text-xs text-muted-foreground-1">Request {attempt.request_id}</p>{/if}
     {:else if archiveReview && phase !== 'saved'}
       <p>New sandboxes cannot use this environment after it is archived. Existing sandboxes keep their saved revisions.</p>
       <div class="space-y-1">
@@ -347,7 +422,7 @@
       </div>
       {#if attempt && phase === 'unconfirmed'}<p class="break-all text-xs text-muted-foreground-1">Request {attempt.request_id}</p>{/if}
     {/if}
-    {#if phase === 'saving'}<p role="status">{archiveReview ? 'Archiving environment…' : 'Saving environment…'}</p>{/if}
+    {#if phase === 'saving'}<p role="status">{imageReview ? 'Updating image…' : archiveReview ? 'Archiving environment…' : 'Saving environment…'}</p>{/if}
     {#if saved}
       <p role="status" class="break-all">{archiveReview ? 'Archived environment' : `Saved revision ${saved.revision_id}`}</p>
     {/if}
@@ -362,7 +437,7 @@
       <p role="status">{reviewStatus}</p>
     {:else if phase === 'reviewing'}
       <button type="button" class={secondary} onclick={() => { error = null; phase = 'editing'; focusTitle(); }}>Back to editing</button>
-      <button type="button" class={action} disabled={!reason.trim()} onclick={save}>{archiveReview ? 'Confirm archive' : 'Save environment'}</button>
+      <button type="button" class={action} disabled={!reason.trim()} onclick={save}>{imageReview ? 'Approve image update' : archiveReview ? 'Confirm archive' : 'Save environment'}</button>
     {:else if phase === 'stale' && selection}
       <button type="button" class={secondary} onclick={close}>Close</button>
       <button type="button" class={action} onclick={() => load()}>{draft || dirtyToml ? 'Discard draft and reload' : 'Load current revision'}</button>
@@ -370,7 +445,7 @@
       <button type="button" class={action} onclick={() => load(selection?.revision_id)}>Retry</button>
     {:else if phase === 'unconfirmed'}
       <button type="button" class={secondary} onclick={close}>Close</button>
-      <button type="button" class={action} onclick={save}>{archiveReview ? 'Retry same archive' : 'Retry same save'}</button>
+      <button type="button" class={action} onclick={save}>{imageReview ? 'Retry same image update' : archiveReview ? 'Retry same archive' : 'Retry same save'}</button>
     {:else if phase === 'saved'}
       <button type="button" class={action} onclick={close}>Done</button>
     {/if}

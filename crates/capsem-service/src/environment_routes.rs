@@ -198,6 +198,9 @@ pub(crate) async fn change(
     let job = match request {
         EnvironmentChangeIntent::Edit(edit) => owner.submit_change(id, *edit, sources::Sources(state)),
         EnvironmentChangeIntent::Archive(intent) => owner.submit_archive(id, intent),
+        EnvironmentChangeIntent::ImageUpdate(intent) => {
+            owner.submit_image_update(id, intent, move |image| sources::Sources(state).image_update(image))
+        }
     }
     .map_err(mutation_error)?;
     job.wait().await.map(Json).map_err(mutation_error)

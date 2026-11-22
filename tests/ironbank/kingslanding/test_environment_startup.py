@@ -88,7 +88,7 @@ def observe(service, vm, reference, count):
     return info["owner_generation"]
 
 
-def test_image_update_check_keeps_the_running_and_restarted_workload_pinned(service, tmp_path):
+def test_image_update_keeps_existing_workloads_pinned_and_updates_future_creations(service, tmp_path):
     artifacts = {}
     with registry(tmp_path, image_config=IMAGE_CONFIG, artifacts=artifacts) as (image, certificate, _):
         location, original_digest = image.split("@")
@@ -126,6 +126,24 @@ def test_image_update_check_keeps_the_running_and_restarted_workload_pinned(serv
         assert observe(service, vm, selected, 1) == generation
         workload = request(service, "GET", f"/vms/{vm}/container")
         assert workload["resolved"] == image
+        adoption = {
+            "action": "update_image",
+            "request_id": str(uuid.uuid4()),
+            "base_revision_id": selected["revision_id"],
+            "expected_digest": candidate_digest,
+            "reason": "approve the newer image for future sandboxes",
+        }
+        changes = f"/environments/{selected['environment_id']}/changes"
+        receipt = request(service, "POST", changes, adoption)
+        assert receipt["decision"] == "approved" and receipt["application"] == "applied"
+        assert request(service, "POST", changes, adoption) == receipt
+        advanced = receipt["result"]
+        assert advanced["environment_id"] == selected["environment_id"]
+        assert advanced["revision_id"] != selected["revision_id"]
+        updated_vm = create(service, advanced, vm_name("image-updated"))
+        observe(service, updated_vm, advanced, 1)
+        assert request(service, "GET", f"/vms/{updated_vm}/container")["resolved"] == f"{location}@{candidate_digest}"
+        assert observe(service, vm, selected, 1) == generation
         request(service, "POST", f"/vms/{vm}/stop", {})
         request(service, "POST", f"/vms/{vm}/start", {})
         assert observe(service, vm, selected, 2) != generation

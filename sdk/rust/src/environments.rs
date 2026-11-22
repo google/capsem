@@ -52,6 +52,33 @@ impl Environments<'_> {
             .await
     }
 
+    /// Approve a verified digest against the observed blueprint revision.
+    pub async fn update_image(
+        &self,
+        id: &str,
+        request: models::environments::EnvironmentImageUpdateRequest,
+    ) -> Result<models::EnvironmentMutationResponse> {
+        self.submit_change(id, models::EnvironmentChangeIntent::ImageUpdate(request))
+            .await
+    }
+
+    /// Check the current saved revision for a compatible image update.
+    pub async fn check_image_update(
+        &self,
+        reference: &EnvironmentRevisionReference,
+    ) -> Result<models::EnvironmentImageUpdateResponse> {
+        reference.validate().map_err(Error::InvalidInput)?;
+        let input = api::CheckEnvironmentImageUpdateParams {
+            id: reference.environment_id.clone(),
+            revision_id: reference.revision_id.clone(),
+        };
+        let result = api::check_environment_image_update(&self.0.transport, &input, self.0.options).await?;
+        if &result.environment != reference {
+            return Err(Error::InvalidResponse("environment revision identity changed"));
+        }
+        Ok(result)
+    }
+
     async fn submit_change(
         &self,
         id: &str,

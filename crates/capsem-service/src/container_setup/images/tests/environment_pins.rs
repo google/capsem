@@ -155,6 +155,77 @@ async fn pinned_environment_images_skip_update_resolution() {
 }
 
 #[tokio::test]
+async fn operator_image_update_commits_only_the_reviewed_digest_and_replays_the_receipt() {
+    use axum::http::Method;
+    let fx = Fixture::default_policy();
+    let (status, body) = fx
+        .call(
+            Method::POST,
+            "/environments/create",
+            Some(json!({
+                "request_id": "00000000-0000-4000-8000-000000000100",
+                "specification": {"name": "development", "image": {"reference": "codex-cli"}},
+                "reason": "create a pinned workload"
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let result: capsem_api::EnvironmentMutationResponse = serde_json::from_value(body).unwrap();
+    let original = result.result.unwrap();
+    {
+        let mut catalog = fx.catalog.lock().unwrap();
+        let versions = catalog.as_mut().unwrap()["entries"]["codex-cli"]["versions"]
+            .as_array_mut()
+            .unwrap();
+        let mut version = versions[1].clone();
+        version["image"] = json!(format!("ghcr.io/google/capsem/codex-cli@{}", digest('8')));
+        versions.push(version);
+    }
+    let changes = format!("/environments/{}/changes", original.environment_id);
+    let update_request = |suffix, selected| {
+        json!({
+            "action": "update_image",
+            "request_id": format!("00000000-0000-4000-8000-000000000{suffix}"),
+            "base_revision_id": original.revision_id,
+            "expected_digest": digest(selected),
+            "reason": "approve the reviewed workload update"
+        })
+    };
+    let (status, stale) = fx.call(Method::POST, &changes, Some(update_request("101", '7'))).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{stale}");
+    let before = fx
+        .state
+        .environments
+        .load_current(&original.environment_id)
+        .await
+        .unwrap();
+    assert_eq!(before.document.identity.revision_id, original.revision_id);
+    let mut expected = before.document.specification;
+    assert_eq!(expected.image.as_ref().unwrap().resolved_digest, digest('b'));
+    expected.image.as_mut().unwrap().resolved_digest = digest('8');
+
+    let intent = update_request("102", '8');
+    let (status, body) = fx.call(Method::POST, &changes, Some(intent.clone())).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["decision"], "approved");
+    assert_eq!(body["application"], "applied");
+    assert_ne!(body["result"]["revision_id"], original.revision_id);
+    let current = fx
+        .state
+        .environments
+        .load_current(&original.environment_id)
+        .await
+        .unwrap();
+    assert_eq!(current.document.identity.revision_id, body["result"]["revision_id"]);
+    assert!(current.document.specification == expected);
+
+    *fx.catalog.lock().unwrap() = None;
+    let pull_count = fx.pulls().len();
+    assert_eq!(fx.call(Method::POST, &changes, Some(intent)).await, (status, body));
+    assert_eq!(fx.pulls().len(), pull_count);
+}
+
+#[tokio::test]
 async fn native_pin_preserves_image_index_identity_separately_from_platform_manifest() {
     let fx = Fixture::default_policy();
     let admitted = pull_image(&fx.state, request("codex-cli")).await.unwrap();

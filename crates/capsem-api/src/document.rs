@@ -133,7 +133,7 @@ pub fn openapi() -> OpenApi {
     doc.add("/environments/create", HttpMethod::Post, create);
     let request = doc.schema::<environments::EnvironmentChangeIntent>();
     let change = doc.operation::<EnvironmentMutationResponse>("/environments/{id}/changes", "changeEnvironment")
-        .description(Some("An operator publishes a blueprint revision or archives the exact current revision. Archival prevents new sandbox creation while preserving pinned work. A scoped agent queues an edit proposal at the exact base revision of its running sandbox. Reconcile the same request ID after interruption."))
+        .description(Some("An operator publishes a blueprint revision, approves an exact verified image update, or archives the exact current revision. Archival prevents new sandbox creation while preserving pinned work. A scoped agent queues an edit proposal at the exact base revision of its running sandbox. Reconcile the same request ID after interruption."))
         .request_body(Some(RequestBodyBuilder::new().required(Some(Required::True))
             .content("application/json", Content::new(Some(request))).build()))
         .extensions(Some([("x-capsem-request-timeout-ms", IMAGE_PULL_REQUEST_TIMEOUT_MS)].into_iter().collect()));

@@ -2,5 +2,6 @@
 
 import type { EnvironmentArchiveRequest } from "./EnvironmentArchiveRequest.js";
 import type { EnvironmentChangeRequest } from "./EnvironmentChangeRequest.js";
+import type { EnvironmentImageUpdateRequest } from "./EnvironmentImageUpdateRequest.js";
 
-export type EnvironmentChangeIntent = EnvironmentChangeRequest | EnvironmentArchiveRequest;
+export type EnvironmentChangeIntent = EnvironmentChangeRequest | EnvironmentArchiveRequest | EnvironmentImageUpdateRequest;

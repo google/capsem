@@ -1,5 +1,7 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .rule_catalog_detail_response import RuleCatalogDetailResponse
+from .rule_catalog_list_response import RuleCatalogListResponse
 from .rule_catalog_summary import RuleCatalogSummary
 from .run_request import RunRequest
 from .sandbox_environment import SandboxEnvironment
@@ -78,10 +80,10 @@ from .vm_lifecycle_selection import VmLifecycleSelection
 from .vm_lifecycle_state import VmLifecycleState
 from .vm_network_info import VmNetworkInfo
 from .vm_readiness_response import VmReadinessResponse
-from .vm_skill_detail_response import VmSkillDetailResponse
-from .vm_skill_list_response import VmSkillListResponse
 
 __all__ = [
+    'RuleCatalogDetailResponse',
+    'RuleCatalogListResponse',
     'RuleCatalogSummary',
     'RunRequest',
     'SandboxEnvironment',
@@ -160,6 +162,4 @@ __all__ = [
     'VmLifecycleState',
     'VmNetworkInfo',
     'VmReadinessResponse',
-    'VmSkillDetailResponse',
-    'VmSkillListResponse',
 ]

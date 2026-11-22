@@ -37,7 +37,7 @@ pub use tree::*;
 pub use types::*;
 #[doc(hidden)]
 pub use validation::{
-    validate_identifier, validate_identifier_shape, validate_non_empty, validate_policy_target,
+    is_sha256_digest_shape, validate_identifier, validate_identifier_shape, validate_non_empty, validate_policy_target,
     validate_setting_value_shape, IdentifierError,
 };
 

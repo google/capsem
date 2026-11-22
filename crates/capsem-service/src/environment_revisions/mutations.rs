@@ -170,6 +170,101 @@ impl EnvironmentMutationCoordinator {
         self.enqueue(MutationIntent::change(environment_id, request)?, sources)
     }
 
+    pub fn submit_image_update<F>(
+        self: &Arc<Self>,
+        environment_id: String,
+        request: EnvironmentImageUpdateRequest,
+        resolve: impl FnOnce(EnvironmentImage) -> F + Send + 'static,
+    ) -> Result<EnvironmentMutationJob, EnvironmentMutationError>
+    where
+        F: std::future::Future<Output = Result<Option<String>, EnvironmentResolutionError>> + Send + 'static,
+    {
+        request
+            .validate()
+            .map_err(|_| EnvironmentMutationError::InvalidIntent)?;
+        validate_id(&environment_id).map_err(|_| EnvironmentMutationError::InvalidIntent)?;
+        let owner = self.clone();
+        Ok(EnvironmentMutationJob::spawn(async move {
+            owner.update_image(environment_id, request, resolve).await
+        }))
+    }
+
+    async fn update_image<F>(
+        &self,
+        environment_id: String,
+        request: EnvironmentImageUpdateRequest,
+        resolve: impl FnOnce(EnvironmentImage) -> F,
+    ) -> Result<EnvironmentMutationResponse, EnvironmentMutationError>
+    where
+        F: std::future::Future<Output = Result<Option<String>, EnvironmentResolutionError>>,
+    {
+        use EnvironmentMutationError as Error;
+        let lock = self
+            .revisions
+            .lock_for(&format!("request:{}", request.request_id))
+            .map_err(Error::Publication)?;
+        let _guard = lock.lock().await;
+        let base = EnvironmentRevisionReference {
+            environment_id,
+            revision_id: request.base_revision_id,
+        };
+        if let Some(saved) = self
+            .revisions
+            .ledger
+            .environment_request_history(&request.request_id)
+            .await
+            .map_err(|_| Error::LedgerFailure)?
+        {
+            let capsem_logger::db::EnvironmentHistoryPayload::Complete { value } = saved.payload else {
+                return Err(Error::Conflict);
+            };
+            let EnvironmentRequestPayload::ImageUpdate { specification } = *value else {
+                return Err(Error::Conflict);
+            };
+            let record = saved.record;
+            if record.actor != "operator"
+                || record.requester.is_some()
+                || record.environment_id != base.environment_id
+                || record.base_revision_id.as_deref() != Some(base.revision_id.as_str())
+                || record.reason != request.reason
+                || specification.image.as_ref().map(|image| image.resolved_digest.as_str())
+                    != Some(request.expected_digest.as_str())
+            {
+                return Err(Error::Conflict);
+            }
+            return self.reconcile_view(record, "operator").await;
+        }
+        let mut current = self.load_base(&base).await?.document.specification;
+        if self
+            .revisions
+            .is_archived(&base.environment_id)
+            .await
+            .map_err(Error::Publication)?
+        {
+            return Err(Error::Archived);
+        }
+        let image = current.image.as_mut().ok_or(Error::Conflict)?;
+        let candidate = resolve(image.clone()).await.map_err(Error::Resolution)?;
+        if candidate.as_deref() != Some(request.expected_digest.as_str())
+            || request.expected_digest == image.resolved_digest
+        {
+            return Err(Error::Conflict);
+        }
+        image.resolved_digest = request.expected_digest;
+        let result = self
+            .publish_operator_revision(
+                request.request_id,
+                request.reason,
+                Some(base),
+                EnvironmentRequestPayload::ImageUpdate {
+                    specification: Box::new(current),
+                },
+            )
+            .await?;
+        self.request_changed(&result.request_id);
+        Ok(result)
+    }
+
     pub fn submit_archive(
         self: &Arc<Self>,
         environment_id: String,
@@ -302,26 +397,9 @@ impl EnvironmentMutationCoordinator {
         if let Some(saved) = self.reconcile(&request, None).await? {
             return Ok(saved);
         }
-        let base = if let Some(expected) = &request.base {
-            match current_revision(&self.revisions.ledger, &expected.environment_id)
-                .await
-                .map_err(EnvironmentMutationError::Publication)?
-            {
-                None => return Err(EnvironmentMutationError::NotFound),
-                Some(current) if current != expected.revision_id => return Err(EnvironmentMutationError::Conflict),
-                Some(_) => {}
-            }
-            let current = self
-                .revisions
-                .load_current(&expected.environment_id)
-                .await
-                .map_err(EnvironmentMutationError::Publication)?;
-            if current.document.identity.revision_id != expected.revision_id {
-                return Err(EnvironmentMutationError::Conflict);
-            }
-            Some(current)
-        } else {
-            None
+        let base = match &request.base {
+            Some(expected) => Some(self.load_base(expected).await?),
+            None => None,
         };
         let specification = resolve_environment(
             request.specification,
@@ -331,16 +409,56 @@ impl EnvironmentMutationCoordinator {
         )
         .await
         .map_err(EnvironmentMutationError::Resolution)?;
-        let environment_id = request
-            .base
+        self.publish_operator_revision(
+            request.request_id,
+            request.reason,
+            request.base,
+            EnvironmentRequestPayload::Change {
+                specification: Box::new(specification),
+            },
+        )
+        .await
+    }
+
+    async fn load_base(
+        &self,
+        expected: &EnvironmentRevisionReference,
+    ) -> Result<CurrentEnvironment, EnvironmentMutationError> {
+        use EnvironmentMutationError as Error;
+        match current_revision(&self.revisions.ledger, &expected.environment_id)
+            .await
+            .map_err(Error::Publication)?
+        {
+            None => return Err(Error::NotFound),
+            Some(current) if current != expected.revision_id => return Err(Error::Conflict),
+            Some(_) => {}
+        }
+        let current = self
+            .revisions
+            .load_current(&expected.environment_id)
+            .await
+            .map_err(Error::Publication)?;
+        if current.document.identity.revision_id != expected.revision_id {
+            return Err(Error::Conflict);
+        }
+        Ok(current)
+    }
+
+    async fn publish_operator_revision(
+        &self,
+        request_id: String,
+        reason: String,
+        base: Option<EnvironmentRevisionReference>,
+        payload: EnvironmentRequestPayload,
+    ) -> Result<EnvironmentMutationResponse, EnvironmentMutationError> {
+        let environment_id = base
             .as_ref()
             .map(|base| base.environment_id.clone())
             .unwrap_or_else(|| capsem_crypto::uuid_v4().to_string());
         // Network resolution holds only the request lock. Serialize the final
         // base check, durable decision and publication under the existing
         // environment lock so two edits cannot both approve the same base.
-        let environment_lock = request
-            .base
+        let environment_lock = base
             .as_ref()
             .map(|_| self.revisions.lock_for(&environment_id))
             .transpose()
@@ -365,8 +483,7 @@ impl EnvironmentMutationCoordinator {
                 .load_current(&self.revisions.ledger, &environment_id)
                 .await
                 .map_err(EnvironmentMutationError::Publication)?;
-            if request
-                .base
+            if base
                 .as_ref()
                 .is_none_or(|base| current.document.identity.revision_id != base.revision_id)
             {
@@ -377,20 +494,19 @@ impl EnvironmentMutationCoordinator {
             None
         };
         let at = now()?;
+        let kind = payload.kind();
         self.write(WriteOp::PrepareEnvironmentRequest(PreparedEnvironmentRequest {
-            request_id: request.request_id.clone(),
+            request_id: request_id.clone(),
             environment_id: environment_id.clone(),
-            base_revision_id: request.base.as_ref().map(|base| base.revision_id.clone()),
+            base_revision_id: base.as_ref().map(|base| base.revision_id.clone()),
             requester: None,
             timestamp_unix_ms: at,
             // Operator intent is approved immediately, never held for human waiting.
             expires_at_unix_ms: expiry(at)?,
             actor: "operator".into(),
-            reason: request.reason.clone(),
+            reason: reason.clone(),
             payload_event_id: event_id(),
-            payload: Box::new(EnvironmentRequestPayload::Change {
-                specification: Box::new(specification),
-            }),
+            payload: Box::new(payload),
         }))
         .await?;
         // Approval and publication consume the durable frozen request, not a
@@ -398,31 +514,36 @@ impl EnvironmentMutationCoordinator {
         let saved = self
             .revisions
             .ledger
-            .environment_request_snapshot(&request.request_id)
+            .environment_request_snapshot(&request_id)
             .await
             .map_err(|_| EnvironmentMutationError::LedgerFailure)?
             .ok_or(EnvironmentMutationError::LedgerFailure)?;
-        let EnvironmentRequestPayload::Change { specification } = *saved.payload else {
+        if saved.payload.kind() != kind {
             return Err(EnvironmentMutationError::Conflict);
+        }
+        let specification = match *saved.payload {
+            EnvironmentRequestPayload::Change { specification }
+            | EnvironmentRequestPayload::ImageUpdate { specification } => specification,
+            _ => return Err(EnvironmentMutationError::Conflict),
         };
         self.write(WriteOp::EnvironmentRequestDecision(EnvironmentRequestDecision {
-            request_id: request.request_id.clone(),
+            request_id: request_id.clone(),
             timestamp_unix_ms: now()?,
             actor: "operator".into(),
             decision: EnvironmentRequestDecisionKind::Approve,
-            reason: request.reason.clone(),
+            reason: reason.clone(),
         }))
         .await?;
         let at = now()?;
         let revision = PreparedEnvironmentRevision {
             environment_id,
             revision_id: capsem_crypto::uuid_v4().to_string(),
-            previous_revision_id: request.base.as_ref().map(|base| base.revision_id.clone()),
+            previous_revision_id: base.as_ref().map(|base| base.revision_id.clone()),
             fork_parent: None,
             timestamp_unix_ms: at,
             actor: "operator".into(),
-            reason: request.reason,
-            request_id: Some(request.request_id.clone()),
+            reason,
+            request_id: Some(request_id.clone()),
             payload_event_id: event_id(),
             specification,
         };
@@ -432,7 +553,7 @@ impl EnvironmentMutationCoordinator {
             self.revisions.commit(revision, at).wait().await
         }
         .map_err(EnvironmentMutationError::Publication)?;
-        Ok(view(self.read_request(request.request_id).await?))
+        Ok(view(self.read_request(request_id).await?))
     }
 
     async fn reconcile(
@@ -452,7 +573,7 @@ impl EnvironmentMutationCoordinator {
         let capsem_logger::db::EnvironmentHistoryPayload::Complete { value } = saved.payload else {
             return Err(EnvironmentMutationError::Conflict);
         };
-        let mut record = saved.record;
+        let record = saved.record;
         let EnvironmentRequestPayload::Change { specification } = *value else {
             return Err(EnvironmentMutationError::Conflict);
         };
@@ -468,24 +589,34 @@ impl EnvironmentMutationCoordinator {
         {
             return Err(EnvironmentMutationError::Conflict);
         }
+        self.reconcile_view(record, if origin.is_some() { "system" } else { "operator" })
+            .await
+            .map(Some)
+    }
+
+    async fn reconcile_view(
+        &self,
+        mut record: EnvironmentRequestRecord,
+        expiry_actor: &str,
+    ) -> Result<EnvironmentMutationResponse, EnvironmentMutationError> {
         let at = now()?;
         if record.state == EnvironmentRequestState::Pending && at >= record.expires_at_unix_ms {
             self.write(WriteOp::EnvironmentRequestInvalidation(
                 EnvironmentRequestInvalidation {
-                    request_id: request.request_id.clone(),
+                    request_id: record.request_id.clone(),
                     timestamp_unix_ms: at,
-                    actor: if origin.is_some() { "system" } else { "operator" }.into(),
+                    actor: expiry_actor.into(),
                     kind: EnvironmentRequestInvalidationKind::Expired,
                     reason: "review deadline expired before an operator decision".into(),
                 },
             ))
             .await?;
-            self.request_changed(&request.request_id);
-            record = self.read_request(request.request_id.clone()).await?;
+            self.request_changed(&record.request_id);
+            record = self.read_request(record.request_id).await?;
         }
         // Pending, interrupted or stale requests remain visible. Reconciliation
         // never casts another vote, creates a revision, or retries application.
-        Ok(Some(view(record)))
+        Ok(view(record))
     }
 
     async fn read_request(&self, request_id: String) -> Result<EnvironmentRequestRecord, EnvironmentMutationError> {

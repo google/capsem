@@ -1,5 +1,7 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .exposure_request import ExposureRequest
+from .exposure_target import ExposureTarget
 from .file_action_count import FileActionCount
 from .file_entry_type import FileEntryType
 from .file_event import FileEvent
@@ -78,10 +80,10 @@ from .mcp_catalog_summary import McpCatalogSummary
 from .mcp_default_permission_response import McpDefaultPermissionResponse
 from .mcp_info_response import McpInfoResponse
 from .mcp_permission_action import McpPermissionAction
-from .mcp_published_tool import McpPublishedTool
-from .mcp_refresh_response import McpRefreshResponse
 
 __all__ = [
+    'ExposureRequest',
+    'ExposureTarget',
     'FileActionCount',
     'FileEntryType',
     'FileEvent',
@@ -160,6 +162,4 @@ __all__ = [
     'McpDefaultPermissionResponse',
     'McpInfoResponse',
     'McpPermissionAction',
-    'McpPublishedTool',
-    'McpRefreshResponse',
 ]

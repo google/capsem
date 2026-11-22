@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Operators can review and approve an exact image update for future sandbox creations. Existing sandboxes retain their saved revisions.
 - Added: Operators can check for image updates against an exact active environment revision. Pinned environments keep their selected digest.
 - Added: Saved environments can select built-in package registry read rules under current corporate policy.
 - Fixed: Linux VirtioFS can move a workspace entry atomically while preserving an existing destination.

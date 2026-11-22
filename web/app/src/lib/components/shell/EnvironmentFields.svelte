@@ -57,6 +57,7 @@
       <label for={`${id}-policy`} class="text-sm font-medium">Image updates</label>
       <select id={`${id}-policy`} class={input} bind:value={fields.imageUpdates} disabled={!fields.image.trim()}>
         <option value="manual">Manual</option>
+        <option value="pinned">Pinned</option>
         <option value="ask">Ask</option>
         <option value="auto">Automatic</option>
       </select>

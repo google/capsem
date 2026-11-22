@@ -6,7 +6,9 @@ from .environment_effective_access_rule import EnvironmentEffectiveAccessRule
 from .environment_effective_detection_rule import EnvironmentEffectiveDetectionRule
 from .environment_identity import EnvironmentIdentity
 from .environment_image import EnvironmentImage
+from .environment_image_update_action import EnvironmentImageUpdateAction
 from .environment_image_update_policy import EnvironmentImageUpdatePolicy
+from .environment_image_update_request import EnvironmentImageUpdateRequest
 from .environment_image_update_response import EnvironmentImageUpdateResponse
 from .environment_list_item import EnvironmentListItem
 from .environment_list_response import EnvironmentListResponse
@@ -116,8 +118,6 @@ from .exec_target import ExecTarget
 from .exposure_access import ExposureAccess
 from .exposure_info import ExposureInfo
 from .exposure_list_response import ExposureListResponse
-from .exposure_request import ExposureRequest
-from .exposure_target import ExposureTarget
 
 __all__ = [
     'EnvironmentDetectionRule',
@@ -126,7 +126,9 @@ __all__ = [
     'EnvironmentEffectiveDetectionRule',
     'EnvironmentIdentity',
     'EnvironmentImage',
+    'EnvironmentImageUpdateAction',
     'EnvironmentImageUpdatePolicy',
+    'EnvironmentImageUpdateRequest',
     'EnvironmentImageUpdateResponse',
     'EnvironmentListItem',
     'EnvironmentListResponse',
@@ -198,6 +200,4 @@ __all__ = [
     'ExposureAccess',
     'ExposureInfo',
     'ExposureListResponse',
-    'ExposureRequest',
-    'ExposureTarget',
 ]

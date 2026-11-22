@@ -4,7 +4,7 @@ use crate::{container_setup::images, AppError, ServiceState};
 use axum::http::StatusCode;
 use capsem_config::{
     catalogs::{CatalogKind, McpCatalogDefinition},
-    environment::{EnvironmentCatalogPin, EnvironmentCatalogSelection},
+    environment::{EnvironmentCatalogPin, EnvironmentCatalogSelection, EnvironmentImage},
 };
 use capsem_core::environment::{EnvironmentPinResolver, EnvironmentResolutionError};
 use std::sync::Arc;
@@ -13,6 +13,18 @@ pub(crate) mod catalogs;
 mod repositories;
 
 pub(super) struct Sources(pub(super) Arc<ServiceState>);
+impl Sources {
+    pub(super) async fn image_update(
+        self,
+        image: EnvironmentImage,
+    ) -> Result<Option<String>, EnvironmentResolutionError> {
+        images::available_update(&self.0, &image)
+            .await
+            .map(|candidate| candidate.map(|image| image.resolved_digest))
+            .map_err(image_error)
+    }
+}
+
 impl EnvironmentPinResolver for Sources {
     async fn image(&self, reference: &str) -> Result<String, EnvironmentResolutionError> {
         let admitted = images::pull_image(

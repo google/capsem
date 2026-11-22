@@ -34,7 +34,7 @@ class Environments:
     async def change(
         self, id: str, request: models.EnvironmentChangeIntent, *, request_timeout: float | None = None,
     ) -> models.EnvironmentMutationResponse:
-        """Submit an observed-base edit or archive with a caller-chosen request ID."""
+        """Submit an edit, archive, or exact image update with a caller-chosen request ID."""
         request_id = request.request_id
         result = await api.change_environment(
             self._transport, id=id, body=request, request_timeout=request_timeout,
@@ -52,6 +52,17 @@ class Environments:
         )
         if result.document.identity.id != id:
             raise ValueError("environment identity changed")
+        return result
+
+    async def check_image_update(
+        self, reference: models.EnvironmentRevisionReference, *, request_timeout: float | None = None,
+    ) -> models.EnvironmentImageUpdateResponse:
+        result = await api.check_environment_image_update(
+            self._transport, id=reference.environment_id, revision_id=reference.revision_id,
+            request_timeout=request_timeout,
+        )
+        if result.environment != reference:
+            raise ValueError("environment revision identity changed")
         return result
 
     async def list_revisions(

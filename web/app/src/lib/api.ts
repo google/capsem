@@ -134,6 +134,14 @@ export function archiveEnvironment(id: string, request: import('@capsem/sdk').En
   return _sdk.call(transport => new Environments(transport).change(id, request), false);
 }
 
+export function checkSavedEnvironmentImageUpdate(reference: EnvironmentRevisionReference, signal: AbortSignal) {
+  return _sdk.call(transport => new Environments(transport).checkImageUpdate(reference, { signal }));
+}
+
+export function approveEnvironmentImageUpdate(id: string, request: import('@capsem/sdk').EnvironmentImageUpdateRequest) {
+  return _sdk.call(transport => new Environments(transport).change(id, request), false);
+}
+
 // -- Public getters --
 
 export function isConnected(): boolean {

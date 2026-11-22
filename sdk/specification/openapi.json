@@ -566,7 +566,7 @@
     },
     "/environments/{id}/changes": {
       "post": {
-        "description": "An operator publishes a blueprint revision or archives the exact current revision. Archival prevents new sandbox creation while preserving pinned work. A scoped agent queues an edit proposal at the exact base revision of its running sandbox. Reconcile the same request ID after interruption.",
+        "description": "An operator publishes a blueprint revision, approves an exact verified image update, or archives the exact current revision. Archival prevents new sandbox creation while preserving pinned work. A scoped agent queues an edit proposal at the exact base revision of its running sandbox. Reconcile the same request ID after interruption.",
         "operationId": "changeEnvironment",
         "parameters": [
           {
@@ -7209,6 +7209,9 @@
           },
           {
             "$ref": "#/components/schemas/EnvironmentArchiveRequest"
+          },
+          {
+            "$ref": "#/components/schemas/EnvironmentImageUpdateRequest"
           }
         ]
       },
@@ -7510,6 +7513,12 @@
         },
         "additionalProperties": false
       },
+      "EnvironmentImageUpdateAction": {
+        "type": "string",
+        "enum": [
+          "update_image"
+        ]
+      },
       "EnvironmentImageUpdatePolicy": {
         "type": "string",
         "enum": [
@@ -7518,6 +7527,37 @@
           "ask",
           "auto"
         ]
+      },
+      "EnvironmentImageUpdateRequest": {
+        "type": "object",
+        "required": [
+          "action",
+          "request_id",
+          "base_revision_id",
+          "expected_digest",
+          "reason"
+        ],
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/EnvironmentImageUpdateAction"
+          },
+          "base_revision_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "expected_digest": {
+            "type": "string",
+            "description": "Immutable SHA-256 candidate the operator reviewed, including the `sha256:` prefix."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
       },
       "EnvironmentImageUpdateResponse": {
         "type": "object",

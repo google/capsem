@@ -70,6 +70,13 @@ Select **Review changes**, check the settings, enter a reason, and select
 **Save environment**. Running sessions keep their existing revisions. If the
 saved revision changes before you save, reload it before starting a new edit.
 
+For a saved environment with manual image updates, choose **Check for image
+update** in its settings. Compare the current and available digests, enter a
+reason, then select **Approve image update**. This creates a new revision.
+Existing sandboxes keep their selected revision across restarts. Choose
+**Pinned** under **Image updates** to keep the current digest until you
+explicitly edit the image.
+
 Open **Plugins** to inspect the settings that Capsem will use when this
 environment starts. The editor shows the effective modes for each supported
 direction and locks entries owned by corporate policy. Expand a plugin to

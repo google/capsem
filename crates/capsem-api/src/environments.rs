@@ -276,10 +276,42 @@ impl EnvironmentArchiveRequest {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvironmentImageUpdateAction {
+    UpdateImage,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentImageUpdateRequest {
+    pub action: EnvironmentImageUpdateAction,
+    #[schema(format = "uuid")]
+    pub request_id: String,
+    #[schema(format = "uuid")]
+    pub base_revision_id: String,
+    /// Immutable SHA-256 candidate the operator reviewed, including the `sha256:` prefix.
+    pub expected_digest: String,
+    pub reason: String,
+}
+
+impl EnvironmentImageUpdateRequest {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_submission(&self.request_id, &self.reason, None)?;
+        if !crate::identity::canonical_uuid(&self.base_revision_id)
+            || !capsem_config::is_sha256_digest_shape(&self.expected_digest)
+        {
+            return Err("environment image update requires a canonical base revision and SHA-256 digest".into());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(untagged)]
 pub enum EnvironmentChangeIntent {
     Edit(Box<EnvironmentChangeRequest>),
     Archive(EnvironmentArchiveRequest),
+    ImageUpdate(EnvironmentImageUpdateRequest),
 }
 
 impl EnvironmentChangeIntent {
@@ -287,6 +319,7 @@ impl EnvironmentChangeIntent {
         match self {
             Self::Edit(request) => &request.request_id,
             Self::Archive(request) => &request.request_id,
+            Self::ImageUpdate(request) => &request.request_id,
         }
     }
 }

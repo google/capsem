@@ -1,5 +1,7 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+export {VmSkillDetailResponseSchema} from "./VmSkillDetailResponse.js";
+export {VmSkillListResponseSchema} from "./VmSkillListResponse.js";
 export {VmStartRequestSchema} from "./VmStartRequest.js";
 export {VmStatsDetailResponseSchema} from "./VmStatsDetailResponse.js";
 export {VmStatsSummaryResponseSchema} from "./VmStatsSummaryResponse.js";
