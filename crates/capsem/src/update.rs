@@ -14,17 +14,23 @@ mod verified_update;
 use asset_install::*;
 use candidate_audit::*;
 use privileged_install::*;
+use transport::{
+    has_scheme_authority_prefix, read_manifest_source, release_http_get_bytes, release_http_retry_backoff,
+    release_http_status_is_retryable,
+};
+pub use transport::{validate_corp_source_url_arg, validate_manifest_source_url_arg};
 use verified_update::*;
 
 #[cfg(test)]
 mod runtime_contract_tests;
+#[cfg(test)]
+use transport::validate_source_url_arg;
 
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::OpenOptions,
     io::{Read, Write},
     path::{Path, PathBuf},
-    time::Duration,
 };
 
 use anyhow::{Context, Result};
@@ -36,7 +42,6 @@ use crate::platform::{self, InstallLayout};
 use capsem_assets::asset_manager::{Architecture, PackageArchitecture};
 
 const RELEASE_HTTP_ATTEMPTS: usize = 6;
-const RELEASE_HTTP_INITIAL_BACKOFF_MS: u64 = 1_000;
 const INSTALL_MANIFEST_STDIN_MAX_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Cached update check result.
@@ -403,69 +408,6 @@ fn now_secs() -> u64 {
 
 fn manifest_metadata_path() -> Option<PathBuf> {
     capsem_assets::asset_manager::default_assets_dir().map(|assets_dir| assets_dir.join("manifest-metadata.json"))
-}
-
-/// Validate user-provided update source flags.
-///
-/// The CLI intentionally accepts URL strings only. Local files must be written
-/// as `file://` so normal release channels and corporate channels share one
-/// update/provenance mechanism.
-pub fn validate_source_url_arg(flag: &str, value: &str) -> std::result::Result<String, String> {
-    let parsed = reqwest::Url::parse(value).map_err(|_| {
-        format!("{flag} must be a URL: use https://..., http://..., or file:///absolute/path, got {value}")
-    })?;
-    match parsed.scheme() {
-        "https" | "http" => {
-            if !has_scheme_authority_prefix(value, parsed.scheme()) {
-                return Err(format!(
-                    "{flag} must use https://, http://, or file:// URLs, got {value}"
-                ));
-            }
-            Ok(value.to_string())
-        }
-        "file" => {
-            if !has_scheme_authority_prefix(value, "file") {
-                return Err(format!("{flag} file URL must start with file://: {value}"));
-            }
-            parsed
-                .to_file_path()
-                .map(|_| value.to_string())
-                .map_err(|_| format!("{flag} file URL must be absolute: {value}"))
-        }
-        scheme => Err(format!(
-            "unsupported {flag} URL scheme {scheme}: use https://, http://, or file://"
-        )),
-    }
-}
-
-pub fn validate_manifest_source_url_arg(value: &str) -> std::result::Result<String, String> {
-    let value = validate_source_url_arg("--manifest", value)?;
-    let parsed = reqwest::Url::parse(&value).expect("source URL was validated");
-    if matches!(parsed.scheme(), "https" | "http") {
-        transport::validate_authority_current(&parsed).map_err(|error| format!("--manifest: {error:#}"))?;
-    }
-    Ok(value)
-}
-
-pub fn validate_corp_source_url_arg(value: &str) -> std::result::Result<String, String> {
-    let value = validate_source_url_arg("--corp", value)?;
-    let parsed = reqwest::Url::parse(&value).expect("source URL was validated");
-    if parsed.scheme() == "http" {
-        return Err("--corp remote authority requires HTTPS; use file:///absolute/path for local config".to_string());
-    }
-    if parsed.scheme() == "https"
-        && (!parsed.username().is_empty() || parsed.password().is_some() || !parsed.has_host())
-    {
-        return Err("--corp requires an HTTPS origin without URL credentials".to_string());
-    }
-    Ok(value)
-}
-
-fn has_scheme_authority_prefix(value: &str, scheme: &str) -> bool {
-    let prefix = format!("{scheme}://");
-    value
-        .get(..prefix.len())
-        .is_some_and(|candidate| candidate.eq_ignore_ascii_case(&prefix))
 }
 
 /// Read cached update notice. Sync file read, no latency.

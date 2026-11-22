@@ -332,7 +332,7 @@ enum MiscCommands {
         #[arg(long, value_name = "NAME", value_parser = validate_update_channel, conflicts_with = "manifest")]
         channel: Option<String>,
         /// Override the asset manifest endpoint for this update.
-        #[arg(long, value_name = "URL", value_parser = validate_update_manifest_url)]
+        #[arg(long, value_name = "URL", value_parser = update::validate_manifest_source_url_arg)]
         manifest: Option<String>,
         /// Read preverified manifest bytes from stdin while --manifest remains
         /// their logical URL. Reserved for the native package handoff.
@@ -344,7 +344,7 @@ enum MiscCommands {
         )]
         install_manifest_stdin: bool,
         /// Fetch and install corporate policy config from an HTTPS or absolute file URL.
-        #[arg(long, value_name = "URL", value_parser = validate_update_corp_url, conflicts_with = "assets")]
+        #[arg(long, value_name = "URL", value_parser = update::validate_corp_source_url_arg, conflicts_with = "assets")]
         corp: Option<String>,
     },
     /// Run diagnostic tests in a fresh session
@@ -413,16 +413,8 @@ enum MiscCommands {
     Stop,
 }
 
-fn validate_update_manifest_url(value: &str) -> std::result::Result<String, String> {
-    update::validate_manifest_source_url_arg(value)
-}
-
 fn validate_update_channel(value: &str) -> std::result::Result<String, String> {
     update::validate_channel_name(value).map_err(|error| error.to_string())
-}
-
-fn validate_update_corp_url(value: &str) -> std::result::Result<String, String> {
-    update::validate_corp_source_url_arg(value)
 }
 
 fn print_asset_status(status: &AssetStatus) {

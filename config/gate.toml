@@ -1224,11 +1224,9 @@ must_stay_below_lines = 3000
 "crates/capsem-proto/src/tests.rs" = 1255
 "crates/capsem-service/src/tests/assets_registry.rs" = 1067
 "crates/capsem-service/src/tests/lifecycle.rs" = 1201
-"crates/capsem/src/main.rs" = 1769
-"crates/capsem/src/tests.rs" = 1174
-"crates/capsem/src/update.rs" = 2041
-"crates/capsem/src/update/asset_install.rs" = 1041
-"crates/capsem/src/update/tests.rs" = 2103
+"crates/capsem/src/main.rs" = 1767
+"crates/capsem/src/update.rs" = 2040
+"crates/capsem/src/update/tests.rs" = 2084
 
 # The benchmark collectors. Their whole contract is that they print raw
 # samples and compute nothing, so one growing past this ceiling means
