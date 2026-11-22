@@ -272,27 +272,27 @@ pub(crate) async fn settle_cold_restart(
         })
         .await
         .map_err(unavailable)?;
-    let Some(request_id) = records.into_iter().next().and_then(|record| record.request_id) else {
-        return Ok(());
-    };
-    let requests = state
-        .host_ledger
-        .environment_requests(EnvironmentRequestQuery::Get {
-            request_id: request_id.clone(),
-        })
-        .await
-        .map_err(unavailable)?;
     let generation = owner.generation().to_string();
-    if !requests.into_iter().any(|request| {
-        request.result.as_ref() == Some(&revision)
-            && request
-                .requester
-                .is_some_and(|target| target.session_id == owner.id() && target.generation != generation)
-            && request.application.is_some_and(|application| {
-                application.state == EnvironmentApplicationState::Applied && application.pending_restart
+    let mut fork_notification = None;
+    if let Some(request_id) = records.into_iter().next().and_then(|record| record.request_id) {
+        let requests = state
+            .host_ledger
+            .environment_requests(EnvironmentRequestQuery::Get {
+                request_id: request_id.clone(),
             })
-    }) {
-        return Ok(());
+            .await
+            .map_err(unavailable)?;
+        if requests.into_iter().any(|request| {
+            request.result.as_ref() == Some(&revision)
+                && request
+                    .requester
+                    .is_some_and(|target| target.session_id == owner.id() && target.generation != generation)
+                && request.application.is_some_and(|application| {
+                    application.state == EnvironmentApplicationState::Applied && application.pending_restart
+                })
+        }) {
+            fork_notification = Some(request_id);
+        }
     }
     owner.validate(state, false).map_err(|_| ended())?;
     state
@@ -308,7 +308,9 @@ pub(crate) async fn settle_cold_restart(
         .await
         .map_err(unavailable)?;
     state.host_ledger.flush().await.map_err(unavailable)?;
-    state.approvals.environment_request_notifier()(&request_id);
+    if let Some(request_id) = fork_notification {
+        state.approvals.environment_request_notifier()(&request_id);
+    }
     Ok(())
 }
 

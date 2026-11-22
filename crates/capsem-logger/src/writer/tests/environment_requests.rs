@@ -538,6 +538,7 @@ async fn image_promotion_and_apply_proposals_archive_their_exact_intent() {
             },
         },
         EnvironmentRequestPayload::Apply {
+            expected: Default::default(),
             revision: selected,
             targets: vec![EnvironmentRequestTarget {
                 session_id: id(4),
@@ -747,10 +748,12 @@ async fn promotion_lineage_and_apply_target_budgets_fail_before_archiving() {
             source: selected.clone(),
         },
         EnvironmentRequestPayload::Apply {
+            expected: Default::default(),
             revision: selected.clone(),
             targets: Vec::new(),
         },
         EnvironmentRequestPayload::Apply {
+            expected: Default::default(),
             revision: selected.clone(),
             targets: vec![
                 EnvironmentRequestTarget {
@@ -764,6 +767,7 @@ async fn promotion_lineage_and_apply_target_budgets_fail_before_archiving() {
             ],
         },
         EnvironmentRequestPayload::Apply {
+            expected: Default::default(),
             revision: selected,
             targets: (0..=capsem_proto::APPROVAL_PENDING_TOTAL)
                 .map(|index| EnvironmentRequestTarget {

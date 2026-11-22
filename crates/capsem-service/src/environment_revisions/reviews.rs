@@ -100,6 +100,7 @@ impl EnvironmentRevisions {
                 EnvironmentRequestPayload::Apply {
                     revision,
                     targets: intended,
+                    ..
                 } => {
                     applications = self.apply_outcomes(&observed, &intended).await?;
                     observed.application = applications::summary_state(&applications);

@@ -396,6 +396,7 @@ async fn source_roots_match_archived_intent_and_remain_distinct_from_target_base
             },
         },
         EnvironmentRequestPayload::Apply {
+            expected: Default::default(),
             revision: crate::events::EnvironmentRevisionParent {
                 environment_id: id(2),
                 revision_id: id(3),

@@ -72,6 +72,7 @@ async fn owner(path: &std::path::Path) -> DbWriter {
     request.base_revision_id = Some(id(5));
     request.timestamp_unix_ms = 30;
     request.payload = Box::new(EnvironmentRequestPayload::Apply {
+        expected: [(target().session_id, reference(2, 3))].into(),
         revision: reference(4, 5),
         targets: vec![target()],
     });
@@ -149,6 +150,22 @@ async fn application_rejects_wrong_target_stale_reference_cas_and_failed_ack_cha
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("host.db");
     let writer = owner(&path).await;
+    let set_desired = |expected, revision| {
+        WriteOp::EnvironmentSandboxReference(EnvironmentSandboxReferenceMutation {
+            session_id: target().session_id,
+            generation: target().generation,
+            kind: EnvironmentSandboxReferenceKind::Desired,
+            expected: Some(expected),
+            revision: Some(revision),
+            timestamp_unix_ms: 32,
+            actor: "operator".into(),
+        })
+    };
+    durable(&writer, set_desired(reference(2, 3), reference(4, 5))).await;
+    let mut changed_base = pending();
+    changed_base.expected_references.desired = Some(reference(4, 5));
+    rejected(&writer, WriteOp::EnvironmentApplication(changed_base)).await;
+    durable(&writer, set_desired(reference(4, 5), reference(2, 3))).await;
     let mut wrong = pending();
     wrong.target.generation = id(22);
     rejected(&writer, WriteOp::EnvironmentApplication(wrong)).await;

@@ -20,6 +20,7 @@ use capsem_logger::{
             EnvironmentSandboxReferences,
         },
         request::EnvironmentRequestTarget,
+        EnvironmentSandboxReferenceKind, EnvironmentSandboxReferenceMutation,
     },
     events::EnvironmentRevisionParent,
     WriteOp,
@@ -204,14 +205,22 @@ pub(super) async fn apply(
         Ok(()) => {
             record.state = Application::Applied;
             record.composition.live_policy = result;
-            write(state, record).await?;
-            Ok(None)
+            match write(state, record).await {
+                Ok(()) => Ok(None),
+                Err(error) => Ok(Some(UnconfirmedPolicy {
+                    owner: plan.owner,
+                    recorded: Err(error),
+                })),
+            }
         }
         Err(failure) => {
             record.state = Application::Failed;
             record.failure_reason = Some(failure.reason.into());
-            let recorded = write(state, record).await;
-            if failure.fence {
+            let mut recorded = write(state, record).await;
+            if recorded.is_ok() && failure.recovery == Recovery::RestoreSelection {
+                recorded = restore_desired(state, &plan, result).await;
+            }
+            if failure.recovery == Recovery::Fence || recorded.is_err() {
                 Ok(Some(UnconfirmedPolicy {
                     owner: plan.owner,
                     recorded,
@@ -225,7 +234,35 @@ pub(super) async fn apply(
 
 struct ApplyFailure {
     reason: &'static str,
-    fence: bool,
+    recovery: Recovery,
+}
+
+#[derive(PartialEq, Eq)]
+enum Recovery {
+    Keep,
+    RestoreSelection,
+    Fence,
+}
+
+async fn restore_desired(state: &ServiceState, plan: &Plan, rejected: EnvironmentRevisionParent) -> Result<(), Error> {
+    // The registry write failed before rename and restored its in-memory
+    // selection. Keep the ledger's current reference at that same revision.
+    state
+        .host_ledger
+        .write(WriteOp::EnvironmentSandboxReference(
+            EnvironmentSandboxReferenceMutation {
+                session_id: plan.target.session_id.clone(),
+                generation: plan.target.generation.clone(),
+                kind: EnvironmentSandboxReferenceKind::Desired,
+                expected: Some(rejected),
+                revision: Some(plan.binding.desired.clone()),
+                timestamp_unix_ms: unix_timestamp_ms(),
+                actor: "operator".into(),
+            },
+        ))
+        .await
+        .map_err(|_| Error::LedgerFailure)?;
+    state.host_ledger.flush().await.map_err(|_| Error::LedgerFailure)
 }
 
 async fn apply_runtime(
@@ -236,7 +273,7 @@ async fn apply_runtime(
 ) -> Result<(), ApplyFailure> {
     let owner_ended = ApplyFailure {
         reason: "original environment owner ended before application",
-        fence: false,
+        recovery: Recovery::Keep,
     };
     plan.owner.validate(state, false).map_err(|_| owner_ended)?;
     // A durable selection remains the desired future configuration even when
@@ -248,11 +285,20 @@ async fn apply_runtime(
         let saved = state
             .off_worker(move |state| save_selection(&state, &id, &expected, &desired))
             .await;
-        if !matches!(saved, Ok(Ok(()))) {
-            return Err(ApplyFailure {
-                reason: "persistent environment selection could not be saved",
-                fence: false,
-            });
+        match saved {
+            Ok(Ok(())) => (),
+            Ok(Err(_)) => {
+                return Err(ApplyFailure {
+                    reason: "persistent environment selection could not be saved",
+                    recovery: Recovery::RestoreSelection,
+                })
+            }
+            Err(_) => {
+                return Err(ApplyFailure {
+                    reason: "persistent environment selection was not confirmed",
+                    recovery: Recovery::Fence,
+                })
+            }
         }
     }
     {
@@ -263,7 +309,7 @@ async fn apply_runtime(
             .and_then(|instance| instance.environment.as_mut())
             .ok_or(ApplyFailure {
                 reason: "original environment owner ended before publication",
-                fence: false,
+                recovery: Recovery::Keep,
             })?;
         binding.desired = desired.clone();
         binding.pending_restart = plan.pending_restart;
@@ -277,7 +323,7 @@ async fn apply_runtime(
         .and_then(Result::ok)
         .ok_or(ApplyFailure {
             reason: "approved active policy could not be published",
-            fence: true,
+            recovery: Recovery::Fence,
         })?;
     if published.digest != plan.binding.policy_digest {
         active_policy::apply_to_owner(state, &plan.owner, &published, mutation)
@@ -286,13 +332,13 @@ async fn apply_runtime(
                 tracing::warn!(%error, request_target = %plan.target.session_id, "environment policy not acknowledged");
                 ApplyFailure {
                     reason: "original owner did not acknowledge the approved active policy",
-                    fence: true,
+                    recovery: Recovery::Fence,
                 }
             })?;
     }
     plan.owner.validate(state, false).map_err(|_| ApplyFailure {
         reason: "original environment owner ended after publication",
-        fence: true,
+        recovery: Recovery::Fence,
     })?;
     let mut instances = state.instances.lock().unwrap();
     let binding = instances
@@ -301,7 +347,7 @@ async fn apply_runtime(
         .and_then(|instance| instance.environment.as_mut())
         .ok_or(ApplyFailure {
             reason: "original environment owner ended after publication",
-            fence: true,
+            recovery: Recovery::Fence,
         })?;
     binding.live_policy = desired.clone();
     Ok(())

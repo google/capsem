@@ -37,6 +37,7 @@ fn upstream_deadline(path: &str) -> Duration {
         ["images", "pull"]
             | ["environments", "create"]
             | ["environments", _, "changes"]
+            | ["environments", _, "apply"]
             | ["environments", _, "promote"]
             | ["environments", _, "revisions", _, "image-update"]
     ) {

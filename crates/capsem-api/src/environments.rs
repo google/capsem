@@ -266,6 +266,56 @@ impl EnvironmentPromotionRequest {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentApplyTarget {
+    #[schema(format = "uuid")]
+    pub session_id: String,
+    #[schema(format = "uuid")]
+    pub generation: String,
+    /// The target's desired revision observed during review.
+    pub base: EnvironmentRevisionReference,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentApplyRequest {
+    #[schema(format = "uuid")]
+    pub request_id: String,
+    /// The destination environment's current revision when reviewed.
+    #[schema(format = "uuid")]
+    pub base_revision_id: String,
+    /// The exact saved revision to apply to the selected generations.
+    #[schema(format = "uuid")]
+    pub revision_id: String,
+    pub targets: Vec<EnvironmentApplyTarget>,
+    pub reason: String,
+}
+
+impl EnvironmentApplyRequest {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_submission(&self.request_id, &self.reason, None)?;
+        if !crate::identity::canonical_uuid(&self.base_revision_id)
+            || !crate::identity::canonical_uuid(&self.revision_id)
+            || self.targets.is_empty()
+            || self.targets.len() > capsem_proto::APPROVAL_PENDING_TOTAL
+        {
+            return Err("environment application requires exact revisions and a bounded target selection".into());
+        }
+        let mut sessions = std::collections::BTreeSet::new();
+        for target in &self.targets {
+            if !crate::identity::canonical_uuid(&target.session_id)
+                || !crate::identity::canonical_uuid(&target.generation)
+                || !sessions.insert(&target.session_id)
+            {
+                return Err("environment application requires distinct targets and exact generations".into());
+            }
+            target.base.validate().map_err(str::to_owned)?;
+        }
+        Ok(())
+    }
+}
+
 impl std::fmt::Debug for EnvironmentChangeRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EnvironmentChangeRequest").finish_non_exhaustive()

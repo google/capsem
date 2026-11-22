@@ -1,5 +1,7 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+export { VmLifecycleIntent } from "./VmLifecycleIntent.js";
+export type { VmLifecycleSelection } from "./VmLifecycleSelection.js";
 export { VmLifecycleState } from "./VmLifecycleState.js";
 export type { VmMcpServer } from "./VmMcpServer.js";
 export { VmMcpServerKind } from "./VmMcpServerKind.js";

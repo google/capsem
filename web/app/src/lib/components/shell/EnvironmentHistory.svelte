@@ -5,6 +5,7 @@
   import { getSavedEnvironmentRevision, listSavedEnvironmentRevisions } from '../../api';
   import { sessionActionError } from '../../models/session-action-error';
   import EnvironmentPromotion from './EnvironmentPromotion.svelte';
+  import EnvironmentApplication from './EnvironmentApplication.svelte';
 
   let { reference }: { reference: EnvironmentRevisionReference } = $props();
   let rows = $state<EnvironmentRevisionSummary[]>([]);
@@ -104,6 +105,9 @@
       {/if}
       {#if detail.availability === RequestReviewAvailability.COMPLETE && detail.canonical_toml != null}
         <pre aria-label="Historical canonical TOML" class="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-line-2 bg-background-1 p-3 text-xs">{detail.canonical_toml}</pre>
+        {#key detail.summary.environment.revision_id}
+          <EnvironmentApplication revision={detail.summary.environment} />
+        {/key}
         {#if detail.summary.fork_parent}
           {#key detail.summary.environment.revision_id}
             <EnvironmentPromotion fork={detail.summary.environment} forkToml={detail.canonical_toml}

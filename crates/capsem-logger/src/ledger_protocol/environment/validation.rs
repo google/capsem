@@ -137,7 +137,11 @@ pub(super) fn request_payload(r: &EnvironmentRequestRecord, p: &EnvironmentReque
         EnvironmentRequestPayload::Change { specification }
         | EnvironmentRequestPayload::ImageUpdate { specification } => specification.validate().is_ok(),
         EnvironmentRequestPayload::Promotion { source } => parent(source),
-        EnvironmentRequestPayload::Apply { revision, targets } => {
+        EnvironmentRequestPayload::Apply {
+            revision,
+            targets,
+            expected,
+        } => {
             let mut sessions = BTreeSet::new();
             parent(revision)
                 && !targets.is_empty()
@@ -145,6 +149,11 @@ pub(super) fn request_payload(r: &EnvironmentRequestRecord, p: &EnvironmentReque
                 && targets
                     .iter()
                     .all(|t| target(t) && sessions.insert(t.session_id.as_str()))
+                && (expected.is_empty()
+                    || (expected.len() == sessions.len()
+                        && expected
+                            .iter()
+                            .all(|(session, base)| sessions.contains(session.as_str()) && parent(base))))
         }
     }
 }

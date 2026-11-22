@@ -91,7 +91,13 @@ pub(super) fn apply(
     {
         return Err(invalid("invalid environment application state transition"));
     }
-    environment_requests::require_application_target(conn, &m.request_id, &m.target, &c.desired, bodies)?;
+    let approved_base =
+        environment_requests::require_application_target(conn, &m.request_id, &m.target, &c.desired, bodies)?;
+    if m.expected_version.is_none()
+        && approved_base.is_some_and(|base| m.expected_references.desired.as_ref() != Some(&base))
+    {
+        return Err(invalid("application target no longer matches its reviewed base"));
+    }
     // Workload configuration changes only on a real next start. Pending and
     // failed records cannot manufacture a new acknowledged live composition.
     if m.expected_references.boot.as_ref() != Some(&c.boot)

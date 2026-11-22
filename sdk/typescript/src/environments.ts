@@ -17,6 +17,14 @@ export interface EnvironmentRevisionListOptions extends CallOptions {
 export class Environments {
   constructor(private readonly transport: Transport) {}
 
+  /** Apply the exact reviewed revision to the selected sandbox generations. */
+  async apply(id: string, request: models.EnvironmentApplyRequest, options: CallOptions = {}): Promise<models.EnvironmentMutationResponse> {
+    const requestId = request.request_id;
+    const result = await api.applyEnvironment(this.transport, {id, body: request}, options);
+    if (result.request_id !== requestId || result.environment_id !== id) throw new Error('Environment application identity changed');
+    return result;
+  }
+
   /** List visible environments. Follow next_cursor even after an empty search page. */
   async list({signal, timeoutMs, ...query}: EnvironmentListOptions = {}): Promise<models.EnvironmentListResponse> {
     return api.listEnvironments(this.transport, query, {signal, timeoutMs});

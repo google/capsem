@@ -124,6 +124,7 @@ async fn an_approved_apply_remains_pending_until_each_selected_sandbox_acknowled
             expires_at_unix_ms: expiry(at).unwrap(),
             payload_event_id: event_id(),
             payload: Box::new(EnvironmentRequestPayload::Apply {
+                expected: Default::default(),
                 revision: revision.clone(),
                 targets: targets.clone(),
             }),

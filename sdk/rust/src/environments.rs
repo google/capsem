@@ -5,6 +5,26 @@ use models::environments::{EnvironmentRevisionListQuery, EnvironmentRevisionRefe
 
 pub struct Environments<'a>(pub(crate) &'a Client);
 impl Environments<'_> {
+    /// Apply the exact reviewed revision to the selected sandbox generations.
+    pub async fn apply(
+        &self,
+        id: &str,
+        request: models::EnvironmentApplyRequest,
+    ) -> Result<models::EnvironmentMutationResponse> {
+        request
+            .validate()
+            .map_err(|_| Error::InvalidInput("invalid environment application"))?;
+        let input = api::ApplyEnvironmentParams {
+            id: id.into(),
+            body: request,
+        };
+        let result = api::apply_environment(&self.0.transport, &input, self.0.options).await?;
+        if result.request_id != input.body.request_id || result.environment_id != id {
+            return Err(Error::InvalidResponse("environment application identity changed"));
+        }
+        Ok(result)
+    }
+
     /// List or search the committed environments visible to this credential.
     pub async fn list(
         &self,

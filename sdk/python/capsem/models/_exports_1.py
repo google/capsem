@@ -1,5 +1,7 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .environment_create_request import EnvironmentCreateRequest
+from .environment_current_response import EnvironmentCurrentResponse
 from .environment_detection_rule import EnvironmentDetectionRule
 from .environment_document import EnvironmentDocument
 from .environment_effective_access_rule import EnvironmentEffectiveAccessRule
@@ -116,10 +118,10 @@ from .exec_request import ExecRequest
 from .exec_response import ExecResponse
 from .exec_source import ExecSource
 from .exec_target import ExecTarget
-from .exposure_access import ExposureAccess
-from .exposure_info import ExposureInfo
 
 __all__ = [
+    'EnvironmentCreateRequest',
+    'EnvironmentCurrentResponse',
     'EnvironmentDetectionRule',
     'EnvironmentDocument',
     'EnvironmentEffectiveAccessRule',
@@ -198,6 +200,4 @@ __all__ = [
     'ExecResponse',
     'ExecSource',
     'ExecTarget',
-    'ExposureAccess',
-    'ExposureInfo',
 ]

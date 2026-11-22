@@ -1,5 +1,7 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .exposure_access import ExposureAccess
+from .exposure_info import ExposureInfo
 from .exposure_list_response import ExposureListResponse
 from .exposure_request import ExposureRequest
 from .exposure_target import ExposureTarget
@@ -78,10 +80,10 @@ from .mcp_catalog_kind import McpCatalogKind
 from .mcp_catalog_list_response import McpCatalogListResponse
 from .mcp_catalog_requirement import McpCatalogRequirement
 from .mcp_catalog_summary import McpCatalogSummary
-from .mcp_default_permission_response import McpDefaultPermissionResponse
-from .mcp_info_response import McpInfoResponse
 
 __all__ = [
+    'ExposureAccess',
+    'ExposureInfo',
     'ExposureListResponse',
     'ExposureRequest',
     'ExposureTarget',
@@ -160,6 +162,4 @@ __all__ = [
     'McpCatalogListResponse',
     'McpCatalogRequirement',
     'McpCatalogSummary',
-    'McpDefaultPermissionResponse',
-    'McpInfoResponse',
 ]

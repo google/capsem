@@ -146,6 +146,10 @@ export function promoteEnvironment(id: string, request: import('@capsem/sdk').En
   return _sdk.call(transport => new Environments(transport).promote(id, request), false);
 }
 
+export function applySavedEnvironment(id: string, request: import('@capsem/sdk').EnvironmentApplyRequest) {
+  return _sdk.call(transport => new Environments(transport).apply(id, request), false);
+}
+
 // -- Public getters --
 
 export function isConnected(): boolean {

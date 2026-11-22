@@ -21,7 +21,7 @@ mod receipts;
 mod reviews;
 pub use mutations::{
     ApprovedEnvironmentReview, EnvironmentMutationCoordinator, EnvironmentMutationError, EnvironmentMutationJob,
-    EnvironmentProposalOrigin, ResolvedEnvironmentReview, ReviewedEnvironmentChange,
+    EnvironmentProposalOrigin, OperatorEnvironmentApplication, ResolvedEnvironmentReview, ReviewedEnvironmentChange,
 };
 
 mod startup;

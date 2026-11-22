@@ -496,6 +496,7 @@ async fn variable_purge_rewrite_stales_source_and_base_dependencies_without_reda
                 9,
                 13,
                 EnvironmentRequestPayload::Apply {
+                    expected: Default::default(),
                     revision: source.clone(),
                     targets: vec![EnvironmentRequestTarget {
                         session_id: id(30),
@@ -516,6 +517,7 @@ async fn variable_purge_rewrite_stales_source_and_base_dependencies_without_reda
                 2,
                 6,
                 EnvironmentRequestPayload::Apply {
+                    expected: Default::default(),
                     revision: EnvironmentRevisionParent {
                         environment_id: id(2),
                         revision_id: id(4),

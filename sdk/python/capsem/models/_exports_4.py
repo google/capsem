@@ -1,5 +1,7 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .revoke_session_grant_response import RevokeSessionGrantResponse
+from .revoked_credential_authority import RevokedCredentialAuthority
 from .rule_catalog_definition import RuleCatalogDefinition
 from .rule_catalog_definition_access import RuleCatalogDefinitionAccess
 from .rule_catalog_definition_detection import RuleCatalogDefinitionDetection
@@ -78,10 +80,10 @@ from .vm_action import VmAction
 from .vm_action_response import VmActionResponse
 from .vm_ai_info import VmAiInfo
 from .vm_files_info import VmFilesInfo
-from .vm_lifecycle_intent import VmLifecycleIntent
-from .vm_lifecycle_selection import VmLifecycleSelection
 
 __all__ = [
+    'RevokeSessionGrantResponse',
+    'RevokedCredentialAuthority',
     'RuleCatalogDefinition',
     'RuleCatalogDefinitionAccess',
     'RuleCatalogDefinitionDetection',
@@ -160,6 +162,4 @@ __all__ = [
     'VmActionResponse',
     'VmAiInfo',
     'VmFilesInfo',
-    'VmLifecycleIntent',
-    'VmLifecycleSelection',
 ]

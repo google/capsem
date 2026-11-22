@@ -564,6 +564,60 @@
         }
       }
     },
+    "/environments/{id}/apply": {
+      "post": {
+        "description": "An operator applies an exact saved revision to selected sandbox generations and their reviewed bases. An unchanged request ID retrieves its receipt. Inspect the request for each target's acknowledgement and restart status.",
+        "operationId": "applyEnvironment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnvironmentApplyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentMutationResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "x-capsem-request-timeout-ms": 1020000
+      }
+    },
     "/environments/{id}/changes": {
       "post": {
         "description": "An operator publishes a blueprint revision, approves an exact verified image update, or archives the exact current revision. Archival prevents new sandbox creation while preserving pinned work. A scoped agent queues an edit proposal at the exact base revision of its running sandbox. Reconcile the same request ID after interruption.",
@@ -7193,6 +7247,65 @@
               "null"
             ],
             "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentApplyRequest": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "base_revision_id",
+          "revision_id",
+          "targets",
+          "reason"
+        ],
+        "properties": {
+          "base_revision_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The destination environment's current revision when reviewed."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revision_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The exact saved revision to apply to the selected generations."
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentApplyTarget"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentApplyTarget": {
+        "type": "object",
+        "required": [
+          "session_id",
+          "generation",
+          "base"
+        ],
+        "properties": {
+          "base": {
+            "$ref": "#/components/schemas/EnvironmentRevisionReference",
+            "description": "The target's desired revision observed during review."
+          },
+          "generation": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "session_id": {
+            "type": "string",
+            "format": "uuid"
           }
         },
         "additionalProperties": false

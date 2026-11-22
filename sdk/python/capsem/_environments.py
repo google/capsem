@@ -10,6 +10,16 @@ class Environments:
     def __init__(self, transport: Transport) -> None:
         self._transport = transport
 
+    async def apply(
+        self, id: str, request: models.EnvironmentApplyRequest, *, request_timeout: float | None = None,
+    ) -> models.EnvironmentMutationResponse:
+        """Apply the exact reviewed revision to the selected sandbox generations."""
+        request_id = request.request_id
+        result = await api.apply_environment(self._transport, id=id, body=request, request_timeout=request_timeout)
+        if result.request_id != request_id or result.environment_id != id:
+            raise ValueError("environment application identity changed")
+        return result
+
     async def list(
         self, *, search: str | None = None, after: str | None = None,
         limit: int | None = None, request_timeout: float | None = None,

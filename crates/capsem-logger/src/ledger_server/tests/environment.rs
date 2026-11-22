@@ -172,6 +172,7 @@ async fn environment_reads_preserve_nonempty_requests_applications_references_an
     for number in [40, 41, 42] {
         let payload = if number == 41 {
             EnvironmentRequestPayload::Apply {
+                expected: Default::default(),
                 revision: revision.clone(),
                 targets: vec![target.clone()],
             }

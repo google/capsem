@@ -168,7 +168,11 @@ fn validate(conn: &Connection, record: &PreparedEnvironmentRequest) -> rusqlite:
                 return Err(invalid("environment promotion source is not a fork of its target"));
             }
         }
-        EnvironmentRequestPayload::Apply { revision, targets } => {
+        EnvironmentRequestPayload::Apply {
+            revision,
+            targets,
+            expected,
+        } => {
             // Apply fanout shares the existing compiled approval capacity;
             // service application admission accounts for the actual targets.
             let mut sessions = BTreeSet::new();
@@ -181,11 +185,21 @@ fn validate(conn: &Connection, record: &PreparedEnvironmentRequest) -> rusqlite:
                 || targets.len() > capsem_proto::APPROVAL_PENDING_TOTAL
                 || targets
                     .iter()
-                    .any(|value| !target(value) || !sessions.insert(&value.session_id))
+                    .any(|value| !target(value) || !sessions.insert(value.session_id.as_str()))
             {
                 return Err(invalid("invalid operator environment apply targets"));
             }
             committed_reference(conn, revision, true)?;
+            if !expected.is_empty() {
+                if expected.len() != sessions.len()
+                    || expected.keys().any(|session| !sessions.contains(session.as_str()))
+                {
+                    return Err(invalid("reviewed environment bases must match the selected targets"));
+                }
+                for base in expected.values() {
+                    committed_reference(conn, base, true)?;
+                }
+            }
         }
     }
     Ok(())
@@ -596,7 +610,7 @@ pub(super) fn require_application_target(
     target: &EnvironmentRequestTarget,
     desired: &EnvironmentRevisionParent,
     bodies: &BodyArchive,
-) -> rusqlite::Result<()> {
+) -> rusqlite::Result<Option<EnvironmentRevisionParent>> {
     require_approved(conn, request_id)?;
     let old = existing(conn, request_id)?.ok_or_else(|| invalid("environment request is missing"))?;
     if old.result.as_ref() != Some(desired) {
@@ -606,11 +620,13 @@ pub(super) fn require_application_target(
     }
     let payload = required_payload(conn, &old, bodies)?;
     match payload {
-        EnvironmentRequestPayload::Apply { targets, .. } if targets.contains(target) => Ok(()),
+        EnvironmentRequestPayload::Apply { targets, expected, .. } if targets.contains(target) => {
+            Ok(expected.get(&target.session_id).cloned())
+        }
         EnvironmentRequestPayload::Change { .. } | EnvironmentRequestPayload::ImageUpdate { .. }
             if old.requester.as_ref() == Some(target) =>
         {
-            Ok(())
+            Ok(None)
         }
         _ => Err(invalid("application target is not selected by its approved request")),
     }

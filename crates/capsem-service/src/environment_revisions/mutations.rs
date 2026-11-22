@@ -14,6 +14,8 @@ use capsem_logger::{
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod apply;
+pub use apply::OperatorEnvironmentApplication;
 mod proposals;
 pub use proposals::EnvironmentProposalOrigin;
 mod decisions;

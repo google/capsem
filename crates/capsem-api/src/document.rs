@@ -145,6 +145,13 @@ pub fn openapi() -> OpenApi {
             .content("application/json", Content::new(Some(request))).build()))
         .extensions(Some([("x-capsem-request-timeout-ms", IMAGE_PULL_REQUEST_TIMEOUT_MS)].into_iter().collect()));
     doc.add("/environments/{id}/promote", HttpMethod::Post, promote);
+    let request = doc.schema::<EnvironmentApplyRequest>();
+    let apply = doc.operation::<EnvironmentMutationResponse>("/environments/{id}/apply", "applyEnvironment")
+        .description(Some("An operator applies an exact saved revision to selected sandbox generations and their reviewed bases. An unchanged request ID retrieves its receipt. Inspect the request for each target's acknowledgement and restart status."))
+        .request_body(Some(RequestBodyBuilder::new().required(Some(Required::True))
+            .content("application/json", Content::new(Some(request))).build()))
+        .extensions(Some([("x-capsem-request-timeout-ms", IMAGE_PULL_REQUEST_TIMEOUT_MS)].into_iter().collect()));
+    doc.add("/environments/{id}/apply", HttpMethod::Post, apply);
     let requests = doc
         .operation::<requests::RequestListResponse>("/requests/list", "listRequests")
         .description(Some("List durable environment requests visible to the operator."))

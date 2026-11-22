@@ -1,5 +1,7 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .vm_lifecycle_intent import VmLifecycleIntent
+from .vm_lifecycle_selection import VmLifecycleSelection
 from .vm_lifecycle_state import VmLifecycleState
 from .vm_mcp_server import VmMcpServer
 from .vm_mcp_server_kind import VmMcpServerKind
@@ -18,6 +20,8 @@ from .vm_summary import VmSummary
 from .widget import Widget
 
 __all__ = [
+    'VmLifecycleIntent',
+    'VmLifecycleSelection',
     'VmLifecycleState',
     'VmMcpServer',
     'VmMcpServerKind',

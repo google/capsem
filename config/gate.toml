@@ -3294,6 +3294,7 @@ measured = [
     "/environments/create",
     "/environments/list",
     "/environments/plugins/list",
+    "/environments/{id}/apply",
     "/environments/{id}/changes",
     "/environments/{id}/promote",
     "/environments/{id}/info",

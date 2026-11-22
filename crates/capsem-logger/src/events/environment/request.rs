@@ -2,6 +2,7 @@
 use super::EnvironmentRevisionParent;
 use capsem_config::environment::EnvironmentSpecification;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -93,6 +94,9 @@ pub enum EnvironmentRequestPayload {
     Apply {
         revision: EnvironmentRevisionParent,
         targets: Vec<EnvironmentRequestTarget>,
+        /// The desired revision reviewed for each selected session.
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        expected: BTreeMap<String, EnvironmentRevisionParent>,
     },
 }
 
