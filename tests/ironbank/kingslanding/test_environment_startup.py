@@ -153,6 +153,47 @@ def test_image_update_keeps_existing_workloads_pinned_and_updates_future_creatio
         assert request(service, "GET", f"/vms/{vm}/container")["resolved"] == image
 
 
+def test_withdrawn_pinned_image_refuses_restart_without_advancing_the_revision(service, tmp_path):
+    artifacts = {}
+    with registry(tmp_path, image_config=IMAGE_CONFIG, artifacts=artifacts) as (image, certificate, requests):
+        location, original_digest = image.split("@")
+        authority = location.split("/", 1)[0]
+        original_catalog = publish_catalog(artifacts, "library/catalog", "stable", entry(image))
+        use_catalog(service, f"{authority}/library/catalog:stable", certificate)
+        selected = save(service, {
+            "name": "withdrawn-image-check",
+            "image": {"reference": "redis", "update_policy": "pinned"},
+            "startup": {"script": STARTUP.replace("sleep 3\n", ""), "timeout_seconds": 10},
+            "variables": {"BOUND_REVISION": "retained-variable"},
+        })
+        vm = create(service, selected, vm_name("withdrawn-image"))
+        running_generation = observe(service, vm, selected, 1)
+        environment = f"/environments/{selected['environment_id']}"
+        before = request(service, "GET", f"{environment}/revisions/list")
+        replacement_digest = "sha256:" + "0" * 64
+        assert replacement_digest != original_digest
+        withdrawn_catalog = publish_catalog(
+            artifacts, "library/catalog", "stable", entry(f"{location}@{replacement_digest}"),
+        )
+        refreshed = request(service, "GET", "/images?refresh=true")
+        assert refreshed["catalog"]["digest"] == withdrawn_catalog
+        assert observe(service, vm, selected, 1) == running_generation
+
+        request(service, "POST", f"/vms/{vm}/stop", {})
+        recorded_requests = len(requests)
+        refused = request(service, "POST", f"/vms/{vm}/start", {}, expected=403)
+        assert "saved image is unlisted, revoked or incompatible" in refused["error"], refused
+        assert not any(path.startswith("/v2/library/redis/") for path in requests[recorded_requests:])
+        assert request(service, "GET", f"{environment}/revisions/list") == before
+
+        publish_catalog(artifacts, "library/catalog", "stable", entry(image))
+        restored = request(service, "GET", "/images?refresh=true")
+        assert restored["catalog"]["digest"] == original_catalog
+        request(service, "POST", f"/vms/{vm}/start", {})
+        assert observe(service, vm, selected, 2) != running_generation
+        assert request(service, "GET", f"/vms/{vm}/container")["resolved"] == image
+
+
 def test_saved_environment_remote_mcp_is_scoped_to_its_guest(service, tmp_path):
     log = tmp_path / "mcp-upstream.jsonl"
     upstream, ready = start_mock_server(addr="127.0.0.1:0", request_log=log)
