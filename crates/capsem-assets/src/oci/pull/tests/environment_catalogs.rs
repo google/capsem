@@ -141,11 +141,16 @@ async fn environment_catalogs_cached_pins_keep_repository_kind_and_digest_bounda
 }
 
 fn source(registry: &Registry, kind: CatalogKind) -> ValidatedCatalogSource {
+    let reference = if kind == CatalogKind::Mcp {
+        format!("{}/team/image@{}", registry.address, registry.source_digest)
+    } else {
+        registry.catalog()
+    };
     ValidatedCatalogSource::new(
         kind,
         SelectedCatalogSource {
             source: &CatalogSourceDescriptor {
-                reference: registry.catalog(),
+                reference,
                 schema_version: 1,
             },
             origin: CatalogSourceOrigin::Corporate,
@@ -156,7 +161,7 @@ fn source(registry: &Registry, kind: CatalogKind) -> ValidatedCatalogSource {
 
 #[tokio::test]
 async fn environment_catalogs_reuse_verified_blob_cache_and_refresh_manifest_tags() {
-    for kind in CatalogKind::ALL {
+    for kind in [CatalogKind::Skills, CatalogKind::Rules] {
         let registry = catalog_registry(catalog_media_type(kind), DOCUMENT.to_vec(), None).await;
         let parent = tempfile::tempdir().unwrap();
         let cache_root = super::super::super::tests::private_dir();
@@ -197,6 +202,52 @@ async fn environment_catalogs_reuse_verified_blob_cache_and_refresh_manifest_tag
             "a failed fresh tag read must not reuse earlier discovery"
         );
     }
+}
+
+#[tokio::test]
+async fn mcp_catalog_fetch_uses_the_authorized_digest_and_refuses_substituted_bytes() {
+    let registry = catalog_registry(catalog_media_type(CatalogKind::Mcp), DOCUMENT.to_vec(), None).await;
+    let parent = tempfile::tempdir().unwrap();
+    let puller = registry.puller();
+    let selected = source(&registry, CatalogKind::Mcp);
+    let exact_path = format!("/v2/team/image/manifests/{}", registry.source_digest);
+    let different_manifest = {
+        let mut blobs = registry.blobs.lock().unwrap();
+        let mut other: Value = serde_json::from_slice(&blobs[&exact_path]).unwrap();
+        other["annotations"] = json!({"org.opencontainers.image.version":"next"});
+        let bytes = serde_json::to_vec(&other).unwrap();
+        blobs.insert("/v2/team/image/manifests/stable".into(), bytes.clone());
+        bytes
+    };
+    let artifact = puller
+        .fetch_environment_catalog(&selected, parent.path())
+        .await
+        .unwrap();
+    assert_eq!(artifact.bytes(), DOCUMENT);
+    assert_eq!(artifact.digest().as_str(), registry.source_digest);
+
+    registry
+        .blobs
+        .lock()
+        .unwrap()
+        .insert(exact_path.clone(), different_manifest);
+    let blobs_before = registry.blob_requests();
+    let error = puller
+        .fetch_environment_catalog(&selected, parent.path())
+        .await
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("manifest digest mismatch"));
+    assert_eq!(registry.blob_requests(), blobs_before);
+    let manifest_requests: Vec<_> = registry
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|request| request.path.contains("/manifests/"))
+        .map(|request| request.path.clone())
+        .collect();
+    assert_eq!(manifest_requests, [exact_path.clone(), exact_path]);
+    assert_eq!(std::fs::read_dir(parent.path()).unwrap().count(), 0);
 }
 
 #[tokio::test]

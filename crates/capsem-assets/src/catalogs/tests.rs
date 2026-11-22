@@ -128,6 +128,32 @@ fn catalog_source_normalization_preserves_origin_tag_and_digest_identity() {
 }
 
 #[test]
+fn mcp_source_requires_an_exact_digest_from_the_effective_authority() {
+    let reference = format!("ghcr.io/google/capsem/mcp@sha256:{}", "a".repeat(64));
+    let manifest = CatalogSources {
+        mcp: Some(selected(&reference)),
+        ..Default::default()
+    };
+    let pinned = select_source(&manifest, &Default::default(), CatalogKind::Mcp)
+        .unwrap()
+        .unwrap();
+    assert_eq!(pinned.origin(), CatalogSourceOrigin::Manifest);
+    assert_eq!(pinned.reference().to_string(), reference);
+
+    let mut corporate = CatalogSources::default();
+    for unpinned in ["registry.example/company/mcp", "registry.example/company/mcp:approved"] {
+        corporate.mcp = Some(selected(unpinned));
+        assert!(select_source(&corporate, &Default::default(), CatalogKind::Mcp).is_err());
+        assert!(select_source(&manifest, &corporate, CatalogKind::Mcp).is_err());
+    }
+    let replacement = format!("registry.example/company/mcp@sha256:{}", "b".repeat(64));
+    corporate.mcp = Some(selected(&replacement));
+    let pinned = select_source(&manifest, &corporate, CatalogKind::Mcp).unwrap().unwrap();
+    assert_eq!(pinned.origin(), CatalogSourceOrigin::Corporate);
+    assert_eq!(pinned.reference().to_string(), replacement);
+}
+
+#[test]
 fn catalog_source_normalization_reuses_docker_alias_identity_and_refuses_bad_sources() {
     let first = selected("index.docker.io/library/catalog:approved");
     let second = selected("docker.io/library/catalog:approved");

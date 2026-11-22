@@ -76,9 +76,13 @@ reference = "registry.example/capsem/skills:approved"
 schema_version = 1
 
 [catalogs.mcp]
-reference = "registry.example/capsem/mcp:approved"
+reference = "registry.example/capsem/mcp@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 schema_version = 1
 ```
+
+MCP sources require the SHA-256 digest of the OCI manifest. Update the
+descriptor when approving a new catalog digest. Skill and rule sources also
+accept tags.
 
 Ordinary `settings.toml` cannot define this section. System corporate sources
 win conflicts with user-provisioned corporate sources for the same catalog;

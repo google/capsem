@@ -104,6 +104,12 @@ does not establish a separate authority over that manifest or protect against
 a trusted publisher authorizing a malicious release. Independent manifest
 signing is not part of this trust model.
 
+The selected release manifest authorizes an MCP catalog by its SHA-256 OCI
+manifest digest. An administrator can replace the source with a digest-pinned
+corporate source. Capsem verifies the OCI manifest and its catalog layer
+against that digest chain. Environment approval and enforcement govern server
+launches and tool calls independently.
+
 ## Failure and revocation
 
 Stopping or replacing a VM retires its original worker generation and revokes

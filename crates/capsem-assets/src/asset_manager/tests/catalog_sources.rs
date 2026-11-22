@@ -5,7 +5,7 @@ fn runtime_manifest_view_preserves_selected_catalog_sources_in_both_formats() {
     let sources = serde_json::json!({
         "skills":{"reference":"ghcr.io/google/capsem/skills:stable","schema_version":1},
         "rules":{"reference":"ghcr.io/google/capsem/rules:stable","schema_version":1},
-        "mcp":{"reference":"ghcr.io/google/capsem/mcps:stable","schema_version":1},
+        "mcp":{"reference":format!("ghcr.io/google/capsem/mcps@sha256:{}", "a".repeat(64)),"schema_version":1},
     });
     let public = runtime_graph().to_string();
     for raw in [SAMPLE_V2_MANIFEST, &public] {

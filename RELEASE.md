@@ -25,6 +25,10 @@ the image catalog; they are not part of the VM runtime and are not authored by t
 Environment skills, rules, and MCP catalogs are also independently published
 OCI data artifacts. Manifests identify their sources and supported catalog
 schemas; binary and runtime lanes do not build or publish catalog contents.
+An MCP catalog source MUST include a SHA-256 OCI manifest digest. The selected
+release manifest or enforcing corporate replacement authorizes that digest.
+Capsem verifies the OCI manifest and catalog layer against the digest chain.
+Updating the authorized digest requires updating the source descriptor.
 
 ## 1. Purpose
 

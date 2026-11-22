@@ -14,9 +14,8 @@ pub const fn catalog_media_type(kind: CatalogKind) -> &'static str {
     }
 }
 
-/// OCI-verified transport bytes. This proves descriptor integrity only;
-/// schema, publisher authenticity, revocation and policy admission are still
-/// required before these bytes become an approved environment selection.
+/// OCI-verified transport bytes. The chosen source supplies the expected MCP
+/// digest. Schema, revocation and environment policy admission apply separately.
 pub struct CatalogArtifact {
     kind: CatalogKind,
     digest: crate::oci::Digest,
@@ -77,8 +76,8 @@ pub fn select_source(
         .transpose()
 }
 
-/// Format-validated source, not an assertion of catalog authenticity. Preserve
-/// the requested tag for resolution and the normalized identity for admission.
+/// Validated source from the effective manifest or corporate policy.
+/// Preserve tags where allowed and normalize the identity for digest admission.
 #[derive(Clone, Debug)]
 pub struct ValidatedCatalogSource {
     kind: CatalogKind,
@@ -94,6 +93,12 @@ impl ValidatedCatalogSource {
             .map_err(|_| anyhow!("invalid environment catalog OCI reference"))?;
         let identity =
             ImageReference::try_from(&reference).map_err(|_| anyhow!("invalid environment catalog OCI identity"))?;
+        // A catalog that describes MCP launches must bind its content to the
+        // effective authority's digest before the OCI client contacts a registry.
+        anyhow::ensure!(
+            kind != CatalogKind::Mcp || identity.digest().is_some(),
+            "MCP catalog source requires a SHA-256 OCI manifest digest"
+        );
         Ok(Self {
             kind,
             origin: selected.origin,

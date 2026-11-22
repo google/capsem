@@ -245,8 +245,9 @@ impl Puller {
     }
 
     /// Read the chosen catalog through the same authenticated, bounded OCI
-    /// transport and verified blob cache as the image catalog. Refreshes read
-    /// the manifest tag again; a fetch failure never substitutes older data.
+    /// transport and verified blob cache as the image catalog. Refreshes
+    /// request the reference selected by source policy, including its digest
+    /// for MCP catalogs.
     pub async fn fetch_environment_catalog(
         &self,
         source: &crate::catalogs::ValidatedCatalogSource,

@@ -96,7 +96,8 @@ pub(super) async fn resolve(
     match kind {
         CatalogKind::Skills => resolve_typed::<SkillCatalogEntry>(state, kind, selection).await,
         CatalogKind::Rules => resolve_typed::<RuleCatalogEntry>(state, kind, selection).await,
-        // Publisher verification for launch catalogs remains a separate decision.
+        // MCP sources are digest-pinned at OCI admission; typed MCP content
+        // verification and selection are pending.
         CatalogKind::Mcp => Err(Error::Unavailable),
     }
 }

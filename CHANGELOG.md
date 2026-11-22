@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Security: Require release manifests and corporate policies to specify an exact OCI manifest digest for MCP catalog sources.
 - Added: Inspect the compiled access and detection rules of a saved environment, including corporate ownership and precedence, and review changes to custom rule enablement.
 - Added: Edit environment plugins from built-in descriptors and inspect effective settings, supported directions, and corporate locks in the desktop and SDKs.
 - Fixed: The exact Debian install gate accepts packages from a worktree's shared cache and uses the configured package path inside the test container.

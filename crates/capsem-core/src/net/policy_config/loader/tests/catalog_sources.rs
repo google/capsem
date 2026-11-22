@@ -39,12 +39,29 @@ fn corporate_catalog_sources_follow_real_policy_file_precedence_per_kind() {
     for invalid in [
         source("skills", "private-canary"),
         source("skills", "registry.example/catalog:stable").replace("schema_version=1", "schema_version=2"),
+        source("mcp", "registry.example/mcp:approved"),
     ] {
         std::fs::write(&system, &invalid).unwrap();
         let error = policy_files_from_paths(None, &[system.clone(), local.clone()]).unwrap_err();
         assert!(!error.contains("canary"));
         assert!(crate::net::policy_config::corp_provision::validate_corp_toml(&invalid).is_err());
     }
+}
+
+#[test]
+fn corporate_catalog_configuration_accepts_an_exact_mcp_source() {
+    let root = tempfile::tempdir().unwrap();
+    let system = root.path().join("system-corp.toml");
+    let reference = format!("registry.example/capsem/mcp@sha256:{}", "a".repeat(64));
+    let content = source("mcp", &reference);
+    std::fs::write(&system, &content).unwrap();
+    crate::net::policy_config::corp_provision::validate_corp_toml(&content).unwrap();
+    let (_, corp) = policy_files_from_paths(None, &[system]).unwrap();
+    let selected = effective_catalog_source(&CatalogSources::default(), &corp, CatalogKind::Mcp)
+        .unwrap()
+        .unwrap();
+    assert_eq!(selected.origin(), CatalogSourceOrigin::Corporate);
+    assert_eq!(selected.reference().to_string(), reference);
 }
 
 #[test]

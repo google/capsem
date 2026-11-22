@@ -17,7 +17,8 @@ mod sealed {
 }
 
 /// Only the content schemas whose integrity contracts this owner implements.
-/// MCP launch catalogs require a separate publisher-signing decision.
+/// MCP catalog sources are digest-pinned at OCI admission and await a typed
+/// content schema here.
 pub trait CatalogContentEntry: CatalogEntry + DeserializeOwned + Send + sealed::Sealed + 'static {
     fn verify_contents(&self) -> Result<(), CatalogContentError>;
 }

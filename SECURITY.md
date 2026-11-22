@@ -40,6 +40,10 @@ Independent manifest signing is not part of this model. See the
 [release trust boundary](https://docs.capsem.org/architecture/security/#release-trust)
 for the guarantees and limits.
 
+The release manifest or enforcing corporate source authorizes the exact
+SHA-256 OCI manifest digest for an MCP catalog. An environment's approved
+configuration and applicable policy govern server launches and tool calls.
+
 ## Out of scope
 
 - Anything running inside the guest VM **by design**. The guest is an attacker-controlled environment; arbitrary code execution inside the guest is the whole point of the product.
