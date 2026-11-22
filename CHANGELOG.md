@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed: The new guest runtime requires Capsem 0.7.3, so older installations keep their compatible runtime until the package and guest can update together.
 - Fixed: Upgrading from 0.7.2 retains the existing host and session ledger history, including archived payloads.
 - Added: Operators and delegated inspectors can list the MCP servers and tool definitions reported by a specific running sandbox generation.
 - Added: Operators can review and approve an exact image update for future sandbox creations. Existing sandboxes retain their saved revisions.

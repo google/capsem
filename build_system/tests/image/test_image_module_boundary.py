@@ -27,6 +27,7 @@ EXPECTED_MODULES = {
     "image_build_backend.py",
     "manifest.py",
     "models.py",
+    "runtime_compatibility.py",
     "schema.py",
     "skills.py",
     "validate.py",
@@ -50,7 +51,7 @@ def test_builder_distribution_owns_image_package_and_command() -> None:
 
 
 def test_image_modules_resolve_from_the_direct_source_tree() -> None:
-    for name in ("config", "models", "schema", "cli", "doctor"):
+    for name in ("config", "models", "schema", "cli", "doctor", "runtime_compatibility"):
         module = importlib.import_module(f"capsem_builder.image.{name}")
         assert module.__file__ is not None
         assert Path(module.__file__).resolve() == (IMAGE_ROOT / f"{name}.py").resolve()

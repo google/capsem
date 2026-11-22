@@ -36,6 +36,7 @@ from .assettools import image_tag as asset_tools_image_tag
 from .doctor import check_container_runtime
 from .guestbuilder import image_tag
 from .models import BuildConfig, ErofsConfig, GuestImageConfig, RootfsConfig
+from .runtime_compatibility import runtime_min_binary
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[3] / "config" / "docker"
 CLOCK_SYNC_SCRIPT = (
@@ -1513,22 +1514,6 @@ def _select_rootfs_asset(asset_dir: Path) -> str | None:
     return None
 
 
-def asset_min_binary(binary_version: str) -> str:
-    """Lowest binary these assets support: the base of the binary's release line.
-
-    Derived, never hardcoded. A literal floor sat here across a change of
-    release line and put every binary *below* the minimum its own assets
-    declared, so installation failed with "no compatible asset release" even
-    though the asset release was present and otherwise valid.
-
-    The line base rather than the exact version, so a compatibility window
-    survives: any binary sharing this MAJOR.MINOR runs these assets, and a
-    patch release does not force everyone to re-hydrate.
-    """
-    major, minor, *_ = binary_version.split(".")
-    return f"{major}.{minor}.0"
-
-
 def _next_or_existing_asset_version(
     output_dir: Path,
     date_prefix: str,
@@ -1623,6 +1608,7 @@ def generate_checksums(
     asset_version: str | None = None,
 ) -> Path:
     """Generate checksums for selected architectures, or all assets if omitted."""
+    min_binary = runtime_min_binary(version)
     if arches is not None and (
         not arches or any(arch not in {"arm64", "x86_64"} for arch in arches)
     ):
@@ -1739,7 +1725,7 @@ def generate_checksums(
                 asset_version: {
                     "date": today.isoformat(),
                     "deprecated": False,
-                    "min_binary": asset_min_binary(version),
+                    "min_binary": min_binary,
                     "arches": arch_assets,
                 },
             },

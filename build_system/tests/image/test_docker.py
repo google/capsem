@@ -2191,14 +2191,14 @@ class TestGenerateChecksums:
 
         generate_checksums(
             tmp_path,
-            "0.7.1",
-            asset_version="0.7.1-0123456789ab",
+            "0.7.3",
+            asset_version="0.7.3-0123456789ab",
         )
 
         manifest = json.loads((tmp_path / "manifest.json").read_text())
-        assert manifest["assets"]["current"] == "0.7.1-0123456789ab"
-        assert "0.7.1-0123456789ab" in manifest["assets"]["releases"]
-        assert manifest["binaries"]["current"] == "0.7.1"
+        assert manifest["assets"]["current"] == "0.7.3-0123456789ab"
+        assert "0.7.3-0123456789ab" in manifest["assets"]["releases"]
+        assert manifest["binaries"]["current"] == "0.7.3"
 
     def test_b3sum_and_manifest(self, tmp_path):
         # Create fake arch dirs with files

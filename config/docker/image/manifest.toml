@@ -2,6 +2,8 @@
 name = "capsem-default"
 version = "0.13.0"
 description = "Default Capsem sandbox image with AI coding CLIs"
+# First host release that provides the image session's read-only launch share.
+minimum_host_binary = "0.7.3"
 
 [[image.changelog]]
 version = "0.13.0"
