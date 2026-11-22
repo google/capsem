@@ -6,6 +6,7 @@ from typing import Annotated
 
 from pydantic import ConfigDict, Field, StrictInt, StrictStr
 
+from .environment_revision_reference import EnvironmentRevisionReference
 from .model_base import Model
 
 
@@ -14,5 +15,6 @@ class RunRequest(Model):
     command: StrictStr
     cpus: Annotated[StrictInt, Field(ge=0)] | None = None
     env: dict[str, StrictStr] | None = None
+    environment: EnvironmentRevisionReference | None = None
     ram_mb: Annotated[StrictInt, Field(ge=0)] | None = None
     timeout_secs: Annotated[StrictInt, Field(ge=0)] | None = None

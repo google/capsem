@@ -68,6 +68,8 @@ pub struct RunOptions {
     /// Guest memory in GiB.
     pub memory: Option<u64>,
     pub env: Option<HashMap<String, String>>,
+    /// Exact saved revision for a plain VM. Excludes inline variables.
+    pub environment: Option<crate::models::environments::EnvironmentRevisionReference>,
 }
 
 #[derive(Debug, Clone, Default)]

@@ -176,12 +176,17 @@ class Hypervisor(Client):
 
     async def run(self, command: str, *, timeout_secs: int | None = None,
                   cpus: int | None = None, memory: int | None = None,
-                  env: dict[str, str] | None = None) -> ExecResult:
+                  env: dict[str, str] | None = None,
+                  environment: models.EnvironmentRevisionReference | None = None) -> ExecResult:
+        if environment is not None and env is not None:
+            raise ValueError("a saved environment cannot be combined with inline variables")
+        body = models.RunRequest(command=command, timeout_secs=timeout_secs,
+                                 cpus=cpus, ram_mb=_memory_mb(memory), env=env)
+        if environment is not None:
+            body.environment = models.EnvironmentRevisionReference.model_validate(environment)
         return await _exec_with_timeout(
-            api.run_vm(self._transport, body=models.RunRequest(
-                command=command, timeout_secs=timeout_secs,
-                cpus=cpus, ram_mb=_memory_mb(memory), env=env,
-            ), request_timeout=command_deadline(self._transport.timeout, timeout_secs)),
+            api.run_vm(self._transport, body=body,
+                       request_timeout=command_deadline(self._transport.timeout, timeout_secs)),
             command=command, timeout_secs=timeout_secs,
         )
 

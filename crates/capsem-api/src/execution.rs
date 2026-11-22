@@ -162,6 +162,21 @@ pub struct RunRequest {
     /// Environment variables to inject into the guest at boot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<HashMap<String, String>>,
+    /// Exact saved blueprint revision for the one-shot VM. Excludes inline variables and OCI workloads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environment: Option<crate::environments::EnvironmentRevisionReference>,
+}
+
+impl RunRequest {
+    pub fn validate_environment(&self) -> Result<(), &'static str> {
+        if let Some(reference) = &self.environment {
+            reference.validate()?;
+            if self.env.is_some() {
+                return Err("a saved environment cannot be combined with inline variables");
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]

@@ -8,6 +8,22 @@ const input: EnvironmentCreateRequest = {request_id: requestId, specification: {
 const pending = {request_id: requestId, environment_id: environmentId, decision: 'approved', application: 'pending', result: null, application_error: null};
 const current = {document: {identity: {schema_version: 1, id: environmentId, revision_id: requestId}, specification: {name: 'development'}}, archived: false, timestamp_unix_ms: 1, actor: 'operator', reason: 'approved', request_id: requestId};
 
+it('runs a command from an exact saved revision and refuses inline variables', async () => {
+  const reference = {environment_id: environmentId, revision_id: requestId};
+  const output = {stdout: {encoding: 'utf8', data: 'pinned'}, stderr: {encoding: 'utf8', data: ''}, exit_code: 0};
+  await gateway((_request, reply) => reply.end(JSON.stringify(output)), async (url, received) => {
+    const hv = new Hypervisor(url, 'token');
+    try {
+      expect((await hv.run('printf test', {environment: reference})).exit_code).toBe(0);
+      await expect(hv.run('printf test', {environment: reference, env: {}})).rejects.toThrow('inline variables');
+      await hv.run('printf test');
+      expect(received.map(request => request.url)).toEqual(['/run', '/run']);
+      expect(JSON.parse(received[0]?.body.toString() ?? '').environment).toEqual(reference);
+      expect(JSON.parse(received[1]?.body.toString() ?? '')).not.toHaveProperty('environment');
+    } finally { hv.close(); }
+  });
+});
+
 it('archives an exact revision and continues to expose its history', async () => {
   const base = {environment_id: environmentId, revision_id: requestId};
   const archive = {action: EnvironmentArchiveAction.ARCHIVE, request_id: requestId, base_revision_id: requestId, reason: 'retire blueprint'};

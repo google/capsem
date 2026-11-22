@@ -191,20 +191,16 @@ impl Hypervisor {
         }
         let call = self.client.command_options(options.timeout_secs);
         let ram_mb = Self::memory_mb(options.memory)?;
-        api::run_vm(
-            &self.client.transport,
-            &api::RunVmParams {
-                body: models::RunRequest {
-                    command: command.into(),
-                    timeout_secs: options.timeout_secs,
-                    ram_mb,
-                    cpus: options.cpus,
-                    env: options.env,
-                },
-            },
-            call,
-        )
-        .await
+        let body = models::RunRequest {
+            command: command.into(),
+            timeout_secs: options.timeout_secs,
+            ram_mb,
+            cpus: options.cpus,
+            env: options.env,
+            environment: options.environment,
+        };
+        body.validate_environment().map_err(Error::InvalidInput)?;
+        api::run_vm(&self.client.transport, &api::RunVmParams { body }, call).await
     }
 
     pub async fn purge(&self, all: bool) -> Result<models::PurgeResponse> {

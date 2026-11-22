@@ -77,10 +77,14 @@ export class Hypervisor extends Client {
     return api.getHypervisorLogs(this.transport, {...options, name: options.source ?? models.HostLogSource.SERVICE}, options);
   }
   async run(command: string, options: RunOptions = {}): Promise<models.ExecResponse> {
+    if (options.environment !== undefined && options.env !== undefined) {
+      throw new TypeError('a saved environment cannot be combined with inline variables');
+    }
     const ram_mb = memoryMb(options.memory);
     return api.runVm(this.transport, {body: {
       command, timeout_secs: options.timeout_secs ?? null,
       cpus: options.cpus ?? null, ram_mb, env: options.env ?? null,
+      ...(options.environment === undefined ? {} : {environment: options.environment}),
     }}, {...options, timeoutMs: options.timeoutMs ?? commandDeadlineMs(this.transport.timeoutMs, options.timeout_secs)});
   }
   async purge(options: CallOptions & {all?: boolean} = {}): Promise<models.PurgeResponse> {

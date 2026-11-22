@@ -11453,6 +11453,17 @@
               "type": "string"
             }
           },
+          "environment": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EnvironmentRevisionReference",
+                "description": "Exact saved blueprint revision for the one-shot VM. Excludes inline variables and OCI workloads."
+              }
+            ]
+          },
           "ram_mb": {
             "type": [
               "integer",

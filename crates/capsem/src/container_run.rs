@@ -16,14 +16,14 @@ pub(super) struct RunArgs {
     /// Shell command (with --image, the command follows the image instead)
     #[arg(conflicts_with = "image")]
     pub command: Option<String>,
-    /// Exact saved image revision to run: ENVIRONMENT_ID@REVISION_ID
+    /// Exact saved revision to run (conflicts with --env)
     #[arg(long, value_name = "ENVIRONMENT_ID@REVISION_ID", value_parser = environment_reference,
-          conflicts_with_all = ["command", "env", "image", "registry_ca", "registry_user"])]
+          conflicts_with_all = ["env", "image", "registry_ca", "registry_user"])]
     pub environment: Option<capsem_api::environments::EnvironmentRevisionReference>,
     /// Maximum workload duration in seconds
     #[arg(long)]
     pub timeout: Option<u64>,
-    /// Environment variables (the container's, with --image)
+    /// Inline variables (use --environment to select a saved revision)
     #[arg(short = 'e', long = "env")]
     pub env: Vec<String>,
     /// RAM in GB (default: 12)
@@ -104,19 +104,17 @@ pub(super) fn environment_reference(
 pub(super) async fn run(client: &GatewayClient, args: &RunArgs) -> Result<i32> {
     if args.environment.is_some() {
         container_image::validate_saved_options(&args.image, &args.env)?;
-        anyhow::ensure!(args.command.is_none(), "a saved image runs its approved command");
-        return run_image(client, args, None).await;
-    }
-    match Workload::of(&args.image, &args.env)? {
-        Some(workload) => run_image(client, args, Some(&workload)).await,
-        None => {
-            anyhow::ensure!(
-                args.network.is_empty(),
-                "--network needs --image: a shell run joins no network"
-            );
-            run_command(client, args).await
+        if args.command.is_none() {
+            return run_image(client, args, None).await;
         }
+    } else if let Some(workload) = Workload::of(&args.image, &args.env)? {
+        return run_image(client, args, Some(&workload)).await;
     }
+    anyhow::ensure!(
+        args.network.is_empty(),
+        "--network needs --image or a saved image workload: a shell run joins no network"
+    );
+    run_command(client, args).await
 }
 
 async fn run_command(client: &GatewayClient, args: &RunArgs) -> Result<i32> {
@@ -126,6 +124,7 @@ async fn run_command(client: &GatewayClient, args: &RunArgs) -> Result<i32> {
         ram_mb: ram_mb(args.ram),
         cpus: args.cpu,
         env: client::parse_env_vars(&args.env)?,
+        environment: args.environment.clone(),
     };
     let response: ApiResponse<ExecResponse> = client.post("/run", request).await?;
     let response = response.into_result()?;

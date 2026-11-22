@@ -194,13 +194,15 @@ capsem run "npm test" --timeout 120
 capsem run "pytest" -e APP_MODE=test
 capsem run --image docker://alpine:3 sh -c 'uname -a'
 capsem run --environment "$ENVIRONMENT_ID@$REVISION_ID"
+capsem run --environment "$ENVIRONMENT_ID@$REVISION_ID" 'printf "%s\n" "$APP_MODE"'
 ```
 
-`--environment` runs the saved image's approved startup and command. Workload
-stdout remains separate from startup output; startup failure details go to
-stderr. The session is destroyed after exit, timeout or interruption. Change
-the saved definition to change its workload; inline overrides and an appended
-command are refused.
+With a shell command, `--environment` selects an exact revision for the plain
+VM's policy and variables. Revisions with an image, startup script, repository,
+or sandbox MCP server are refused for shell commands. With `--environment`
+alone, Capsem runs the saved image's approved startup and command. Workload
+stdout stays separate from startup output, and startup failure details go to
+stderr. Both forms exclude inline `--env` overrides.
 
 | Arg/Flag | Default | Description |
 |----------|---------|-------------|
@@ -209,7 +211,7 @@ command are refused.
 | `-e, --env <KEY=VALUE>` | -- | Environment variables (repeatable); the container's with `--image` |
 | `--ram <GB>` / `--cpu <CORES>` | 12 / 4 | VM resources |
 | `--image <IMAGE>` | -- | OCI image to run (see `create`) |
-| `--environment <ENVIRONMENT_ID@REVISION_ID>` | -- | Exact approved saved image revision |
+| `--environment <ENVIRONMENT_ID@REVISION_ID>` | -- | Exact saved revision for the shell command or approved image workload |
 | `-p`, `--network` | -- | With an image or saved image, as for `create` |
 | `--registry-ca`, `--registry-user` | -- | With `--image`, as for `create` |
 

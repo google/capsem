@@ -23,6 +23,22 @@ def request():
     })
 
 
+def test_run_uses_an_exact_saved_revision_and_rejects_inline_variables():
+    async def run():
+        output = {"stdout": {"encoding": "utf8", "data": "pinned"},
+                  "stderr": {"encoding": "utf8", "data": ""}, "exit_code": 0}
+        async with gateway(response=output) as (url, received), Hypervisor(url, "gateway-token") as hv:
+            reference = models.EnvironmentRevisionReference(environment_id=ENVIRONMENT, revision_id=REQUEST)
+            assert (await hv.run("printf test", environment=reference)).exit_code == 0
+            with pytest.raises(ValueError, match="inline variables"):
+                await hv.run("printf test", environment=reference, env={})
+            await hv.run("printf test")
+            assert [path for _, path, _ in received] == ["/run", "/run"]
+            assert received[0][2]["environment"] == reference.model_dump(mode="json")
+            assert "environment" not in received[1][2]
+    asyncio.run(run())
+
+
 def test_environment_creation_inspection_and_explicit_reconciliation():
     async def run():
         response = dict(PENDING)

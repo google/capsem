@@ -18,6 +18,8 @@ export interface CreateOptions extends CallOptions {
 /** Managed ownership is always unnamed and ephemeral. */
 export type ManagedCreateOptions = Omit<CreateOptions, 'name'> & {name?: never};
 export interface RunOptions extends CallOptions {
+  /** Exact saved revision for a plain VM. Excludes inline variables. */
+  environment?: EnvironmentRevisionReference;
   timeout_secs?: number; cpus?: number; memory?: number; env?: Record<string, string>;
 }
 export interface DiagnosticOptions extends CallOptions {since?: string; limit?: number}

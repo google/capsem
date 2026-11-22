@@ -345,6 +345,24 @@ async fn network_resource_uses_typed_routes_put_and_cursor_logs() {
 }
 
 #[tokio::test]
+async fn run_accepts_an_exact_saved_environment_and_refuses_inline_variables() {
+    use models::environments::EnvironmentRevisionReference;
+
+    let mut server = gateway().await;
+    let hv = Hypervisor::new(&server.url, "private-token").unwrap();
+    let reference = EnvironmentRevisionReference {
+        environment_id: "00000000-0000-4000-8000-000000000001".into(),
+        revision_id: "00000000-0000-4000-8000-000000000002".into(),
+    };
+    hv.run("printf pinned", RunOptions { environment: Some(reference.clone()), ..Default::default() })
+        .await.unwrap();
+    assert_eq!(request(&mut server, "/run").await, json!({"command":"printf pinned", "environment":reference}));
+    let result = hv.run("true", RunOptions { environment: Some(reference), env: Some(Default::default()), ..Default::default() }).await;
+    assert!(matches!(result, Err(Error::InvalidInput(_))));
+    assert!(server.received.try_recv().is_err());
+}
+
+#[tokio::test]
 async fn diagnostics_persistence_and_mcp_use_typed_routes() {
     let mut server = gateway().await;
     let hv = Hypervisor::new(&server.url, "private-token").unwrap();
@@ -355,6 +373,7 @@ async fn diagnostics_persistence_and_mcp_use_typed_routes() {
             cpus: Some(2),
             memory: Some(1),
             env: Some([("EDITOR".into(), "vim".into())].into()),
+            environment: None,
         },
     )
     .await

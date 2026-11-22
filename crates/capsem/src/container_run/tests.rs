@@ -29,7 +29,12 @@ fn saved_environment_invocations_accept_exact_refs_and_refuse_inline_workload_ed
             assert!(Cli::try_parse_from(["capsem", verb, "--environment", invalid]).is_err());
         }
     }
-    assert!(Cli::try_parse_from(["capsem", "run", "--environment", SELECTED, "unapproved command"]).is_err());
+    let run = Cli::parse_from(["capsem", "run", "--environment", SELECTED, "printf pinned"]);
+    let Some(Commands::Session(SessionCommands::Run(args))) = run.command else {
+        panic!("expected a one-shot command with a saved environment");
+    };
+    assert_eq!(args.command.as_deref(), Some("printf pinned"));
+    assert_eq!(args.environment, Some(environment_reference(SELECTED).unwrap()));
 }
 
 #[test]

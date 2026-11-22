@@ -359,6 +359,44 @@ pub(crate) async fn validate_selection(
     attach: bool,
 ) -> Result<(), crate::AppError> {
     use axum::http::StatusCode;
+    let selected = launch_specification(state, reference).await?;
+    if attach && selected.image.is_none() {
+        return Err(crate::AppError::new(
+            StatusCode::BAD_REQUEST,
+            "attached environment execution requires an image".into(),
+        ));
+    }
+    validate_preparation(&selected)
+        .map_err(|error| crate::AppError::new(StatusCode::NOT_IMPLEMENTED, error.to_string()))
+}
+
+pub(crate) async fn validate_command_selection(
+    state: &ServiceState,
+    reference: &capsem_api::environments::EnvironmentRevisionReference,
+) -> Result<(), crate::AppError> {
+    use axum::http::StatusCode;
+    let selected = launch_specification(state, reference).await?;
+    if selected.image.is_some()
+        || selected.startup.is_some()
+        || !selected.repositories.is_empty()
+        || selected.mcps.servers.values().any(|server| {
+            matches!(server, capsem_config::environment::EnvironmentMcpDefinition::Sandbox { .. })
+        })
+    {
+        return Err(crate::AppError::new(
+            StatusCode::BAD_REQUEST,
+            "a one-shot command cannot use an environment with an image, startup, repositories, or sandbox MCP servers".into(),
+        ));
+    }
+    validate_preparation(&selected)
+        .map_err(|error| crate::AppError::new(StatusCode::NOT_IMPLEMENTED, error.to_string()))
+}
+
+async fn launch_specification(
+    state: &ServiceState,
+    reference: &capsem_api::environments::EnvironmentRevisionReference,
+) -> Result<EnvironmentSpecification, crate::AppError> {
+    use axum::http::StatusCode;
     let unavailable = |_| {
         crate::AppError::new(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -389,14 +427,7 @@ pub(crate) async fn validate_selection(
                 "verified environment launch selection unavailable".into(),
             )
         })?;
-    if attach && selected.specification.image.is_none() {
-        return Err(crate::AppError::new(
-            StatusCode::BAD_REQUEST,
-            "attached environment execution requires an image".into(),
-        ));
-    }
-    validate_preparation(&selected.specification)
-        .map_err(|error| crate::AppError::new(StatusCode::NOT_IMPLEMENTED, error.to_string()))
+    Ok(*selected.specification)
 }
 
 pub(crate) async fn require_active_for_new_vm(
@@ -417,4 +448,40 @@ pub(crate) async fn require_active_for_new_vm(
         ));
     }
     Ok(())
+}
+
+/// A retired one-shot generation has no future boot or policy application.
+pub(crate) async fn release_one_shot_references(
+    state: &ServiceState,
+    id: &str,
+    generation: uuid::Uuid,
+) -> Result<(), String> {
+    use capsem_logger::{
+        db::{EnvironmentReferenceQuery, EnvironmentReferenceRecord},
+        events::environment::EnvironmentSandboxReferenceMutation,
+        WriteOp,
+    };
+    let generation = generation.to_string();
+    let records = state.host_ledger.environment_references(EnvironmentReferenceQuery::Sandbox {
+        session_id: id.into(),
+        generation: generation.clone(),
+    }).await?;
+    if records.is_empty() {
+        return Ok(());
+    }
+    for record in records {
+        let EnvironmentReferenceRecord::Sandbox { dimension, revision } = record else {
+            return Err("unexpected one-shot environment reference record".into());
+        };
+        state.host_ledger.write(WriteOp::EnvironmentSandboxReference(EnvironmentSandboxReferenceMutation {
+            session_id: id.into(),
+            generation: generation.clone(),
+            kind: dimension,
+            expected: Some(revision),
+            revision: None,
+            timestamp_unix_ms: crate::policy_mutation::unix_timestamp_ms(),
+            actor: "system".into(),
+        })).await?;
+    }
+    state.host_ledger.flush().await
 }

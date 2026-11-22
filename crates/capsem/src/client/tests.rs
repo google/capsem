@@ -634,6 +634,7 @@ fn run_request_serde() {
         ram_mb: Some(1024),
         cpus: Some(1),
         env: Some(env),
+        environment: None,
     };
     let json = serde_json::to_string(&req).unwrap();
     let req2: RunRequest = serde_json::from_str(&json).unwrap();
@@ -651,6 +652,7 @@ fn run_request_env_omitted_when_none() {
         ram_mb: None,
         cpus: None,
         env: None,
+        environment: None,
     };
     let json = serde_json::to_string(&req).unwrap();
     assert!(!json.contains("timeout_secs"));
