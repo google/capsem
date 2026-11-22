@@ -251,8 +251,17 @@ impl FuseProcessor {
                 return fuse::error_response(header.unique, -libc::EINVAL);
             };
             (|| {
-                let source = ContainedDir::open_root_no_follow(old_parent)?;
-                let destination = ContainedDir::open_root_no_follow(new_parent)?;
+                // The worker can read the share directory. Walking from the
+                // system root would require directory access outside the share.
+                let root = ContainedDir::open_root(&self.root_path)?;
+                let reopen = |parent: &std::path::Path| {
+                    let relative = parent
+                        .strip_prefix(root.path())
+                        .map_err(|_| std::io::Error::from_raw_os_error(libc::EACCES))?;
+                    root.walk(relative)
+                };
+                let source = reopen(old_parent)?;
+                let destination = reopen(new_parent)?;
                 source.rename_to_if_absent(OsStr::from_bytes(old_name), &destination, OsStr::from_bytes(new_name))
             })()
         } else {

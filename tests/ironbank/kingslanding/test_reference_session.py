@@ -11,6 +11,7 @@ workload or omits the target, as `capsem exec` does; and when the workload is
 gone, it must fail rather than run in the VM.
 """
 
+import shlex
 import time
 
 import pytest
@@ -71,6 +72,36 @@ def test_the_probe_tells_the_vm_from_the_workload(service, tmp_path):
         assert exec_output_text(in_vm).split() == ["0", "0", "4294967295"], in_vm
         in_workload = workload_exec(client, vm_id, "true")
         assert in_workload.get("exit_code") == 0, in_workload
+
+
+def test_workspace_move_preserves_an_existing_destination(service, tmp_path):
+    script = """
+import ctypes
+import errno
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+libc = ctypes.CDLL(None, use_errno=True)
+with TemporaryDirectory(dir='/workspace') as directory:
+    root = Path(directory)
+    source, occupied, absent = (root / name for name in ('source', 'occupied', 'absent'))
+    source.mkdir()
+    occupied.mkdir()
+    (source / 'payload').write_text('staged contents')
+
+    def rename_if_absent(target):
+        return libc.renameat2(-100, bytes(source), -100, bytes(target), 1)
+
+    assert rename_if_absent(occupied) == -1 and ctypes.get_errno() == errno.EEXIST
+    assert source.is_dir() and occupied.is_dir()
+    assert rename_if_absent(absent) == 0, errno.errorcode.get(ctypes.get_errno())
+    assert not source.exists()
+    assert (absent / 'payload').read_text() == 'staged contents'
+    assert not list(occupied.iterdir())
+"""
+    with image_session(service, tmp_path, "workspace-rename") as vm_id:
+        result = workload_exec(service.client(), vm_id, f"python3 -c {shlex.quote(script)}")
+        assert result["exit_code"] == 0, result
 
 
 def test_a_workload_exec_without_a_workload_fails_instead_of_running_in_the_vm(
