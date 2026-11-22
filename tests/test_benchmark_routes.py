@@ -10,6 +10,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from benchmarks.helpers import route_requests
+
 ROOT = Path(__file__).resolve().parents[1]
 config = tomllib.loads((ROOT / "config/gate.toml").read_text())
 loader = SourceFileLoader("benchmark_routes", str(ROOT / config["benchmark"]["run"]["collectors"] / "routes"))
@@ -27,10 +29,10 @@ loader.exec_module(collector)
         ("/agent-access/{id}", f"/agent-access/{collector.AGENT_REVOKE_ID}"),
         ("/connections", "/connections"),
         ("/status", "/status"),
-        ("/vms/{id}/status", f"/vms/{collector.VM_ID}/status"),
-        ("/vms/{id}/readiness", f"/vms/{collector.VM_ID}/readiness?intent=start"),
-        ("/vms/{id}/credential-grants", f"/vms/{collector.VM_ID}/credential-grants"),
-        (collector.BODY_ROUTE, collector.BODY_URL),
+        ("/vms/{id}/status", f"/vms/{route_requests.VM_ID}/status"),
+        ("/vms/{id}/readiness", f"/vms/{route_requests.VM_ID}/readiness?intent=start"),
+        ("/vms/{id}/credential-grants", f"/vms/{route_requests.VM_ID}/credential-grants"),
+        (route_requests.BODY_ROUTE, route_requests.BODY_URL),
     ],
 )
 def test_measured_paths_use_the_actual_fixture(pattern: str, expected: str) -> None:
@@ -45,7 +47,7 @@ def test_a_route_without_a_successful_fixture_is_refused(pattern: str) -> None:
 
 def test_environment_readiness_targets_the_original_revision():
     revision = {"environment_id": "environment", "revision_id": "original"}
-    fixture = collector.EnvironmentFixture(revision, "changed", {})
+    fixture = route_requests.EnvironmentFixture(revision, "changed", {})
     route = "/environments/{id}/revisions/{revision_id}/readiness"
     with pytest.raises(ValueError, match="environment fixture"):
         collector.request_path(route)
@@ -57,7 +59,7 @@ def test_environment_readiness_targets_the_original_revision():
 def test_a_successful_http_replay_must_return_the_original_applied_receipt():
     receipt = {"application": "applied", "result": {"revision_id": "original"}}
     path = "/environments/create"
-    fixture = collector.EnvironmentFixture({}, "changed", {path: (b"{}", receipt)})
+    fixture = route_requests.EnvironmentFixture({}, "changed", {path: (b"{}", receipt)})
 
     class Transport:
         def request(self, method, url, *, headers, body):
@@ -76,7 +78,7 @@ def test_live_owner_routes_require_the_live_fixture(pattern: str) -> None:
         collector.request_path(pattern)
     live_id = "2ac847f8-55fa-46e6-93f4-bd91db45d4ea"
     assert collector.request_path(pattern, live_id) == pattern.replace("{id}", live_id)
-    assert collector.request_path(collector.BODY_ROUTE, live_id) == collector.BODY_URL
+    assert collector.request_path(route_requests.BODY_ROUTE, live_id) == route_requests.BODY_URL
 
 
 def test_fixture_diagnostics_do_not_corrupt_collector_json(
@@ -143,7 +145,7 @@ def test_agent_grant_benchmark_mutations_have_distinct_idempotent_fixtures():
     method, payload = collector.request_input("/agent-access")
     assert method == "POST"
     body = json.loads(payload)
-    assert body["request_id"] == collector.AGENT_ISSUE_ID
+    assert body["request_id"] == route_requests.AGENT_ISSUE_ID
     assert body["scope"] == {"operations": ["discover"]}
     assert body["request_id"] != collector.AGENT_REVOKE_ID
     assert collector.request_input(f"/agent-access/{collector.AGENT_REVOKE_ID}") == ("DELETE", None)

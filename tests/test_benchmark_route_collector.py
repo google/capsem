@@ -8,6 +8,7 @@ import threading
 import time
 from pathlib import Path
 
+from benchmarks.helpers.route_requests import EnvironmentFixture
 from capsem_builder.gate import config as gate_config
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -23,11 +24,9 @@ def test_every_measured_route_resolves_to_a_concrete_fixture_request() -> None:
     collector = _collector()
     request_path = collector["request_path"]
 
-    unresolved = {
-        route: request_path(route, "live-owner")
-        for route in collector["measured_routes"]()
-        if "{" in request_path(route, "live-owner") or "}" in request_path(route, "live-owner")
-    }
+    fixture = EnvironmentFixture({"environment_id": "environment", "revision_id": "original"}, "changed", {})
+    paths = {route: request_path(route, "live-owner", environment=fixture) for route in collector["measured_routes"]()}
+    unresolved = {route: path for route, path in paths.items() if "{" in path or "}" in path}
 
     assert not unresolved, (
         "the benchmark sent route templates literally, so a fast 404 replaced "
