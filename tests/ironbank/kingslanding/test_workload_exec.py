@@ -9,7 +9,11 @@ still reaches the VM, where Capsem's own diagnostics run, and the session
 ledger records which side each command ran in, as the caller wrote it.
 """
 
+import base64
 import contextlib
+import json
+import shlex
+import struct
 
 import pytest
 from helpers.service import exec_output_text, vm_session_db_path
@@ -85,3 +89,42 @@ def test_an_image_session_exec_enters_the_workload_and_the_vm_on_request(service
             ).fetchall()
     # The ledger keeps what the caller asked for, never the launcher wrapper.
     assert rows == [(BUNDLE_USER, "vm", 0), (IN_WORKLOAD, "workload", 0), (IN_VM, "vm", 0)], rows
+
+
+def test_mcp_stdio_launcher_preserves_the_workload_user_and_the_first_request(service, tmp_path):
+    client = service.client()
+    fixture = (
+        'IFS= read -r message; printf "UID %s\\nCWD %s\\nVAR %s\\nARG %s\\nRPC %s\\n" '
+        '"$(id -u)" "$PWD" "$MCP_FIXTURE" "$1" "$message"'
+    )
+    literal = "$(echo should-stay-literal)"
+    setup = json.dumps({
+        "argv": ["/bin/sh", "-ec", fixture, "fixture", literal],
+        "workdir": "/workspace",
+        "variables": {"MCP_FIXTURE": "approved"},
+    }).encode()
+    first_request = '{"jsonrpc":"2.0","method":"initialize","id":1}'
+    packet = struct.pack("!I", len(setup)) + setup + (first_request + "\n").encode()
+    encoded = base64.b64encode(packet).decode()
+    launcher = (
+        "chroot /proc/1/root /bin/busybox unshare -m /bin/sh -ec "
+        + shlex.quote(
+            "mount --make-rprivate /; cd /newroot; mount --move . /; mkdir -p run/capsem-image; "
+            "mount -t virtiofs -o ro,nosuid,nodev,noexec capsem-image run/capsem-image; "
+            "exec chroot . /usr/bin/python3 -I /run/capsem-image/launch.py --mcp-stdio"
+        )
+    )
+    workload = {
+        "User": "999:999",
+        "WorkingDir": "/tmp",
+        "Entrypoint": ["redis-server", "--save", "", "--appendonly", "no"],
+    }
+    with (
+        registry(tmp_path, image_config=workload) as (reference, certificate, _),
+        created(service, tmp_path, reference, certificate, "mcp-workload-launch") as vm,
+    ):
+        assert run(client, vm["id"], BUNDLE_USER, target="vm").split() == ["999", "/tmp"]
+        output = run(client, vm["id"], f"printf %s {encoded} | base64 -d | {launcher}", target="vm")
+        assert fields(output) == {
+            "UID": "999", "CWD": "/workspace", "VAR": "approved", "ARG": literal, "RPC": first_request,
+        }

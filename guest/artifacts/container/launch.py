@@ -69,6 +69,7 @@ DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 IMAGE_SHARE_TAG = "capsem-image"
 IMAGE_SHARE = Path("/run/capsem-image")
 LAUNCH_CONTROL_LIMIT = 16 * 1024 * 1024
+MCP_SETUP_LIMIT = 1024 * 1024
 # A manifest is JSON of a few KiB; never read an unbounded one.
 MANIFEST_LIMIT = 4 * 1024 * 1024
 OCI_MANIFEST = "application/vnd.oci.image.manifest.v1+json"
@@ -1088,12 +1089,17 @@ def exec_request(encoded):
     return argv, tty
 
 
-def exec_process(config, argv, tty):
+def exec_process(config, argv, tty, *, workdir=None, variables=None):
     """The workload's own process with another command: the image's user, cwd
     and env, and the capabilities, rlimits and no-new-privileges `configure`
     gave it. runc exec joins its namespaces, cgroup and seccomp filter."""
     process = json.loads(json.dumps(config["process"]))
     process.update(args=argv, terminal=tty)
+    if workdir is not None:
+        process["cwd"] = workdir
+    if variables:
+        process["env"] = [entry for entry in process["env"] if entry.partition("=")[0] not in variables]
+        process["env"].extend(f"{name}={value}" for name, value in variables.items())
     if tty:
         existing = {entry.split("=", 1)[0] for entry in process["env"]}
         process["env"] += [f"{key}={value}" for key, value in TERMINAL_ENV.items() if key not in existing]
@@ -1111,7 +1117,7 @@ def workload_bundle(run=command):
     unpacked root, and only runc knows which one this workload started from."""
     if not (RUNTIME / "state" / CONTAINER).exists():
         return None
-    state = run(*RUNC, "state", CONTAINER, check=False, capture_output=True, text=True)
+    state = run(*RUNC, "state", CONTAINER, stdin=subprocess.DEVNULL, check=False, capture_output=True, text=True)
     if state.returncode != 0:
         return None
     state = json.loads(state.stdout)
@@ -1125,22 +1131,83 @@ def exec_workload(encoded):
     nothing is left to clean up; runc reads it through /proc/self/fd.
     """
     argv, tty = exec_request(encoded)
+    exec_running_workload(argv, tty)
+
+
+def read_mcp_setup(fd):
+    def read_exact(size):
+        data = bytearray()
+        while len(data) < size:
+            chunk = os.read(fd, size - len(data))
+            if not chunk:
+                raise ValueError("incomplete setup record")
+            data.extend(chunk)
+        return data
+
+    # Read directly from the descriptor so the MCP server inherits every byte
+    # after the setup record, including a request queued in the same write.
+    size, = struct.unpack("!I", read_exact(4))
+    if not 0 < size <= MCP_SETUP_LIMIT:
+        raise ValueError("invalid setup record length")
+    request = json.loads(read_exact(size).decode("utf-8"))
+    if not isinstance(request, dict) or request.keys() - {"argv", "workdir", "variables"}:
+        raise ValueError("invalid process fields")
+    argv = request.get("argv")
+    workdir = request.get("workdir")
+    variables = request.get("variables", {})
+    if (
+        not isinstance(argv, list)
+        or not argv
+        or not argv[0]
+        or not all(isinstance(arg, str) and "\0" not in arg for arg in argv)
+        or workdir is not None and (
+            not isinstance(workdir, str)
+            or not workdir.startswith("/")
+            or "\0" in workdir
+            or any(part in (".", "..") for part in workdir.split("/"))
+        )
+        or not isinstance(variables, dict)
+        or not all(
+            re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", name) and isinstance(value, str) and "\0" not in value
+            for name, value in variables.items()
+        )
+    ):
+        raise ValueError("invalid process arguments, working directory or variables")
+    return argv, workdir, variables
+
+
+def exec_mcp_workload(fd=0):
+    """Consume the scoped process setup, then enter the workload with MCP stdio."""
+    try:
+        argv, workdir, variables = read_mcp_setup(fd)
+    except (OSError, ValueError, RecursionError):
+        raise SystemExit("capsem: invalid sandbox MCP process setup") from None
+    exec_running_workload(argv, False, workdir=workdir, variables=variables)
+
+
+def exec_running_workload(argv, tty, *, workdir=None, variables=None):
     bundle = workload_bundle()
     if bundle is None:
         raise SystemExit("capsem: no container workload is running in this session")
-    spec = process_spec(bundle, argv, tty)
+    spec = process_spec(bundle, argv, tty, workdir=workdir, variables=variables)
     runc = exec_argv(f"/proc/self/fd/{spec}")
     os.execvp(runc[0], runc)
 
 
-def process_spec(bundle, argv, tty):
+def process_spec(bundle, argv, tty, *, workdir=None, variables=None):
     """A descriptor runc inherits holding the exec's process spec, from the
     running workload's `bundle`: a memfd, so nothing is written to disk and
     nothing is left to clean up."""
     config = json.loads((bundle / "config.json").read_text())
+    encoded = json.dumps(exec_process(config, argv, tty, workdir=workdir, variables=variables)).encode()
     spec = os.memfd_create("capsem-exec", 0)
-    os.write(spec, json.dumps(exec_process(config, argv, tty)).encode())
-    os.set_inheritable(spec, True)
+    try:
+        with os.fdopen(spec, "wb", closefd=False) as stream:
+            stream.write(encoded)
+        os.set_inheritable(spec, True)
+    except BaseException:
+        os.close(spec)
+        raise
     return spec
 
 
@@ -1231,6 +1298,8 @@ def main():
         workload_started(Path(VM_WORKSPACE) / STAGE)
     elif len(sys.argv) == 3 and sys.argv[1] == "--exec":
         exec_workload(sys.argv[2])
+    elif sys.argv[1:] == ["--mcp-stdio"]:
+        exec_mcp_workload()
     elif sys.argv[1:] == ["--attach"]:
         attach()
     elif len(sys.argv) == 3 and sys.argv[1] == "--detached":

@@ -8,6 +8,7 @@ refuse plainly when there is no workload to enter, never fall back to the VM.
 
 import json
 import os
+import struct
 import subprocess
 
 import pytest
@@ -162,6 +163,82 @@ def test_exec_hands_runc_the_workload_process_and_nothing_else(launcher, tmp_pat
     assert seen["program"] == "runc"
     assert seen["argv"][-1] == launcher.CONTAINER
     assert seen["process"] == launcher.exec_process(config, ["/bin/sh", "-c", "id -u"], False)
+
+
+def mcp_record(setup):
+    body = json.dumps(setup).encode()
+    return struct.pack("!I", len(body)) + body
+
+
+def test_mcp_exec_consumes_only_setup_and_preserves_the_workload_boundary(launcher, tmp_path, monkeypatch):
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    config = workload_config(launcher)
+    config_path = bundle / "config.json"
+    config_path.write_text(json.dumps(config))
+    monkeypatch.setattr(launcher, "workload_bundle", lambda: bundle)
+    monkeypatch.setattr(
+        launcher.os,
+        "memfd_create",
+        lambda name, flags: os.open(tmp_path / name, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600),
+        raising=False,
+    )
+    argv = ["/usr/bin/mcp-fixture", "literal '$HOME'", "雪\nnext"]
+    request = {"argv": argv, "workdir": "/workspace/tools", "variables": {"APP": "changed", "LABEL": "local"}}
+    rpc = b'{"jsonrpc":"2.0","method":"initialize","id":1}\n'
+    inbound = tmp_path / "stdin"
+    inbound.write_bytes(mcp_record(request) + rpc)
+
+    with inbound.open("rb", buffering=0) as stream:
+        def execvp(program, arguments):
+            assert program == "runc" and arguments[-1] == launcher.CONTAINER
+            descriptor = int(arguments[arguments.index("--process") + 1].rsplit("/", 1)[1])
+            with os.fdopen(descriptor, "rb") as spec:
+                spec.seek(0)
+                process = json.load(spec)
+            expected = launcher.exec_process(config, argv, False)
+            expected["cwd"] = "/workspace/tools"
+            expected["env"] = [entry for entry in expected["env"] if not entry.startswith("APP=")]
+            expected["env"].extend(["APP=changed", "LABEL=local"])
+            assert process == expected
+            assert stream.read() == rpc
+            raise SystemExit(0)
+
+        monkeypatch.setattr(launcher.os, "execvp", execvp)
+        with pytest.raises(SystemExit) as exited:
+            launcher.exec_mcp_workload(stream.fileno())
+        assert exited.value.code == 0
+    assert json.loads(config_path.read_text()) == config
+
+
+@pytest.mark.parametrize("setup", [
+    {"argv": ["program"], "user": 0},
+    {"argv": ["program"], "command": "id"},
+    {"argv": ["program"], "tty": True},
+    {"argv": ["program"], "workdir": "relative"},
+    {"argv": ["program"], "workdir": "/workspace/../etc"},
+    {"argv": ["program"], "variables": {"BAD=KEY": "value"}},
+    {"argv": ["program"], "variables": {"KEY": "bad\0value"}},
+    {"argv": ["program", "bad\0argv"]},
+    {"argv": []},
+])
+def test_mcp_exec_refuses_malformed_or_overbroad_setup(launcher, tmp_path, monkeypatch, setup):
+    def never_use_workload():
+        pytest.fail("invalid setup reached the workload")
+
+    monkeypatch.setattr(launcher, "workload_bundle", never_use_workload)
+    path = tmp_path / "setup"
+    path.write_bytes(mcp_record(setup))
+    with path.open("rb", buffering=0) as stream, pytest.raises(SystemExit, match="invalid sandbox MCP process setup"):
+        launcher.exec_mcp_workload(stream.fileno())
+
+
+@pytest.mark.parametrize("record", [b"\0\0\0", b"\0\0\0\x04{}", b"\xff\xff\xff\xff", b"\0\0\0\0"])
+def test_mcp_exec_refuses_incomplete_or_oversized_setup(launcher, tmp_path, record):
+    path = tmp_path / "setup"
+    path.write_bytes(record)
+    with path.open("rb", buffering=0) as stream, pytest.raises(SystemExit, match="invalid sandbox MCP process setup"):
+        launcher.exec_mcp_workload(stream.fileno())
 
 
 def test_an_image_terminal_type_is_kept(launcher):
