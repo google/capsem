@@ -149,13 +149,31 @@
       <div class="space-y-1">
         <h3 class="font-medium">{requester(detail.summary)}</h3>
         <p class="whitespace-pre-wrap break-words">{detail.summary.reason}</p>
-        {#if detail.summary.requester}
-          <p class="break-all text-xs text-muted-foreground-1">VM generation {detail.summary.requester.generation}</p>
-        {/if}
-        {#if detail.summary.base}
-          <p class="break-all text-xs text-muted-foreground-1">Base revision {detail.summary.base.revision_id}</p>
-        {/if}
         <p class="text-xs text-muted-foreground-1">Expires {new Date(detail.summary.expires_at_unix_ms).toLocaleString()}</p>
+      </div>
+      <div role="group" aria-label="Approval scope">
+        <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
+          <dt class="text-muted-foreground-1">Request ID</dt>
+          <dd class="break-all font-mono">{detail.summary.request_id}</dd>
+          {#if detail.summary.requester}
+            <dt class="text-muted-foreground-1">Target VM ID</dt>
+            <dd class="break-all font-mono">{detail.summary.requester.session_id}</dd>
+            <dt class="text-muted-foreground-1">VM generation</dt>
+            <dd class="break-all font-mono">{detail.summary.requester.generation}</dd>
+          {/if}
+          {#if detail.summary.base}
+            <dt class="text-muted-foreground-1">Base environment</dt>
+            <dd class="break-all font-mono">{detail.summary.base.environment_id}</dd>
+            <dt class="text-muted-foreground-1">Base revision</dt>
+            <dd class="break-all font-mono">{detail.summary.base.revision_id}</dd>
+          {/if}
+          {#if detail.summary.result}
+            <dt class="text-muted-foreground-1">Result environment</dt>
+            <dd class="break-all font-mono">{detail.summary.result.environment_id}</dd>
+            <dt class="text-muted-foreground-1">Result revision</dt>
+            <dd class="break-all font-mono">{detail.summary.result.revision_id}</dd>
+          {/if}
+        </dl>
       </div>
       {#if pending}
         <p>Approval creates a fork for this VM. Access controls update live. Workload settings take effect on its next start.</p>
