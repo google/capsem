@@ -41,10 +41,22 @@ macro_rules! operation {
 operation!(get_hypervisor_info, "getHypervisorInfo");
 operation!(list_environments, "listEnvironments", ListEnvironmentsParams);
 operation!(get_environment_info, "getEnvironmentInfo", GetEnvironmentInfoParams);
-operation!(list_environment_plugins, "listEnvironmentPlugins", ListEnvironmentPluginsParams);
+operation!(
+    list_environment_plugins,
+    "listEnvironmentPlugins",
+    ListEnvironmentPluginsParams
+);
 operation!(list_new_environment_plugins, "listNewEnvironmentPlugins");
-operation!(list_environment_rules, "listEnvironmentRules", ListEnvironmentRulesParams);
-operation!(list_environment_skills, "listEnvironmentSkills", ListEnvironmentSkillsParams);
+operation!(
+    list_environment_rules,
+    "listEnvironmentRules",
+    ListEnvironmentRulesParams
+);
+operation!(
+    list_environment_skills,
+    "listEnvironmentSkills",
+    ListEnvironmentSkillsParams
+);
 operation!(get_environment_skill, "getEnvironmentSkill", GetEnvironmentSkillParams);
 operation!(list_catalog_rules, "listCatalogRules", ListCatalogRulesParams);
 operation!(get_catalog_rule, "getCatalogRule", GetCatalogRuleParams);

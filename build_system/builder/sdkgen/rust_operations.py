@@ -95,10 +95,17 @@ def render_operations(routes: list[Route]) -> dict[str, str]:
                       "        ),", "    };"]
         query = [p for p in op.parameters if p.location == "query"]
         if query:
-            pairs = ", ".join(f"({json.dumps(p.name)}, {wire_value(p.schema_, '&input.' + attributes[p.name])})"
-                              for p in query if p.required)
+            pairs = [
+                f"({json.dumps(p.name)}, {wire_value(p.schema_, '&input.' + attributes[p.name])})"
+                for p in query if p.required
+            ]
             optional = any(not p.required for p in query)
-            lines.append(f"    let {'mut ' if optional else ''}query = {'vec!' if optional else ''}[{pairs}];")
+            prefix = "    let mut query = vec![" if optional else "    let query = ["
+            joined = ", ".join(pairs)
+            if len(joined) <= RUSTFMT_LIST_WIDTH:
+                lines.append(f"{prefix}{joined}];")
+            else:
+                lines += [prefix, *(f"        {pair}," for pair in pairs), "    ];"]
         for p in (p for p in query if not p.required):
             lines += [f"    if let Some(value) = &input.{attributes[p.name]} {{",
                       f"        query.push(({json.dumps(p.name)}, {wire_value(p.schema_, 'value')}));", "    }"]

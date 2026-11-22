@@ -10,8 +10,8 @@ pub use revisions::*;
 mod rules;
 pub use rules::*;
 mod skills;
-pub use skills::*;
 use serde::{Deserialize, Serialize};
+pub use skills::*;
 use utoipa::{IntoParams, ToSchema};
 
 /// Reconciliation result for a submitted mutation, including an accepted

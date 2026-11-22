@@ -155,7 +155,10 @@ impl VM {
     }
 
     /// List skills from the acknowledged boot revision of the running VM.
-    pub async fn skills(&self, query: models::environments::EnvironmentSkillListQuery) -> Result<models::VmSkillListResponse> {
+    pub async fn skills(
+        &self,
+        query: models::environments::EnvironmentSkillListQuery,
+    ) -> Result<models::VmSkillListResponse> {
         let input = api::ListVmSkillsParams {
             id: self.resolve().await?,
             revision_id: query.revision_id,
@@ -164,9 +167,14 @@ impl VM {
             limit: query.limit.map(u32::from),
         };
         let result = api::list_vm_skills(&self.client.transport, &input, self.client.options).await?;
-        if result.vm_id != input.id || input.revision_id.as_ref().is_some_and(|expected| {
-            result.revision.as_ref().is_none_or(|revision| revision.revision_id != *expected)
-        }) {
+        if result.vm_id != input.id
+            || input.revision_id.as_ref().is_some_and(|expected| {
+                result
+                    .revision
+                    .as_ref()
+                    .is_none_or(|revision| revision.revision_id != *expected)
+            })
+        {
             return Err(Error::InvalidResponse("sandbox skill revision identity changed"));
         }
         Ok(result)

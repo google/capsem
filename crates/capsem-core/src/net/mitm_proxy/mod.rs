@@ -2108,9 +2108,9 @@ async fn handle_request(
         capsem_foundation::telemetry::ambient_capsem_trace_id(),
     )
     .seed::<decompression_hook::DecompressionConfig>(decompression_hook::DecompressionConfig { gzip: is_gzip })
-    .seed::<credential_rewriter_hook::CredentialResponseRewrites>(
-        credential_rewriter_hook::CredentialResponseRewrites(credential_response_rewrites.clone()),
-    )
+    .seed::<credential_rewriter_hook::CredentialResponseRewrites>(credential_rewriter_hook::CredentialResponseRewrites(
+        credential_response_rewrites.clone(),
+    ))
     .seed::<Option<TelemetryRequestContext>>(Some(req_ctx))
     .with_completion_tasks(Arc::clone(mcp_responses));
     // Retain admission until the buffered response is consumed or dropped.

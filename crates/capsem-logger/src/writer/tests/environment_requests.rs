@@ -46,14 +46,20 @@ async fn archive_decision_sets_a_terminal_receipt_and_preserves_the_current_revi
     let mut interrupted = revision(2, 5);
     interrupted.previous_revision_id = Some(head.revision_id.clone());
     durable(&writer, WriteOp::PrepareEnvironmentRevision(interrupted.clone())).await;
-    let transition = |state| WriteOp::EnvironmentRevisionTransition(crate::events::EnvironmentRevisionTransition {
-        environment_id: interrupted.environment_id.clone(),
-        revision_id: interrupted.revision_id.clone(),
-        state,
-        timestamp_unix_ms: 21,
-        actor: "operator".into(),
-    });
-    durable(&writer, transition(crate::events::EnvironmentRevisionState::RecoveredUnapplied)).await;
+    let transition = |state| {
+        WriteOp::EnvironmentRevisionTransition(crate::events::EnvironmentRevisionTransition {
+            environment_id: interrupted.environment_id.clone(),
+            revision_id: interrupted.revision_id.clone(),
+            state,
+            timestamp_unix_ms: 21,
+            actor: "operator".into(),
+        })
+    };
+    durable(
+        &writer,
+        transition(crate::events::EnvironmentRevisionState::RecoveredUnapplied),
+    )
+    .await;
     let mut archive = proposal();
     archive.base_revision_id = Some(head.revision_id.clone());
     archive.timestamp_unix_ms = 50;

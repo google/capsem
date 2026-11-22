@@ -105,7 +105,11 @@ impl ServiceState {
         let live = live.as_ref().unwrap_or(&boot);
         validate_preparation(&boot.specification)?;
         if admit_boot_skills {
-            runtime.block_on(crate::environment_routes::admit_boot_skills(self, &boot.specification.skills.selected))
+            runtime
+                .block_on(crate::environment_routes::admit_boot_skills(
+                    self,
+                    &boot.specification.skills.selected,
+                ))
                 .map_err(crate::lifecycle_readiness::SelectionRefusal)?;
         }
         let corporate = capsem_core::net::policy_config::load_corp_policy_files()
@@ -384,12 +388,16 @@ pub(crate) async fn validate_command_selection(
         || selected.startup.is_some()
         || !selected.repositories.is_empty()
         || selected.mcps.servers.values().any(|server| {
-            matches!(server, capsem_config::environment::EnvironmentMcpDefinition::Sandbox { .. })
+            matches!(
+                server,
+                capsem_config::environment::EnvironmentMcpDefinition::Sandbox { .. }
+            )
         })
     {
         return Err(crate::AppError::new(
             StatusCode::BAD_REQUEST,
-            "a one-shot command cannot use an environment with an image, startup, repositories, or sandbox MCP servers".into(),
+            "a one-shot command cannot use an environment with an image, startup, repositories, or sandbox MCP servers"
+                .into(),
         ));
     }
     validate_preparation(&selected)
@@ -466,10 +474,13 @@ pub(crate) async fn release_one_shot_references(
         WriteOp,
     };
     let generation = generation.to_string();
-    let records = state.host_ledger.environment_references(EnvironmentReferenceQuery::Sandbox {
-        session_id: id.into(),
-        generation: generation.clone(),
-    }).await?;
+    let records = state
+        .host_ledger
+        .environment_references(EnvironmentReferenceQuery::Sandbox {
+            session_id: id.into(),
+            generation: generation.clone(),
+        })
+        .await?;
     if records.is_empty() {
         return Ok(());
     }
@@ -477,15 +488,20 @@ pub(crate) async fn release_one_shot_references(
         let EnvironmentReferenceRecord::Sandbox { dimension, revision } = record else {
             return Err("unexpected one-shot environment reference record".into());
         };
-        state.host_ledger.write(WriteOp::EnvironmentSandboxReference(EnvironmentSandboxReferenceMutation {
-            session_id: id.into(),
-            generation: generation.clone(),
-            kind: dimension,
-            expected: Some(revision),
-            revision: None,
-            timestamp_unix_ms: crate::policy_mutation::unix_timestamp_ms(),
-            actor: "system".into(),
-        })).await?;
+        state
+            .host_ledger
+            .write(WriteOp::EnvironmentSandboxReference(
+                EnvironmentSandboxReferenceMutation {
+                    session_id: id.into(),
+                    generation: generation.clone(),
+                    kind: dimension,
+                    expected: Some(revision),
+                    revision: None,
+                    timestamp_unix_ms: crate::policy_mutation::unix_timestamp_ms(),
+                    actor: "system".into(),
+                },
+            ))
+            .await?;
     }
     state.host_ledger.flush().await
 }

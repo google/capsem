@@ -13,7 +13,10 @@ pub async fn get_catalog_mcp(
     input: &GetCatalogMcpParams,
     options: CallOptions,
 ) -> crate::Result<capsem_api::McpCatalogDetailResponse> {
-    let query = [("version", input.version.to_string()), ("snapshot", input.snapshot.to_string())];
+    let query = [
+        ("version", input.version.to_string()),
+        ("snapshot", input.snapshot.to_string()),
+    ];
     let path_mcp_id = input.mcp_id.to_string();
     let request = Request {
         parameters: &[("mcp_id", path_mcp_id.as_str())],

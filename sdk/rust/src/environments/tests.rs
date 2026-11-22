@@ -18,7 +18,10 @@ fn pending() -> String {
 
 #[tokio::test]
 async fn selected_skill_methods_use_the_exact_revision_and_pin() {
-    let reference = EnvironmentRevisionReference { environment_id: ENVIRONMENT.into(), revision_id: REQUEST.into() };
+    let reference = EnvironmentRevisionReference {
+        environment_id: ENVIRONMENT.into(),
+        revision_id: REQUEST.into(),
+    };
     let result_revision = reference.clone();
     let mut server = Server::respond(move |parts| {
         let selection = json!({"id":"review","version":"1.0.0","catalog_reference":"registry.example/skills:stable",
@@ -37,16 +40,31 @@ async fn selected_skill_methods_use_the_exact_revision_and_pin() {
     }).await;
     let hv = Hypervisor::new(&server.url, "private-token").unwrap();
     let environments = hv.environments();
-    let page = environments.skills(&reference, Some("review"), None, Some(1)).await.unwrap();
+    let page = environments
+        .skills(&reference, Some("review"), None, Some(1))
+        .await
+        .unwrap();
     assert_eq!(page.skills[0].selection.id, "review");
     let (listing, _) = server.received.recv().await.unwrap();
     assert_eq!(listing.uri.path(), format!("/environments/{ENVIRONMENT}/skills/list"));
-    assert_eq!(listing.uri.query().unwrap(), format!("revision_id={REQUEST}&search=review&limit=1"));
-    assert_eq!(environments.skill(&reference, "review").await.unwrap().files["SKILL.md"], "review fixture\n");
+    assert_eq!(
+        listing.uri.query().unwrap(),
+        format!("revision_id={REQUEST}&search=review&limit=1")
+    );
+    assert_eq!(
+        environments.skill(&reference, "review").await.unwrap().files["SKILL.md"],
+        "review fixture\n"
+    );
     let (detail, _) = server.received.recv().await.unwrap();
-    assert_eq!(detail.uri.path(), format!("/environments/{ENVIRONMENT}/skills/review/info"));
+    assert_eq!(
+        detail.uri.path(),
+        format!("/environments/{ENVIRONMENT}/skills/review/info")
+    );
     assert_eq!(detail.uri.query().unwrap(), format!("revision_id={REQUEST}"));
-    assert!(matches!(environments.skill(&reference, "other").await, Err(Error::InvalidResponse(_))));
+    assert!(matches!(
+        environments.skill(&reference, "other").await,
+        Err(Error::InvalidResponse(_))
+    ));
 }
 
 #[tokio::test]
@@ -69,7 +87,10 @@ async fn vm_skill_reads_bind_the_sandbox_and_expected_boot_revision() {
     let hv = Hypervisor::new(&server.url, "private-token").unwrap();
     let vm = hv.vm(crate::VmSelector::Id("vm-1".into())).unwrap();
     let query = models::environments::EnvironmentSkillListQuery {
-        revision_id: Some(REQUEST.into()), search: None, after: None, limit: Some(1),
+        revision_id: Some(REQUEST.into()),
+        search: None,
+        after: None,
+        limit: Some(1),
     };
     assert_eq!(vm.skills(query).await.unwrap().owner_generation, REQUEST);
     let (listing, _) = server.received.recv().await.unwrap();
@@ -79,7 +100,10 @@ async fn vm_skill_reads_bind_the_sandbox_and_expected_boot_revision() {
     assert_eq!(detail.skill.files["SKILL.md"], "review fixture\n");
     let (request, _) = server.received.recv().await.unwrap();
     assert_eq!(request.uri.path(), "/vms/vm-1/skills/review/info");
-    assert!(matches!(vm.skill("review", Some(ENVIRONMENT)).await, Err(Error::InvalidResponse(_))));
+    assert!(matches!(
+        vm.skill("review", Some(ENVIRONMENT)).await,
+        Err(Error::InvalidResponse(_))
+    ));
 }
 
 #[tokio::test]
@@ -91,14 +115,27 @@ async fn plugin_defaults_and_saved_results_require_their_exact_revision_context(
             json!({"environment_id": ENVIRONMENT, "revision_id": REQUEST})
         };
         Response::new(Body::from(json!({"revision": revision, "plugins": []}).to_string()))
-    }).await;
+    })
+    .await;
     let hypervisor = Hypervisor::new(&server.url, "private-token").unwrap();
     let environments = hypervisor.environments();
     assert!(environments.plugins(None).await.unwrap().revision.is_none());
-    let reference = EnvironmentRevisionReference { environment_id: ENVIRONMENT.into(), revision_id: REQUEST.into() };
-    assert_eq!(environments.plugins(Some(&reference)).await.unwrap().revision, Some(reference));
-    let stale = EnvironmentRevisionReference { environment_id: ENVIRONMENT.into(), revision_id: ENVIRONMENT.into() };
-    assert!(matches!(environments.plugins(Some(&stale)).await, Err(Error::InvalidResponse(_))));
+    let reference = EnvironmentRevisionReference {
+        environment_id: ENVIRONMENT.into(),
+        revision_id: REQUEST.into(),
+    };
+    assert_eq!(
+        environments.plugins(Some(&reference)).await.unwrap().revision,
+        Some(reference)
+    );
+    let stale = EnvironmentRevisionReference {
+        environment_id: ENVIRONMENT.into(),
+        revision_id: ENVIRONMENT.into(),
+    };
+    assert!(matches!(
+        environments.plugins(Some(&stale)).await,
+        Err(Error::InvalidResponse(_))
+    ));
 
     let (defaults, _) = server.received.recv().await.unwrap();
     assert_eq!(defaults.uri.path(), "/environments/plugins/list");
@@ -259,13 +296,24 @@ async fn archive_environment_submits_an_exact_base_on_the_changes_route() {
         base_revision_id: base.into(),
         reason: "retire blueprint".into(),
     };
-    assert_eq!(hypervisor.environments().archive(ENVIRONMENT, request).await.unwrap().request_id, REQUEST);
+    assert_eq!(
+        hypervisor
+            .environments()
+            .archive(ENVIRONMENT, request)
+            .await
+            .unwrap()
+            .request_id,
+        REQUEST
+    );
     let (parts, body) = server.received.recv().await.unwrap();
     assert_eq!(parts.method, "POST");
     assert_eq!(parts.uri.path(), format!("/environments/{ENVIRONMENT}/changes"));
-    assert_eq!(serde_json::from_slice::<serde_json::Value>(&body).unwrap(), json!({
-        "action": "archive", "request_id": REQUEST, "base_revision_id": base, "reason": "retire blueprint",
-    }));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+        json!({
+            "action": "archive", "request_id": REQUEST, "base_revision_id": base, "reason": "retire blueprint",
+        })
+    );
 }
 
 #[tokio::test]
@@ -286,21 +334,35 @@ async fn catalog_skills_use_the_exact_listed_version_and_source() {
     }).await;
     let hv = Hypervisor::new(&server.url, "private-token").unwrap();
     let skills = hv.skills();
-    let page = skills.list(models::environments::CatalogListQuery {
-        search: Some("review".into()), after: Some("page".into()), limit: Some(1),
-    }).await.unwrap();
+    let page = skills
+        .list(models::environments::CatalogListQuery {
+            search: Some("review".into()),
+            after: Some("page".into()),
+            limit: Some(1),
+        })
+        .await
+        .unwrap();
     assert_eq!(page.next_cursor.as_deref(), Some("next"));
     let (request, _) = server.received.recv().await.unwrap();
     assert_eq!(request.uri.path(), "/skills/list");
     assert_eq!(request.uri.query().unwrap(), "search=review&after=page&limit=1");
-    let detail = skills.get("review", &page.skills[0].version, &page.catalog).await.unwrap();
+    let detail = skills
+        .get("review", &page.skills[0].version, &page.catalog)
+        .await
+        .unwrap();
     assert_eq!(detail.files["references/notes.md"], "notes\n");
     let (request, _) = server.received.recv().await.unwrap();
     assert_eq!(request.uri.path(), "/skills/review/info");
-    assert_eq!(request.uri.query().unwrap(), "version=1.0.0%2Bpreview&snapshot=listed-snapshot");
+    assert_eq!(
+        request.uri.query().unwrap(),
+        "version=1.0.0%2Bpreview&snapshot=listed-snapshot"
+    );
     let mut wrong = page.catalog;
     wrong.digest = format!("sha256:{}", "1".repeat(64));
-    assert!(matches!(skills.get("review", "1.0.0+preview", &wrong).await, Err(Error::InvalidResponse(_))));
+    assert!(matches!(
+        skills.get("review", "1.0.0+preview", &wrong).await,
+        Err(Error::InvalidResponse(_))
+    ));
 }
 
 #[tokio::test]
@@ -322,9 +384,14 @@ async fn global_rules_return_typed_definitions_from_the_listed_catalog() {
     }).await;
     let hv = Hypervisor::new(&server.url, "private-token").unwrap();
     let rules = hv.rules();
-    let page = rules.list(models::environments::CatalogListQuery {
-        search: Some("review".into()), after: Some("first".into()), limit: Some(12),
-    }).await.unwrap();
+    let page = rules
+        .list(models::environments::CatalogListQuery {
+            search: Some("review".into()),
+            after: Some("first".into()),
+            limit: Some(12),
+        })
+        .await
+        .unwrap();
     assert_eq!(page.rules[0].kind, models::environments::CatalogRuleKind::Detection);
     let (request, _) = server.received.recv().await.unwrap();
     assert_eq!(request.uri.path(), "/rules/list");
@@ -332,13 +399,19 @@ async fn global_rules_return_typed_definitions_from_the_listed_catalog() {
     let detail = rules.get("review", "1.0.0", &page.catalog).await.unwrap();
     let definition = serde_json::to_value(detail.definition).unwrap();
     assert_eq!(definition["rule"]["match"], "http.host == {{host}}");
-    assert_eq!(serde_json::to_value(&detail.parameters["host"]).unwrap()["default"], "api.example");
+    assert_eq!(
+        serde_json::to_value(&detail.parameters["host"]).unwrap()["default"],
+        "api.example"
+    );
     let (request, _) = server.received.recv().await.unwrap();
     assert_eq!(request.uri.path(), "/rules/review/info");
     assert_eq!(request.uri.query().unwrap(), "version=1.0.0&snapshot=listed-snapshot");
     let mut wrong = page.catalog;
     wrong.reference = "registry.example/other:stable".into();
-    assert!(matches!(rules.get("review", "1.0.0", &wrong).await, Err(Error::InvalidResponse(_))));
+    assert!(matches!(
+        rules.get("review", "1.0.0", &wrong).await,
+        Err(Error::InvalidResponse(_))
+    ));
 }
 
 #[tokio::test]

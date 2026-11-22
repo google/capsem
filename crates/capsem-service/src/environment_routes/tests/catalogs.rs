@@ -14,11 +14,11 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
 };
-mod registry;
 mod applied_skills;
-mod global_skills;
-mod global_rules;
 mod global_mcps;
+mod global_rules;
+mod global_skills;
+mod registry;
 mod status;
 use registry::Registry;
 
@@ -43,13 +43,23 @@ async fn launch_policy_uses_pinned_rule_content_and_current_catalog_admission() 
     let mut changed = document(kind, false);
     changed["entries"][0]["definition"]["rule"]["action"] = "block".into();
     assert_ne!(fx.registry.publish(kind, changed), original);
-    let route = format!("/environments/{}/rules/list?revision_id={}", reference.environment_id, reference.revision_id);
+    let route = format!(
+        "/environments/{}/rules/list?revision_id={}",
+        reference.environment_id, reference.revision_id
+    );
     let (status, projected) = route_request(app.clone(), Method::GET, &route, None).await;
     assert_eq!(status, StatusCode::OK, "{projected}");
     let projected: capsem_api::EnvironmentRuleListResponse = serde_json::from_value(projected).unwrap();
-    let selected = projected.access.iter().find(|rule| rule.id == "environment.access.catalog.review").unwrap();
+    let selected = projected
+        .access
+        .iter()
+        .find(|rule| rule.id == "environment.access.catalog.review")
+        .unwrap();
     assert_eq!(selected.action, capsem_config::SecurityRuleAction::Allow);
-    assert_eq!(selected.source, capsem_api::environments::EnvironmentRuleSource::Catalog);
+    assert_eq!(
+        selected.source,
+        capsem_api::environments::EnvironmentRuleSource::Catalog
+    );
     assert!(selected.editable_key.is_none());
     let compile = || {
         let reference = reference.clone();
@@ -221,7 +231,8 @@ async fn selected_skill_http_uses_complete_pinned_content_and_durable_admission(
     let mut notes = original["entries"][0].clone();
     notes["metadata"]["id"] = "notes".into();
     let instruction = "---\nname: notes\ndescription: Read notes\n---\nRead the notes.\n";
-    notes["payload"]["files"]["SKILL.md"] = json!({"content":instruction,"sha256":registry::digest(instruction.as_bytes())});
+    notes["payload"]["files"]["SKILL.md"] =
+        json!({"content":instruction,"sha256":registry::digest(instruction.as_bytes())});
     original["entries"].as_array_mut().unwrap().push(notes);
     let digest = fx.registry.publish(kind, original.clone());
     let app = crate::router_runtime::build_service_router(fx.state.clone());
@@ -241,8 +252,12 @@ async fn selected_skill_http_uses_complete_pinned_content_and_durable_admission(
     assert_eq!(summary["skills"][0]["selection"]["resolved_digest"], digest);
     assert_eq!(summary["skills"][0]["availability"], "available");
     assert!(summary["skills"][0].get("files").is_none());
-    assert_eq!(route_request(app.clone(), Method::GET, &format!("{base}/unselected/info"), None).await.0,
-        StatusCode::NOT_FOUND);
+    assert_eq!(
+        route_request(app.clone(), Method::GET, &format!("{base}/unselected/info"), None)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
     let (status, first) = route_request(app.clone(), Method::GET, &format!("{base}/list?limit=1"), None).await;
     assert_eq!(status, StatusCode::OK, "{first}");
     assert_eq!(first["skills"][0]["selection"]["id"], "notes");
@@ -260,10 +275,13 @@ async fn selected_skill_http_uses_complete_pinned_content_and_durable_admission(
     assert_eq!(status, StatusCode::OK, "{detail}");
     assert_eq!(detail["metadata"]["name"], "Review");
     assert_eq!(detail["selection"]["resolved_digest"], digest);
-    assert_eq!(detail["files"], json!({
-        "SKILL.md":original["entries"][0]["payload"]["files"]["SKILL.md"]["content"],
-        "references/fixture.md":support
-    }));
+    assert_eq!(
+        detail["files"],
+        json!({
+            "SKILL.md":original["entries"][0]["payload"]["files"]["SKILL.md"]["content"],
+            "references/fixture.md":support
+        })
+    );
 
     fx.registry.unpublish_tag(kind);
     let (status, retained) = route_request(app.clone(), Method::GET, &info, None).await;
@@ -272,21 +290,40 @@ async fn selected_skill_http_uses_complete_pinned_content_and_durable_admission(
     assert_eq!(retained["discovery_fresh"], false);
 
     fx.registry.publish(kind, document(kind, true));
-    assert_eq!(route_request(app.clone(), Method::GET, &info, None).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(
+        route_request(app.clone(), Method::GET, &info, None).await.0,
+        StatusCode::FORBIDDEN
+    );
     fx.registry.publish(kind, original);
     let (status, summary) = route_request(app.clone(), Method::GET, &format!("{base}/list"), None).await;
     assert_eq!(status, StatusCode::OK, "{summary}");
-    let skill = summary["skills"].as_array().unwrap().iter().find(|skill| skill["selection"]["id"] == "review").unwrap();
+    let skill = summary["skills"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|skill| skill["selection"]["id"] == "review")
+        .unwrap();
     assert_eq!(skill["availability"], "revoked");
     assert!(skill["metadata"].is_null());
     fx.registry.stop().await;
-    assert_eq!(route_request(app.clone(), Method::GET, &info, None).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(
+        route_request(app.clone(), Method::GET, &info, None).await.0,
+        StatusCode::FORBIDDEN
+    );
     let (status, updated) = route_request(app.clone(), Method::POST, &format!("/environments/{}/changes", exact.environment_id), Some(json!({
         "request_id":id(672),"base_revision_id":exact.revision_id,"reason":"remove selected skills","specification":{"name":"skill-inspection"}
     }))).await;
     assert_eq!(status, StatusCode::OK, "{updated}");
-    assert_eq!(route_request(app.clone(), Method::GET, &next, None).await.0, StatusCode::CONFLICT);
-    assert_eq!(route_request(app, Method::GET, &format!("{base}/review/info"), None).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(
+        route_request(app.clone(), Method::GET, &next, None).await.0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        route_request(app, Method::GET, &format!("{base}/review/info"), None)
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
 }
 
 #[tokio::test]

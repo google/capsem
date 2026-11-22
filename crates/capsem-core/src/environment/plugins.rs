@@ -72,10 +72,15 @@ fn compiled<O: PluginOptions>(
 }
 
 impl CompiledEnvironmentPlugins {
-    pub fn with_corporate(environment: &EnvironmentPlugins, corporate: &capsem_config::SettingsFile) -> Result<Self, String> {
+    pub fn with_corporate(
+        environment: &EnvironmentPlugins,
+        corporate: &capsem_config::SettingsFile,
+    ) -> Result<Self, String> {
         corporate.validate_metadata_contract()?;
         if !corporate.plugins.is_empty() {
-            return Err("environment policy requires typed corporate environment_plugins, not legacy plugin modes".into());
+            return Err(
+                "environment policy requires typed corporate environment_plugins, not legacy plugin modes".into(),
+            );
         }
         let defaults = EnvironmentPlugins::default();
         Self::resolve(environment, corporate.environment_plugins.as_ref().unwrap_or(&defaults))

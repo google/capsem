@@ -51,8 +51,7 @@ pub(in crate::net::mitm_proxy) fn encode_response_payload(response: &JsonRpcResp
                 -32000,
                 "MCP result exceeds the frame limit; the tool may already have run",
             );
-            capsem_proto::mcp_contracts::json_rpc_wire::encode_response(&fallback)
-                .context("encode MCP size error")
+            capsem_proto::mcp_contracts::json_rpc_wire::encode_response(&fallback).context("encode MCP size error")
         }
         Err(error) => Err(error).context("encode MCP JSON-RPC response"),
     }

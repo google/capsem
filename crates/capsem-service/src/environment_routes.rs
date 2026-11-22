@@ -30,8 +30,8 @@ mod sources;
 use capsem_core::managed_sessions::LeaseClock;
 use capsem_logger::db::EnvironmentReferenceQuery;
 use capsem_service::environment_files::EnvironmentFileError;
-pub(crate) use sources::catalogs::{launch_policy, refresh_catalog_sources, CatalogStatusCache};
 pub(crate) use skills::admit_boot_skills;
+pub(crate) use sources::catalogs::{launch_policy, refresh_catalog_sources, CatalogStatusCache};
 use std::sync::Arc;
 
 fn coordinator(state: &ServiceState) -> EnvironmentMutationCoordinator {
@@ -118,12 +118,22 @@ async fn policy_document(
     query: EnvironmentPolicyListQuery,
 ) -> Result<(EnvironmentRevisionReference, EnvironmentSpecification), AppError> {
     let Json(current) = info(actor.clone(), State(state.clone()), Path(id.clone())).await?;
-    let reference = EnvironmentRevisionReference { environment_id: id, revision_id: current.document.identity.revision_id };
+    let reference = EnvironmentRevisionReference {
+        environment_id: id,
+        revision_id: current.document.identity.revision_id,
+    };
     if let Some(expected) = query.revision_id {
-        EnvironmentRevisionReference { environment_id: reference.environment_id.clone(), revision_id: expected.clone() }
-            .validate().map_err(|error| AppError::new(StatusCode::BAD_REQUEST, error.into()))?;
+        EnvironmentRevisionReference {
+            environment_id: reference.environment_id.clone(),
+            revision_id: expected.clone(),
+        }
+        .validate()
+        .map_err(|error| AppError::new(StatusCode::BAD_REQUEST, error.into()))?;
         if expected != reference.revision_id {
-            return Err(AppError::new(StatusCode::CONFLICT, "saved environment revision changed".into()));
+            return Err(AppError::new(
+                StatusCode::CONFLICT,
+                "saved environment revision changed".into(),
+            ));
         }
     }
     Ok((reference, current.document.specification))

@@ -490,7 +490,10 @@ async fn fetch_status_reads_one_combined_service_snapshot() {
     assert_eq!(response.vm_count, 0);
     let catalog = &response.catalogs.as_ref().unwrap()[0];
     assert_eq!(catalog.last_successful_refresh, Some(1100));
-    assert_eq!(catalog.availability, capsem_api::environments::CatalogAvailability::Stale);
+    assert_eq!(
+        catalog.availability,
+        capsem_api::environments::CatalogAvailability::Stale
+    );
     assert_eq!(requests.load(Ordering::SeqCst), 1);
     h.abort();
 }

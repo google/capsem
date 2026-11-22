@@ -13,7 +13,10 @@ pub async fn get_catalog_rule(
     input: &GetCatalogRuleParams,
     options: CallOptions,
 ) -> crate::Result<capsem_api::RuleCatalogDetailResponse> {
-    let query = [("version", input.version.to_string()), ("snapshot", input.snapshot.to_string())];
+    let query = [
+        ("version", input.version.to_string()),
+        ("snapshot", input.snapshot.to_string()),
+    ];
     let path_rule_id = input.rule_id.to_string();
     let request = Request {
         parameters: &[("rule_id", path_rule_id.as_str())],

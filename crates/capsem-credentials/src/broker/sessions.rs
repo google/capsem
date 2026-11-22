@@ -184,7 +184,9 @@ impl ConnectionBroker {
         let expires = request
             .expires_at
             .as_ref()
-            .map(|value| capsem_foundation::time::parse_rfc3339(value).map_err(|_| api::CredentialErrorCode::RequestConflict))
+            .map(|value| {
+                capsem_foundation::time::parse_rfc3339(value).map_err(|_| api::CredentialErrorCode::RequestConflict)
+            })
             .transpose()?
             .unwrap_or(default.min(binding.expires));
         if expires > default || expires > binding.expires || expires <= now {

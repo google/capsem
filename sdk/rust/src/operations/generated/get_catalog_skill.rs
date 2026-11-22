@@ -13,7 +13,10 @@ pub async fn get_catalog_skill(
     input: &GetCatalogSkillParams,
     options: CallOptions,
 ) -> crate::Result<capsem_api::SkillCatalogDetailResponse> {
-    let query = [("version", input.version.to_string()), ("snapshot", input.snapshot.to_string())];
+    let query = [
+        ("version", input.version.to_string()),
+        ("snapshot", input.snapshot.to_string()),
+    ];
     let path_skill_id = input.skill_id.to_string();
     let request = Request {
         parameters: &[("skill_id", path_skill_id.as_str())],

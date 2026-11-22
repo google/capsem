@@ -18,10 +18,16 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/environments/list", get(environment_routes::library::list))
         .route("/environments/{id}/info", get(environment_routes::info))
         .route("/environments/plugins/list", get(environment_routes::plugins::defaults))
-        .route("/environments/{id}/plugins/list", get(environment_routes::plugins::list))
+        .route(
+            "/environments/{id}/plugins/list",
+            get(environment_routes::plugins::list),
+        )
         .route("/environments/{id}/rules/list", get(environment_routes::rules::list))
         .route("/environments/{id}/skills/list", get(environment_routes::skills::list))
-        .route("/environments/{id}/skills/{skill_id}/info", get(environment_routes::skills::info))
+        .route(
+            "/environments/{id}/skills/{skill_id}/info",
+            get(environment_routes::skills::info),
+        )
         .route(
             "/environments/{id}/revisions/list",
             get(environment_routes::history::list),
@@ -52,7 +58,10 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/mcps/{mcp_id}/info", get(environment_routes::mcps::info))
         .route("/rules/{rule_id}/info", get(environment_routes::rules::catalog::info))
         .route("/skills/list", get(environment_routes::skills::catalog::list))
-        .route("/skills/{skill_id}/info", get(environment_routes::skills::catalog::info))
+        .route(
+            "/skills/{skill_id}/info",
+            get(environment_routes::skills::catalog::info),
+        )
         .route("/status", get(handle_service_status))
         .route("/restart", post(restart::handle_restart))
         .route("/update/status", get(handle_update_status))
@@ -120,7 +129,10 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/vms/list", get(handle_list))
         .route("/vms/{id}/info", get(handle_info))
         .route("/vms/{id}/skills/list", get(environment_routes::skills::vm_list))
-        .route("/vms/{id}/skills/{skill_id}/info", get(environment_routes::skills::vm_info))
+        .route(
+            "/vms/{id}/skills/{skill_id}/info",
+            get(environment_routes::skills::vm_info),
+        )
         .route("/vms/{id}/readiness", get(crate::lifecycle_readiness::handle))
         .route("/vms/{id}/status", get(handle_vm_status))
         .route("/vms/{id}/browser/acknowledge", post(browser::handle_acknowledge))
@@ -321,7 +333,12 @@ async fn handle_gateway_status(
             ))
         })
         .await??;
-    Ok(Json(GatewayStatusResponse { list, assets, updates, catalogs: state.catalog_status.read() }))
+    Ok(Json(GatewayStatusResponse {
+        list,
+        assets,
+        updates,
+        catalogs: state.catalog_status.read(),
+    }))
 }
 
 pub(super) fn read_installed_status_document(path: &StdPath) -> Result<serde_json::Value, AppError> {

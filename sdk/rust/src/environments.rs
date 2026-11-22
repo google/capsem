@@ -48,7 +48,8 @@ impl Environments<'_> {
         id: &str,
         request: models::environments::EnvironmentArchiveRequest,
     ) -> Result<models::EnvironmentMutationResponse> {
-        self.submit_change(id, models::EnvironmentChangeIntent::Archive(request)).await
+        self.submit_change(id, models::EnvironmentChangeIntent::Archive(request))
+            .await
     }
 
     async fn submit_change(

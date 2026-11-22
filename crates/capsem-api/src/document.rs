@@ -41,13 +41,21 @@ pub fn openapi() -> OpenApi {
     doc.add("/environments/{id}/rules/list", HttpMethod::Get, rules);
     let skills = doc
         .operation::<EnvironmentSkillListResponse>("/environments/{id}/skills/list", "listEnvironmentSkills")
-        .description(Some("List selected pins and their availability. Continue with next_cursor against the same saved revision."))
-        .parameters(Some(environments::EnvironmentSkillListQuery::into_params(|| Some(ParameterIn::Query))));
+        .description(Some(
+            "List selected pins and their availability. Continue with next_cursor against the same saved revision.",
+        ))
+        .parameters(Some(environments::EnvironmentSkillListQuery::into_params(|| {
+            Some(ParameterIn::Query)
+        })));
     doc.add("/environments/{id}/skills/list", HttpMethod::Get, skills);
     let skill = doc
         .operation::<EnvironmentSkillDetailResponse>("/environments/{id}/skills/{skill_id}/info", "getEnvironmentSkill")
-        .description(Some("Read the complete UTF-8 file dictionary for an admitted skill from the selected revision."))
-        .parameters(Some(environments::EnvironmentPolicyListQuery::into_params(|| Some(ParameterIn::Query))));
+        .description(Some(
+            "Read the complete UTF-8 file dictionary for an admitted skill from the selected revision.",
+        ))
+        .parameters(Some(environments::EnvironmentPolicyListQuery::into_params(|| {
+            Some(ParameterIn::Query)
+        })));
     doc.add("/environments/{id}/skills/{skill_id}/info", HttpMethod::Get, skill);
     let catalog_skills = doc
         .operation::<environments::SkillCatalogListResponse>("/skills/list", "listCatalogSkills")
@@ -103,8 +111,14 @@ pub fn openapi() -> OpenApi {
             "/environments/{id}/revisions/{revision_id}/image-update",
             "checkEnvironmentImageUpdate",
         )
-        .description(Some("Check for a verified image update against the current active saved revision."))
-        .extensions(Some([("x-capsem-request-timeout-ms", IMAGE_PULL_REQUEST_TIMEOUT_MS)].into_iter().collect()));
+        .description(Some(
+            "Check for a verified image update against the current active saved revision.",
+        ))
+        .extensions(Some(
+            [("x-capsem-request-timeout-ms", IMAGE_PULL_REQUEST_TIMEOUT_MS)]
+                .into_iter()
+                .collect(),
+        ));
     doc.add(
         "/environments/{id}/revisions/{revision_id}/image-update",
         HttpMethod::Get,
@@ -152,13 +166,21 @@ pub fn openapi() -> OpenApi {
     doc.get::<SandboxInfo>("/vms/{id}/info", "getVmInfo");
     let vm_skills = doc
         .operation::<VmSkillListResponse>("/vms/{id}/skills/list", "listVmSkills")
-        .description(Some("List selected skills from the acknowledged boot revision of a live sandbox."))
-        .parameters(Some(environments::EnvironmentSkillListQuery::into_params(|| Some(ParameterIn::Query))));
+        .description(Some(
+            "List selected skills from the acknowledged boot revision of a live sandbox.",
+        ))
+        .parameters(Some(environments::EnvironmentSkillListQuery::into_params(|| {
+            Some(ParameterIn::Query)
+        })));
     doc.add("/vms/{id}/skills/list", HttpMethod::Get, vm_skills);
     let vm_skill = doc
         .operation::<VmSkillDetailResponse>("/vms/{id}/skills/{skill_id}/info", "getVmSkill")
-        .description(Some("Read the complete pinned skill files allowed for the acknowledged sandbox generation."))
-        .parameters(Some(environments::EnvironmentPolicyListQuery::into_params(|| Some(ParameterIn::Query))));
+        .description(Some(
+            "Read the complete pinned skill files allowed for the acknowledged sandbox generation.",
+        ))
+        .parameters(Some(environments::EnvironmentPolicyListQuery::into_params(|| {
+            Some(ParameterIn::Query)
+        })));
     doc.add("/vms/{id}/skills/{skill_id}/info", HttpMethod::Get, vm_skill);
     let intent = doc.schema::<VmLifecycleIntent>();
     let readiness = doc

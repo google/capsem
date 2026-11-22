@@ -354,10 +354,29 @@ async fn run_accepts_an_exact_saved_environment_and_refuses_inline_variables() {
         environment_id: "00000000-0000-4000-8000-000000000001".into(),
         revision_id: "00000000-0000-4000-8000-000000000002".into(),
     };
-    hv.run("printf pinned", RunOptions { environment: Some(reference.clone()), ..Default::default() })
-        .await.unwrap();
-    assert_eq!(request(&mut server, "/run").await, json!({"command":"printf pinned", "environment":reference}));
-    let result = hv.run("true", RunOptions { environment: Some(reference), env: Some(Default::default()), ..Default::default() }).await;
+    hv.run(
+        "printf pinned",
+        RunOptions {
+            environment: Some(reference.clone()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        request(&mut server, "/run").await,
+        json!({"command":"printf pinned", "environment":reference})
+    );
+    let result = hv
+        .run(
+            "true",
+            RunOptions {
+                environment: Some(reference),
+                env: Some(Default::default()),
+                ..Default::default()
+            },
+        )
+        .await;
     assert!(matches!(result, Err(Error::InvalidInput(_))));
     assert!(server.received.try_recv().is_err());
 }
