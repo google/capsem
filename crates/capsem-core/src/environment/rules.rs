@@ -1,5 +1,5 @@
 //! Compile acknowledged environment sections through the existing policy rail.
-use super::{EnvironmentPolicyInputs, RuleCatalogInputs};
+use super::{package_registries, EnvironmentPolicyInputs, RuleCatalogInputs};
 use crate::net::policy_config::ActivePolicyFile;
 use capsem_config::{
     catalogs::ResolvedCatalogRule,
@@ -30,6 +30,7 @@ impl EnvironmentPolicyInputs<'_> {
             self.access_rules(),
             self.detection_rules(),
             self.compile_mcp_permissions()?,
+            package_registries::selected(self.package_access()),
             baseline,
             |pin, values| {
                 catalogs
@@ -44,6 +45,7 @@ pub(super) fn compile_selected_rules(
     access: &EnvironmentAccessRules,
     detection: &EnvironmentDetectionRules,
     mcp_rules: Vec<CompiledSecurityRule>,
+    registries: &[String],
     baseline: SecurityRuleSet,
     mut resolve: impl FnMut(
         &EnvironmentCatalogPin,
@@ -68,6 +70,7 @@ pub(super) fn compile_selected_rules(
         rules.push(rule);
     }
     rules.extend(mcp_rules);
+    rules.extend(package_registries::compile(registries)?);
     let mut observations = detection
         .custom
         .iter()

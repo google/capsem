@@ -109,6 +109,7 @@ def test_approval_applies_live_policy_and_saves_deferred_configuration(service, 
         proposed = {
             **specification,
             "variables": {"CAPSEM_REVIEW_MARKER": "approved" if deferred else "original"},
+            "packages": {"allows_package_manager": True, "registries": ["npm"]},
             "access": {"custom": {"scope": {
                 "name": "Scoped endpoint", "action": "block",
                 "match": 'http.host == "scoped.example"',
@@ -160,6 +161,12 @@ def test_approval_applies_live_policy_and_saves_deferred_configuration(service, 
         assert applied["pending_restart"] is deferred
         assert applied["policy_digest"] != original["policy_digest"]
         assert operator.get(sibling_path)["environment"] == sibling_binding
+        fork_rules = operator.get(f"/environments/{fork['environment_id']}/rules/list")["access"]
+        package_rules = [rule for rule in fork_rules if rule["id"].startswith("environment.packages.")]
+        assert [rule["id"] for rule in package_rules] == ["environment.packages.npm"]
+        assert package_rules[0]["editable_key"] is None
+        parent_rules = operator.get(f"/environments/{base['environment_id']}/rules/list")["access"]
+        assert not any(rule["id"].startswith("environment.packages.") for rule in parent_rules)
 
         document = operator.get(f"/environments/{fork['environment_id']}/info")["document"]
         assert document["identity"]["parent_environment_id"] == base["environment_id"]

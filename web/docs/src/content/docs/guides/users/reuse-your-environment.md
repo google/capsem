@@ -96,6 +96,18 @@ before running the startup script or entrypoint. Capsem leaves an existing
 checkout of the same repository intact, including local edits and untracked
 files. A destination occupied by a different repository stops preparation.
 
+Use the `[packages]` section to select built-in registry read rules. The
+supported registry IDs are `debian`, `npm`, `pypi`, and `crates`.
+
+```toml
+[packages]
+allows_package_manager = true
+registries = ["npm", "pypi"]
+```
+
+Each selection adds a GET rule for the registry's reviewed hosts. Corporate
+policy and explicit access rules still take precedence.
+
 Open **Change history** to inspect older revisions. Complete revisions show
 canonical TOML. When values have been purged, the view identifies the removed
 variables and shows the remaining content when it is available.

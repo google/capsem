@@ -21,6 +21,68 @@ fn http_event() -> SecurityEvent {
 }
 
 #[test]
+fn package_registry_selections_use_live_reviewed_read_rules_under_corporate_policy() {
+    let boot = specification();
+    let mut live = boot.clone();
+    live.packages.allows_package_manager = true;
+    live.packages.registries = vec!["npm".into()];
+    let corp: SettingsFile = toml::from_str(
+        "[corp.rules.block_npm]\nname='block_npm'\naction='block'\nmatch='http.host == \"registry.npmjs.org\"'",
+    )
+    .unwrap();
+    let inputs = EnvironmentPolicyInputs::new(&boot, &live, &corp);
+    let active = crate::net::policy_config::ActivePolicyFile::from_environment(&inputs, None).unwrap();
+    let bytes = toml::to_string(&active).unwrap();
+    let active: crate::net::policy_config::ActivePolicyFile = toml::from_str(&bytes).unwrap();
+    let rules = active.compile_security_rule_set().unwrap();
+    let engine = SecurityEventEngine::new(SecurityActionRegistry::new(), Arc::new(Ignore));
+    for (host, method, selected) in [
+        ("registry.npmjs.org", "GET", true),
+        ("registry.npmjs.org", "POST", false),
+        ("cdn.npmjs.org", "GET", true),
+        ("lookalikenpmjs.org", "GET", false),
+        ("pypi.org", "GET", false),
+    ] {
+        let event = SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: Some(host.into()),
+            method: Some(method.into()),
+            ..Default::default()
+        });
+        let evaluation = rules.evaluate(&event).unwrap();
+        assert_eq!(
+            evaluation
+                .matched_rules()
+                .iter()
+                .any(|rule| rule.rule_id == "environment.packages.npm"),
+            selected,
+            "{host} {method}"
+        );
+        if host == "registry.npmjs.org" {
+            assert_eq!(
+                engine
+                    .apply_matching_rules_and_emit(&rules, event)
+                    .unwrap()
+                    .decision
+                    .effective,
+                SecurityDecisionKind::Block
+            );
+        }
+    }
+    live.packages.allows_package_manager = false;
+    let rules = EnvironmentPolicyInputs::new(&boot, &live, &corp)
+        .compile_rules()
+        .unwrap();
+    assert!(rules
+        .rules()
+        .iter()
+        .all(|rule| !rule.rule_id.starts_with("environment.packages.")));
+    live.packages.allows_package_manager = true;
+    live.packages.registries.push("unreviewed".into());
+    let inputs = EnvironmentPolicyInputs::new(&boot, &live, &corp);
+    assert!(crate::net::policy_config::ActivePolicyFile::from_environment(&inputs, None).is_err());
+}
+
+#[test]
 fn environment_rule_composition_uses_live_access_boot_detection_and_fresh_corporate_rules() {
     let mut boot = specification();
     boot.access.custom.insert(

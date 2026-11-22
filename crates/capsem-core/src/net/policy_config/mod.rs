@@ -23,6 +23,7 @@ mod tree;
 mod types;
 
 pub use active_policy::{active_policy_digest, ActivePolicyFile, CompiledActivePolicy};
+pub(crate) use active_policy::host_condition;
 pub use builder::*;
 pub use capsem_config::*;
 pub use lint::load_merged_lint;

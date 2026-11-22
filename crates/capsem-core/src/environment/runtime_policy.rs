@@ -1,6 +1,6 @@
 //! Selected rule/plugin inputs for the existing service-owned active-policy file.
 //! Revision and generation identities belong to the instance, not these bytes.
-use super::{mcp_launch, EnvironmentPolicyInputs, RuleCatalogInputs};
+use super::{mcp_launch, package_registries, EnvironmentPolicyInputs, RuleCatalogInputs};
 use capsem_config::{
     catalogs::{ResolvedCatalogRule, RuleCatalogDefinition},
     environment::*,
@@ -25,6 +25,8 @@ pub struct EnvironmentRuntimePolicy {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     mcp_sandbox: BTreeMap<String, EnvironmentMcpDefinition>,
     mcp_permissions: BTreeMap<String, EnvironmentMcpPermissions>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    package_registries: Vec<String>,
     /// Only the selected, resolved definitions, never entire catalog payloads.
     /// Original pin and parameter values remain correlated after serialization.
     catalog_rules: Vec<FrozenCatalogRule>,
@@ -97,6 +99,7 @@ impl EnvironmentRuntimePolicy {
             mcp_remote,
             mcp_sandbox,
             mcp_permissions: inputs.mcp_permissions().clone(),
+            package_registries: package_registries::selected(inputs.package_access()).to_vec(),
             catalog_rules,
         };
         selected.validate()?;
@@ -185,6 +188,7 @@ impl EnvironmentRuntimePolicy {
                 self.mcp_servers.iter().map(String::as_str),
                 &self.mcp_permissions,
             )?,
+            &self.package_registries,
             baseline,
             |pin, values| self.resolve(pin, values),
         )

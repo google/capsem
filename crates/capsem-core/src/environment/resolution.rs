@@ -72,6 +72,7 @@ pub async fn resolve_environment(
     draft
         .validate()
         .map_err(|_| EnvironmentResolutionError::InvalidIntent)?;
+    super::package_registries::validate(&draft.packages).map_err(|_| EnvironmentResolutionError::InvalidIntent)?;
     if let Some(base) = base {
         base.validate().map_err(|_| EnvironmentResolutionError::InvalidPin)?;
     }

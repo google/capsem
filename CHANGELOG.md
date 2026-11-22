@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Saved environments can select built-in package registry read rules under current corporate policy.
 - Fixed: Linux VirtioFS can move a workspace entry atomically while preserving an existing destination.
 - Added: Prepare public HTTPS repositories at their saved commits before an OCI workload starts, while preserving existing checkouts and local edits.
 - Added: Run approved sandbox MCP servers inside a saved environment's OCI workload and retire their processes when disabled.

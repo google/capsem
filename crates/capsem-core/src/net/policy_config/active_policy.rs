@@ -23,6 +23,7 @@ use crate::mcp::policy::McpConfig;
 use capsem_config::validate_policy_target;
 
 mod toggles;
+pub(crate) use toggles::host_condition;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

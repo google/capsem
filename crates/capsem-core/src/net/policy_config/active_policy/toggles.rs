@@ -75,7 +75,7 @@ pub(super) fn toggle_block_rules(settings: &SettingsFile, corp: &SettingsFile) -
 /// `http.host` matching any of `domains`; `*.example.com` matches its
 /// subdomains. Only hostname characters reach the condition, so a domains
 /// setting can never become rule syntax.
-fn host_condition(domains: &[String]) -> Result<String, String> {
+pub(crate) fn host_condition(domains: &[String]) -> Result<String, String> {
     let mut clauses = Vec::with_capacity(domains.len());
     for domain in domains {
         let (wildcard, host) = match domain.strip_prefix("*.") {
