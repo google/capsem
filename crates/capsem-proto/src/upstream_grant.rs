@@ -66,6 +66,7 @@ const SET_GUEST_TIMES: u8 = 12;
 const ATTACH_MCP_HTTP: u8 = 13;
 const OPEN_MCP_AGGREGATOR: u8 = 14;
 const OPEN_APPROVAL: u8 = 15;
+const OPEN_MCP_AGGREGATOR_WITH_SANDBOX: u8 = 16;
 const TCP_RESOLVED: u8 = 101;
 const DESCRIPTOR_GRANTED: u8 = 102;
 const DENIED: u8 = 103;
@@ -253,6 +254,10 @@ pub enum UpstreamGrantRequest {
     OpenMcpAggregator {
         request_id: u64,
     },
+    /// The VM owner attaches its connected sandbox spawn capability for this boot.
+    OpenMcpAggregatorWithSandbox {
+        request_id: u64,
+    },
     OpenLoopbackListener {
         request_id: u64,
         port: u16,
@@ -322,7 +327,8 @@ impl UpstreamGrantRequest {
             Self::AttachProxyTraffic { .. }
             | Self::AttachProxyMcp { .. }
             | Self::AttachProxyTraceHints { .. }
-            | Self::AttachMcpHttp { .. } => 1,
+            | Self::AttachMcpHttp { .. }
+            | Self::OpenMcpAggregatorWithSandbox { .. } => 1,
             _ => 0,
         }
     }

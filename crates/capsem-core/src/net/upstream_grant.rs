@@ -43,6 +43,7 @@ enum Command {
         reply: oneshot::Sender<Result<(), String>>,
     },
     OpenMcpAggregator {
+        sandbox: Option<OwnedFd>,
         reply: oneshot::Sender<Result<UnixStream, String>>,
     },
     OpenLoopbackListener {
@@ -350,7 +351,9 @@ async fn dispatch(
 ) -> Result<(), String> {
     match command {
         Command::OpenApproval { reply } => finish(reply, approval::open(sender, receiver, request_id).await),
-        Command::OpenMcpAggregator { reply } => finish(reply, mcp::open_aggregator(sender, receiver, request_id).await),
+        Command::OpenMcpAggregator { sandbox, reply } => {
+            finish(reply, mcp::open_aggregator(sender, receiver, request_id, sandbox).await)
+        }
         Command::AttachMcpHttp {
             role,
             descriptor,

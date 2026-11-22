@@ -524,7 +524,11 @@ impl McpServerManager {
         // via HTTP/2 so additional peers buy nothing at the transport
         // level. Clamp `pool_size` to ≥ 1 (and to 1 for HTTP).
         let requested_pool = def.pool_size.unwrap_or(1).max(1) as usize;
-        let pool_size = if def.is_stdio() { requested_pool } else { 1 };
+        let pool_size = if def.is_stdio() && def.sandbox_slot.is_none() {
+            requested_pool
+        } else {
+            1
+        };
         if self.capabilities.is_some() && pool_size > capsem_proto::MCP_BUILTIN_PEERS_PER_SESSION {
             bail!("MCP stdio pool exceeds its granted peer count");
         }
@@ -538,9 +542,26 @@ impl McpServerManager {
             self.connect_http(def).await?
         };
         let client = &server.client;
+        let discovery = async {
+            (
+                client.list_all_tools().await,
+                client.list_all_resources().await,
+                client.list_all_prompts().await,
+            )
+        };
+        // A sandbox peer may leave discovery unanswered. Publish its complete
+        // catalog only after discovery returns, so timeout leaves no routes
+        // for a peer that was never registered.
+        let (tools, resources, prompts) = if def.sandbox_slot.is_some() {
+            tokio::time::timeout(capsem_mcp_transport::native_worker::STARTUP_TIMEOUT, discovery)
+                .await
+                .context("sandbox MCP catalog deadline")?
+        } else {
+            discovery.await
+        };
 
         // Fetch tools with automatic pagination
-        match client.list_all_tools().await {
+        match tools {
             Ok(tools) => {
                 for tool in tools {
                     let name = tool.name.as_ref();
@@ -584,7 +605,7 @@ impl McpServerManager {
         }
 
         // Fetch resources (optional)
-        match client.list_all_resources().await {
+        match resources {
             Ok(resources) => {
                 for resource in resources {
                     let uri = resource.uri.as_str();
@@ -609,7 +630,7 @@ impl McpServerManager {
         }
 
         // Fetch prompts (optional)
-        match client.list_all_prompts().await {
+        match prompts {
             Ok(prompts) => {
                 for prompt in prompts {
                     let name = prompt.name.as_str();
@@ -729,6 +750,34 @@ impl McpServerManager {
     /// builtin can pick a per-peer lockfile and avoid the singleton
     /// guard's "another instance holds the lock; exiting 0" path.
     async fn connect_stdio(&self, def: &McpServerDef, peer_index: u32) -> Result<RunningService<RoleClient, ()>> {
+        if let Some(slot) = def.sandbox_slot {
+            anyhow::ensure!(
+                def.command.is_none()
+                    && def.url.is_empty()
+                    && def.args.is_empty()
+                    && def.env.is_empty()
+                    && def.headers.is_empty()
+                    && def.auth.is_none()
+                    && def.name != BUILTIN_SERVER_NAME,
+                "sandbox MCP definition must select only an approved slot"
+            );
+            let (_, spawn) = self
+                .capabilities
+                .as_ref()
+                .context("sandbox MCP spawn capability unavailable")?;
+            let socket = spawn.sandbox(slot).await?;
+            capsem_foundation::unix::fd::set_nonblocking(std::os::fd::AsFd::as_fd(&socket), true)?;
+            let (reader, writer) = tokio::net::UnixStream::from_std(socket)?.into_split();
+            let transport = rmcp::transport::async_rw::AsyncRwTransport::<RoleClient, _, _>::new(reader, writer)
+                .with_max_line_length(capsem_proto::MCP_JSON_RPC_MAX_BYTES);
+            return tokio::time::timeout(
+                capsem_mcp_transport::native_worker::STARTUP_TIMEOUT,
+                ().serve(transport),
+            )
+            .await
+            .context("sandbox MCP handshake deadline")?
+            .context("initialize sandbox MCP peer");
+        }
         if let Some((_, spawn)) = &self.capabilities {
             if def.name != capsem_proto::mcp_contracts::BUILTIN_SERVER_NAME {
                 bail!("stdio MCP server has no approved native spawn capability");

@@ -159,7 +159,7 @@ fn capability(
     (
         sender,
         receiver,
-        tokio::spawn(serve(coordinator, factory, policy, authority)),
+        tokio::spawn(serve(coordinator, factory, policy, authority, None)),
     )
 }
 

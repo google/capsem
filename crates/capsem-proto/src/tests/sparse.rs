@@ -88,6 +88,7 @@ fn aggregator_contracts_omit_empty_and_nonzero_defaults() {
         source: "builtin".into(),
         pool_size: None,
         pool_safe_tools: Vec::new(),
+        sandbox_slot: None,
     };
     let encoded = rmp_serde::to_vec_named(&server).unwrap();
     let fields: serde_json::Value = rmp_serde::from_slice(&encoded).unwrap();

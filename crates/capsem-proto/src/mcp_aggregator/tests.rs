@@ -144,6 +144,7 @@ fn request_refresh_roundtrip() {
                 source: "manual".into(),
                 pool_size: None,
                 pool_safe_tools: Vec::new(),
+                sandbox_slot: None,
             }],
         },
     };

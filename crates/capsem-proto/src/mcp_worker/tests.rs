@@ -116,6 +116,7 @@ fn builtin_spawn_has_no_arbitrary_command_or_path_and_fences_reply_ids() {
             request_id: 7,
             peer_index: 0,
         },
+        McpSpawnRecord::Sandbox { request_id: 7, slot: 2 },
         McpSpawnRecord::Granted { request_id: 7 },
         McpSpawnRecord::Denied { request_id: 7 },
         McpSpawnRecord::Adopted { request_id: 7 },
@@ -141,4 +142,12 @@ fn builtin_spawn_has_no_arbitrary_command_or_path_and_fences_reply_ids() {
     let mut zero = granted;
     zero[4..12].fill(0);
     assert!(decode_spawn_record(&zero).is_err());
+    let mut sandbox = encode_spawn_record(McpSpawnRecord::Sandbox { request_id: 8, slot: 0 }).unwrap();
+    sandbox[12..].copy_from_slice(&(crate::ENVIRONMENT_MAX_MCP_SERVERS as u32).to_be_bytes());
+    assert!(decode_spawn_record(&sandbox).is_err());
+    assert!(encode_spawn_record(McpSpawnRecord::Sandbox {
+        request_id: 8,
+        slot: crate::ENVIRONMENT_MAX_MCP_SERVERS as u32,
+    })
+    .is_err());
 }

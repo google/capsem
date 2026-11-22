@@ -113,13 +113,17 @@ pub fn decode_worker_record(frame: &[u8; MCP_WORKER_FRAME_SIZE]) -> Result<McpWo
     }
 }
 
-/// The worker can request a peer of the parent's own builtin definition.
+/// The worker can request a builtin peer or a slot in its owner's boot snapshot.
 /// No worker-supplied command, environment, path or arbitrary argv crosses this API.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum McpSpawnRecord {
     Builtin {
         request_id: u64,
         peer_index: u32,
+    },
+    Sandbox {
+        request_id: u64,
+        slot: u32,
     },
     Granted {
         request_id: u64,
@@ -143,6 +147,10 @@ impl McpSpawnRecord {
 pub fn encode_spawn_record(record: McpSpawnRecord) -> Result<[u8; MCP_SPAWN_FRAME_SIZE]> {
     let (kind, request_id, peer_index) = match record {
         McpSpawnRecord::Builtin { request_id, peer_index } => (1, request_id, peer_index),
+        McpSpawnRecord::Sandbox { request_id, slot } if (slot as usize) < crate::ENVIRONMENT_MAX_MCP_SERVERS => {
+            (5, request_id, slot)
+        }
+        McpSpawnRecord::Sandbox { .. } => bail!("sandbox MCP slot exceeds limit"),
         McpSpawnRecord::Granted { request_id } => (2, request_id, 0),
         McpSpawnRecord::Denied { request_id } => (3, request_id, 0),
         McpSpawnRecord::Adopted { request_id } => (4, request_id, 0),
@@ -174,6 +182,10 @@ pub fn decode_spawn_record(frame: &[u8; MCP_SPAWN_FRAME_SIZE]) -> Result<McpSpaw
         2 if peer_index == 0 => Ok(McpSpawnRecord::Granted { request_id }),
         3 if peer_index == 0 => Ok(McpSpawnRecord::Denied { request_id }),
         4 if peer_index == 0 => Ok(McpSpawnRecord::Adopted { request_id }),
+        5 if (peer_index as usize) < crate::ENVIRONMENT_MAX_MCP_SERVERS => Ok(McpSpawnRecord::Sandbox {
+            request_id,
+            slot: peer_index,
+        }),
         _ => bail!("invalid MCP spawn kind or reserved fields"),
     }
 }

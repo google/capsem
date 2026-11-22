@@ -6,9 +6,13 @@ use super::*;
 pub fn encode_upstream_grant_request(request: &UpstreamGrantRequest) -> Result<[u8; UPSTREAM_GRANT_FRAME_SIZE]> {
     let mut frame = empty_frame();
     match request {
-        UpstreamGrantRequest::OpenMcpAggregator { request_id } => {
+        UpstreamGrantRequest::OpenMcpAggregator { request_id }
+        | UpstreamGrantRequest::OpenMcpAggregatorWithSandbox { request_id } => {
             require_nonzero("request id", *request_id)?;
-            frame[KIND_OFFSET] = OPEN_MCP_AGGREGATOR;
+            frame[KIND_OFFSET] = match request {
+                UpstreamGrantRequest::OpenMcpAggregatorWithSandbox { .. } => OPEN_MCP_AGGREGATOR_WITH_SANDBOX,
+                _ => OPEN_MCP_AGGREGATOR,
+            };
             put_u64(&mut frame, REQUEST_ID_RANGE, *request_id);
         }
         UpstreamGrantRequest::AttachMcpHttp { request_id, role } => {
@@ -143,14 +147,18 @@ pub fn decode_upstream_grant_request(frame: &[u8; UPSTREAM_GRANT_FRAME_SIZE]) ->
         require_empty_time_fields(frame)?;
     }
     match frame[KIND_OFFSET] {
-        OPEN_MCP_AGGREGATOR => {
+        OPEN_MCP_AGGREGATOR | OPEN_MCP_AGGREGATOR_WITH_SANDBOX => {
             require_nonzero("request id", request_id)?;
             if resource_id != 0 {
                 bail!("MCP spawn handoff carries a resource id");
             }
             require_empty_fields(port, detail, &name)?;
             require_empty_path(&relative_path)?;
-            Ok(UpstreamGrantRequest::OpenMcpAggregator { request_id })
+            if frame[KIND_OFFSET] == OPEN_MCP_AGGREGATOR_WITH_SANDBOX {
+                Ok(UpstreamGrantRequest::OpenMcpAggregatorWithSandbox { request_id })
+            } else {
+                Ok(UpstreamGrantRequest::OpenMcpAggregator { request_id })
+            }
         }
         ATTACH_MCP_HTTP => {
             require_nonzero("request id", request_id)?;

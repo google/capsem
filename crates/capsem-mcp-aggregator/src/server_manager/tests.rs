@@ -37,6 +37,7 @@ fn test_server_def() -> McpServerDef {
         env: HashMap::new(),
         pool_size: None,
         pool_safe_tools: Vec::new(),
+        sandbox_slot: None,
     }
 }
 
@@ -229,6 +230,7 @@ fn local_http_mcp_def(url: String, auth: Option<McpAuthConfig>) -> McpServerDef 
         env: HashMap::new(),
         pool_size: None,
         pool_safe_tools: Vec::new(),
+        sandbox_slot: None,
     };
     assert!(!def.is_stdio());
     def

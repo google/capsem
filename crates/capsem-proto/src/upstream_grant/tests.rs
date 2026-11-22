@@ -54,6 +54,23 @@ fn mcp_aggregator_grant_has_no_worker_selected_process_or_environment_fields() {
 }
 
 #[test]
+fn sandbox_aggregator_grant_carries_one_owner_channel_and_no_launch_data() {
+    let request = UpstreamGrantRequest::OpenMcpAggregatorWithSandbox { request_id: 12 };
+    request_roundtrip(request.clone());
+    assert_eq!(request.expected_descriptor_count(), 1);
+    for offset in [
+        RESOURCE_ID_RANGE.start,
+        PORT_RANGE.start,
+        DETAIL_RANGE.start,
+        PATH_RANGE.start,
+    ] {
+        let mut frame = encode_upstream_grant_request(&request).unwrap();
+        frame[offset] = 1;
+        assert!(decode_upstream_grant_request(&frame).is_err());
+    }
+}
+
+#[test]
 fn mcp_http_handoff_is_typed_and_carries_only_its_connected_channel() {
     for role in [
         crate::mcp_worker::McpHttpRole::Aggregator,

@@ -30,6 +30,7 @@ fn definition() -> McpServerDef {
         enabled: true,
         source: "user".into(),
         command: None,
+        sandbox_slot: None,
         args: Vec::new(),
         env: HashMap::new(),
         pool_size: None,

@@ -153,7 +153,7 @@ impl Drop for SpawnExchange<'_> {
     }
 }
 
-/// Requests only the trusted parent's predefined builtin; never an executable path.
+/// Requests a predefined builtin peer or an approved sandbox slot.
 #[derive(Clone)]
 pub struct McpSpawnClient(Arc<tokio::sync::Mutex<SpawnWire>>);
 
@@ -176,13 +176,27 @@ impl McpSpawnClient {
             (peer_index as usize) < capsem_proto::MCP_BUILTIN_PEERS_PER_SESSION,
             "unapproved MCP peer index"
         );
+        self.spawn(|request_id| McpSpawnRecord::Builtin { request_id, peer_index })
+            .await
+    }
+
+    pub async fn sandbox(&self, slot: u32) -> Result<UnixStream> {
+        ensure!(
+            (slot as usize) < capsem_proto::ENVIRONMENT_MAX_MCP_SERVERS,
+            "invalid sandbox MCP slot"
+        );
+        self.spawn(|request_id| McpSpawnRecord::Sandbox { request_id, slot })
+            .await
+    }
+
+    async fn spawn(&self, request: impl FnOnce(u64) -> McpSpawnRecord) -> Result<UnixStream> {
         let mut wire = tokio::time::timeout(STARTUP_TIMEOUT, self.0.lock())
             .await
             .context("MCP spawn queue deadline")?;
         ensure!(!wire.failed, "MCP spawn capability is closed");
         wire.failed = true;
         let exchange = SpawnExchange(&mut wire);
-        let result = tokio::time::timeout(STARTUP_TIMEOUT, request_builtin(exchange.0, peer_index))
+        let result = tokio::time::timeout(STARTUP_TIMEOUT, request_spawn(exchange.0, request))
             .await
             .context("MCP spawn capability deadline")??;
         exchange.0.failed = false;
@@ -190,10 +204,13 @@ impl McpSpawnClient {
     }
 }
 
-async fn request_builtin(wire: &mut SpawnWire, peer_index: u32) -> Result<Option<UnixStream>> {
+async fn request_spawn(
+    wire: &mut SpawnWire,
+    request: impl FnOnce(u64) -> McpSpawnRecord,
+) -> Result<Option<UnixStream>> {
     let request_id = wire.next;
     wire.next = request_id.checked_add(1).context("MCP spawn ids exhausted")?;
-    let request = encode_spawn_record(McpSpawnRecord::Builtin { request_id, peer_index })?;
+    let request = encode_spawn_record(request(request_id))?;
     wire.sender.send(&request, &[]).await?;
     let frame = wire.receiver.recv().await?;
     let record = decode_spawn_record(&frame.bytes)?;

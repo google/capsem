@@ -2,7 +2,7 @@
 use super::{mcp_http, mcp_spawn, BrokerPolicy, WorkerGrant};
 use crate::instance::WorkerAuthority;
 use anyhow::{Context, Result};
-use capsem_mcp_transport::native_worker::{grant_worker, STARTUP_TIMEOUT};
+use capsem_mcp_transport::native_worker::{grant_worker, McpSpawnClient, STARTUP_TIMEOUT};
 use capsem_proto::mcp_worker::{McpHttpRole, McpWorkerBootstrap};
 use std::os::fd::{AsFd, OwnedFd};
 use std::os::unix::net::UnixStream;
@@ -55,7 +55,9 @@ impl Prepared {
         self,
         policy: watch::Receiver<Arc<BrokerPolicy>>,
         generation: WorkerGrant,
+        sandbox: Option<UnixStream>,
     ) -> Result<(Supervisor, UnixStream, UnixStream, UnixStream)> {
+        let sandbox = sandbox.map(McpSpawnClient::new).transpose()?;
         let (control, child_control) = UnixStream::pair()?;
         let (http, child_http) = UnixStream::pair()?;
         let (spawn, child_spawn) = UnixStream::pair()?;
@@ -78,7 +80,13 @@ impl Prepared {
             policy.clone(),
             scope.grant(),
         ));
-        let spawn = tokio::spawn(mcp_spawn::serve(spawn, self.builtin, policy.clone(), scope.grant()));
+        let spawn = tokio::spawn(mcp_spawn::serve(
+            spawn,
+            self.builtin,
+            policy.clone(),
+            scope.grant(),
+            sandbox,
+        ));
         Ok((
             Supervisor {
                 child,
@@ -98,8 +106,9 @@ impl Prepared {
         self,
         policy: watch::Receiver<Arc<BrokerPolicy>>,
         generation: WorkerGrant,
+        sandbox: Option<UnixStream>,
     ) -> (Result<UnixStream>, Option<Supervisor>) {
-        let (supervisor, control, http, spawn) = match self.launch(policy, generation) {
+        let (supervisor, control, http, spawn) = match self.launch(policy, generation, sandbox) {
             Ok(prepared) => prepared,
             Err(error) => return (Err(error), None),
         };

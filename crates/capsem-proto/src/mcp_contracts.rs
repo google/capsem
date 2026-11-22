@@ -33,6 +33,7 @@ pub fn is_valid_mcp_request_id(id: &serde_json::Value) -> bool {
 /// A host-side MCP server definition (from user config or auto-detected).
 ///
 /// Transport is determined by which fields are set:
+/// - `sandbox_slot` is Some => stdio through the VM owner's spawn capability
 /// - `command` is Some => stdio transport (spawn subprocess)
 /// - `url` is non-empty => HTTP transport
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,6 +45,9 @@ pub struct McpServerDef {
     /// Binary path for stdio-transport servers (None for HTTP servers).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
+    /// Slot in the VM owner's boot snapshot. No executable or arguments cross the worker wire.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sandbox_slot: Option<u32>,
     /// Command-line arguments for stdio-transport servers.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub args: Vec<String>,
@@ -80,7 +84,7 @@ pub struct McpServerDef {
 impl McpServerDef {
     /// True if this server uses stdio transport (subprocess).
     pub fn is_stdio(&self) -> bool {
-        self.command.is_some()
+        self.command.is_some() || self.sandbox_slot.is_some()
     }
 }
 

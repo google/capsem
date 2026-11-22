@@ -349,7 +349,8 @@ async fn run(pending: PendingBroker, authority: WorkerGrant) -> Result<BrokerCom
                     )
                     .await?;
                 }
-                UpstreamGrantRequest::OpenMcpAggregator { request_id } => {
+                UpstreamGrantRequest::OpenMcpAggregator { request_id }
+                | UpstreamGrantRequest::OpenMcpAggregatorWithSandbox { request_id } => {
                     let Some(session) = session_dir.clone() else {
                         send_denied(&responses, request_id, UpstreamGrantDenial::NotConfigured).await?;
                         continue;
@@ -358,6 +359,7 @@ async fn run(pending: PendingBroker, authority: WorkerGrant) -> Result<BrokerCom
                         send_denied(&responses, request_id, UpstreamGrantDenial::InvalidResource).await?;
                         continue;
                     }
+                    let sandbox = frame.fds.into_iter().next().map(UnixStream::from);
                     let capacity = mcp_capacity.clone();
                     let prepared =
                         tokio::task::spawn_blocking(move || mcp_native::Prepared::prepare(&session, capacity))
@@ -365,7 +367,7 @@ async fn run(pending: PendingBroker, authority: WorkerGrant) -> Result<BrokerCom
                             .map_err(|error| error.to_string())?
                             .map_err(|error| format!("{error:#}"))?;
                     mcp_aggregator_started = true;
-                    let (channel, supervisor) = prepared.open(mcp_policy.clone(), authority.clone()).await;
+                    let (channel, supervisor) = prepared.open(mcp_policy.clone(), authority.clone(), sandbox).await;
                     if let Some(supervisor) = supervisor {
                         mcp_workers.spawn(supervisor.run(channel.is_err()));
                     }

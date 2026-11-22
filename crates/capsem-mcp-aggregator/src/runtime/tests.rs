@@ -44,6 +44,7 @@ fn http_def(name: &str) -> McpServerDef {
         source: "test".to_string(),
         pool_size: None,
         pool_safe_tools: Vec::new(),
+        sandbox_slot: None,
     }
 }
 

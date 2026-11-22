@@ -3,9 +3,19 @@ use super::*;
 
 impl UpstreamGrantClient {
     pub async fn open_mcp_aggregator(&self) -> Result<UnixStream> {
+        self.open_mcp(None).await
+    }
+
+    /// Attach the connected spawn endpoint owned by this VM generation.
+    pub async fn open_mcp_aggregator_with_sandbox(&self, sandbox: OwnedFd) -> Result<UnixStream> {
+        fd::validate_connected_stream(sandbox.as_fd())?;
+        self.open_mcp(Some(sandbox)).await
+    }
+
+    async fn open_mcp(&self, sandbox: Option<OwnedFd>) -> Result<UnixStream> {
         let (reply, result) = oneshot::channel();
         self.commands
-            .send(Command::OpenMcpAggregator { reply })
+            .send(Command::OpenMcpAggregator { sandbox, reply })
             .await
             .map_err(|_| anyhow!("upstream grant channel is closed"))?;
         result
@@ -36,10 +46,20 @@ pub(super) async fn open_aggregator(
     sender: &WireSender,
     receiver: &WireReceiver,
     request_id: u64,
+    sandbox: Option<OwnedFd>,
 ) -> Result<Result<UnixStream, String>, String> {
-    let bytes = encode_upstream_grant_request(&UpstreamGrantRequest::OpenMcpAggregator { request_id })
-        .map_err(|error| format!("encode MCP aggregator grant: {error:#}"))?;
-    tokio::time::timeout(WIRE_TIMEOUT, sender.send(&bytes, &[]))
+    let request = if sandbox.is_some() {
+        UpstreamGrantRequest::OpenMcpAggregatorWithSandbox { request_id }
+    } else {
+        UpstreamGrantRequest::OpenMcpAggregator { request_id }
+    };
+    let descriptors = sandbox
+        .iter()
+        .map(|descriptor| descriptor.as_raw_fd())
+        .collect::<Vec<_>>();
+    let bytes =
+        encode_upstream_grant_request(&request).map_err(|error| format!("encode MCP aggregator grant: {error:#}"))?;
+    tokio::time::timeout(WIRE_TIMEOUT, sender.send(&bytes, &descriptors))
         .await
         .map_err(|_| "send MCP aggregator grant timed out".to_string())?
         .map_err(|error| format!("send MCP aggregator grant: {error}"))?;

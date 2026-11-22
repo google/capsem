@@ -6,7 +6,7 @@ use capsem_foundation::unix::{
     fd,
     router_channel::{DescriptorReceiver, DescriptorSender},
 };
-use capsem_mcp_transport::native_worker::{grant_worker, STARTUP_TIMEOUT};
+use capsem_mcp_transport::native_worker::{grant_worker, McpSpawnClient, STARTUP_TIMEOUT};
 use capsem_proto::mcp_worker::{
     decode_spawn_record, encode_spawn_record, McpHttpRole, McpSpawnRecord, McpWorkerBootstrap, MCP_SPAWN_FRAME_SIZE,
     MCP_SPAWN_MAX_FDS,
@@ -108,10 +108,11 @@ pub(super) async fn serve(
     factory: Factory,
     policy: watch::Receiver<Arc<BrokerPolicy>>,
     authority: WorkerGrant,
+    sandbox: Option<McpSpawnClient>,
 ) -> Result<(), String> {
     let mut peers: Vec<Option<Peer>> = (0..capsem_proto::MCP_BUILTIN_PEERS_PER_SESSION).map(|_| None).collect();
     let mut failures = Vec::new();
-    let result = run(socket, &factory, policy, authority, &mut peers, &mut failures).await;
+    let result = run(socket, &factory, policy, authority, sandbox, &mut peers, &mut failures).await;
     while let Some(peer) = peers.pop() {
         if let Some(peer) = peer {
             if let Err(error) = reap(peer).await {
@@ -135,6 +136,7 @@ async fn run(
     factory: &Factory,
     policy: watch::Receiver<Arc<BrokerPolicy>>,
     authority: WorkerGrant,
+    sandbox: Option<McpSpawnClient>,
     peers: &mut [Option<Peer>],
     failures: &mut Vec<String>,
 ) -> Result<()> {
@@ -152,11 +154,44 @@ async fn run(
             frame = receiver.recv() => frame?,
         };
         ensure!(frame.fds.is_empty(), "MCP spawn request carried descriptors");
-        let McpSpawnRecord::Builtin { request_id, peer_index } = decode_spawn_record(&frame.bytes)? else {
-            anyhow::bail!("MCP spawn capability received a response");
+        let request = decode_spawn_record(&frame.bytes)?;
+        let request_id = match request {
+            McpSpawnRecord::Builtin { request_id, .. } | McpSpawnRecord::Sandbox { request_id, .. } => request_id,
+            _ => anyhow::bail!("MCP spawn capability received a response"),
         };
         ensure!(request_id > previous_request, "MCP spawn request identity replayed");
         previous_request = request_id;
+        let peer_index = match request {
+            McpSpawnRecord::Builtin { peer_index, .. } => peer_index,
+            McpSpawnRecord::Sandbox { slot, .. } => {
+                let channel = if let Some(owner) = &sandbox {
+                    tokio::select! {
+                        biased;
+                        () = authority.revoked() => return Ok(()),
+                        () = &mut closed => return Ok(()),
+                        // Leave time to return a correlated denial before the
+                        // worker's outer exchange deadline closes its channel.
+                        result = tokio::time::timeout(STARTUP_TIMEOUT / 2, owner.sandbox(slot)) =>
+                            result.ok().and_then(Result::ok),
+                    }
+                } else {
+                    None
+                };
+                let response = if channel.is_some() {
+                    McpSpawnRecord::Granted { request_id }
+                } else {
+                    McpSpawnRecord::Denied { request_id }
+                };
+                tokio::select! {
+                    biased;
+                    () = authority.revoked() => return Ok(()),
+                    () = &mut closed => return Ok(()),
+                    result = respond(&sender, &receiver, response, channel.as_ref()) => result?,
+                }
+                continue;
+            }
+            _ => unreachable!("request kind already validated"),
+        };
         let Some(slot) = peers.get_mut(peer_index as usize) else {
             respond(&sender, &receiver, McpSpawnRecord::Denied { request_id }, None).await?;
             continue;
