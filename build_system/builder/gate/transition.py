@@ -102,18 +102,20 @@ class TransitionGate:
         self._config = gate_config.for_root(runner.root)
         modules = self._config.modules
         self._settings = self._config.install
-        self._before = self._config.path(modules.transition.before_dir)
-        self._inputs = self._config.path(modules.rehearsal_inputs_dir)
+        # InstallContainer mounts inputs at their resolved paths, including
+        # artifacts shared through a worktree's cache symlink.
+        self._before = self._config.path(modules.transition.before_dir).resolve()
+        self._inputs = self._config.path(modules.rehearsal_inputs_dir).resolve()
         self._package = self._config.path(
             modules.rehearsal_package.format(
                 version=workspace_version(self._config.root), arch=self._config.host_arch().dpkg
             )
-        )
+        ).resolve()
         self._after = self._config.path(
             modules.rehearsal_after_manifest.format(channel=modules.rehearsal_channel)
-        )
+        ).resolve()
         self._content = RuntimeContent.staged(
-            self._config, self._config.path(modules.rehearsal_content_root)
+            self._config, self._config.path(modules.rehearsal_content_root).resolve()
         )
         # The candidate's own tools, as the rehearsal and the release lane use
         # them: the glow-up authors channels with them before anything is

@@ -10,6 +10,7 @@ script and inputs, in the disposable install container.
 from __future__ import annotations
 
 import json
+import shlex
 from pathlib import Path
 
 import pytest
@@ -135,3 +136,38 @@ def test_a_first_release_has_nothing_to_update_from(monkeypatch, tmp_path) -> No
     gate._container.boots_a_guest = True
     gate.run()
     assert shells == []
+
+
+def test_glowup_uses_the_paths_mounted_from_a_shared_worktree_cache(monkeypatch, tmp_path) -> None:
+    checkout = tmp_path / "worktree"
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    (checkout / "cache").mkdir(parents=True)
+    (checkout / "cache" / "target").symlink_to(shared, target_is_directory=True)
+    (checkout / "Cargo.toml").write_text('[workspace.package]\nversion = "0.7.3"\n')
+    config = CONFIG.model_copy(update={"root": checkout})
+    monkeypatch.setattr(transition.gate_config, "for_root", lambda _root: config)
+    monkeypatch.setattr(transition.referenceimage, "inputs", lambda _config: ())
+    monkeypatch.setattr(transition.referenceimage, "environment", lambda _config: {})
+    gate, shells = _gate(monkeypatch)
+    baseline = next(path for path in gate._container._inputs if path.name == "public-before")
+    package = baseline / "packages" / f"Capsem_0.7.2_{config.host_arch().dpkg}.deb"
+    package.parent.mkdir(parents=True)
+    package.touch()
+
+    before_package = gate._before_package()
+    assert before_package is not None
+    gate._glowup(before_package, "/src/evidence")
+
+    ((command, env),) = shells
+    arguments = shlex.split(command)
+    mounts = gate._container._inputs
+    pairing = config.modules.release_pairing
+    assert Path(env[pairing.before_manifest]) == baseline / "runtime" / "manifest.json"
+    assert Path(env[pairing.before_release_inputs]) == baseline / "runtime"
+    assert Path(env[pairing.after_manifest]).parent in mounts
+    assert Path(env[pairing.after_release_inputs]) in mounts
+    assert Path(arguments[arguments.index("--before-package") + 1]) == package
+    assert Path(arguments[arguments.index("--input-deb") + 1]).parent in mounts
+    assets = Path(arguments[arguments.index("--assets-dir") + 1])
+    assert assets == gate._content.root.resolve() / gate._content.assets_path
