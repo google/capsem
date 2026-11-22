@@ -47,6 +47,7 @@ def _mcp_call(messages, timeout=15):
         capture_output=True,
         text=True,
         timeout=timeout,
+        check=False,
     )
     assert proc.returncode == 0, (
         f"capsem-mcp-server exited {proc.returncode}: {proc.stderr}"
@@ -70,6 +71,7 @@ def _mcp_raw(input_text, timeout=15):
         capture_output=True,
         text=True,
         timeout=timeout,
+        check=False,
     )
     assert proc.returncode == 0, (
         f"capsem-mcp-server exited {proc.returncode}: {proc.stderr}"
@@ -212,10 +214,17 @@ def test_mcp_oversized_request_returns_local_error_and_recovers():
             },
         },
     ], timeout=20)
-    by_id = {r["id"]: r for r in responses if "id" in r}
-    assert by_id["doctor-too-big"]["error"]["code"] == -32001
-    assert "frame encode failed" in by_id["doctor-too-big"]["error"]["message"]
-    assert by_id["doctor-after-too-big"]["result"]["serverInfo"]["name"] == (
+    (refusal,) = [response for response in responses if "id" not in response]
+    assert refusal == {
+        "jsonrpc": "2.0",
+        "error": {
+            "code": -32600,
+            "message": "MCP request exceeds the transport limit; request was not forwarded",
+        },
+    }
+    (recovered,) = [response for response in responses if "id" in response]
+    assert recovered["id"] == "doctor-after-too-big"
+    assert recovered["result"]["serverInfo"]["name"] == (
         "capsem-mcp-mitm-endpoint"
     )
 
