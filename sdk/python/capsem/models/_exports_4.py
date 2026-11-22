@@ -1,5 +1,7 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .rule_catalog_definition import RuleCatalogDefinition
+from .rule_catalog_definition_access import RuleCatalogDefinitionAccess
 from .rule_catalog_definition_detection import RuleCatalogDefinitionDetection
 from .rule_catalog_detail_response import RuleCatalogDetailResponse
 from .rule_catalog_list_response import RuleCatalogListResponse
@@ -78,10 +80,10 @@ from .vm_ai_info import VmAiInfo
 from .vm_files_info import VmFilesInfo
 from .vm_lifecycle_intent import VmLifecycleIntent
 from .vm_lifecycle_selection import VmLifecycleSelection
-from .vm_lifecycle_state import VmLifecycleState
-from .vm_mcp_server import VmMcpServer
 
 __all__ = [
+    'RuleCatalogDefinition',
+    'RuleCatalogDefinitionAccess',
     'RuleCatalogDefinitionDetection',
     'RuleCatalogDetailResponse',
     'RuleCatalogListResponse',
@@ -160,6 +162,4 @@ __all__ = [
     'VmFilesInfo',
     'VmLifecycleIntent',
     'VmLifecycleSelection',
-    'VmLifecycleState',
-    'VmMcpServer',
 ]

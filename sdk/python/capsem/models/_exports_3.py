@@ -100,6 +100,7 @@ from .raw_content import RawContent
 from .raw_content_kind import RawContentKind
 from .raw_content_reason import RawContentReason
 from .registry_access import RegistryAccess
+from .request_application_composition import RequestApplicationComposition
 from .request_application_state import RequestApplicationState
 from .request_decision import RequestDecision
 from .request_decision_details import RequestDecisionDetails
@@ -110,14 +111,13 @@ from .request_resolve_request import RequestResolveRequest
 from .request_review_availability import RequestReviewAvailability
 from .request_state import RequestState
 from .request_summary import RequestSummary
+from .request_target_application import RequestTargetApplication
 from .resource_summary import ResourceSummary
 from .restart_authentication import RestartAuthentication
 from .restart_response import RestartResponse
 from .restart_status import RestartStatus
 from .revoke_session_grant_response import RevokeSessionGrantResponse
 from .revoked_credential_authority import RevokedCredentialAuthority
-from .rule_catalog_definition import RuleCatalogDefinition
-from .rule_catalog_definition_access import RuleCatalogDefinitionAccess
 
 __all__ = [
     'McpPermissionAction',
@@ -182,6 +182,7 @@ __all__ = [
     'RawContentKind',
     'RawContentReason',
     'RegistryAccess',
+    'RequestApplicationComposition',
     'RequestApplicationState',
     'RequestDecision',
     'RequestDecisionDetails',
@@ -192,12 +193,11 @@ __all__ = [
     'RequestReviewAvailability',
     'RequestState',
     'RequestSummary',
+    'RequestTargetApplication',
     'ResourceSummary',
     'RestartAuthentication',
     'RestartResponse',
     'RestartStatus',
     'RevokeSessionGrantResponse',
     'RevokedCredentialAuthority',
-    'RuleCatalogDefinition',
-    'RuleCatalogDefinitionAccess',
 ]

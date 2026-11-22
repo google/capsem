@@ -12918,6 +12918,34 @@
           }
         }
       },
+      "RequestApplicationComposition": {
+        "type": "object",
+        "required": [
+          "boot",
+          "live_policy",
+          "desired",
+          "corporate_policy_id",
+          "pending_restart"
+        ],
+        "properties": {
+          "boot": {
+            "$ref": "#/components/schemas/EnvironmentRevisionReference"
+          },
+          "corporate_policy_id": {
+            "type": "string"
+          },
+          "desired": {
+            "$ref": "#/components/schemas/EnvironmentRevisionReference"
+          },
+          "live_policy": {
+            "$ref": "#/components/schemas/EnvironmentRevisionReference"
+          },
+          "pending_restart": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
       "RequestApplicationState": {
         "type": "string",
         "enum": [
@@ -12965,6 +12993,13 @@
           "targets"
         ],
         "properties": {
+          "applications": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RequestTargetApplication"
+            },
+            "description": "Exact selected generations and their individual application outcomes."
+          },
           "base": {
             "oneOf": [
               {
@@ -13167,6 +13202,46 @@
           },
           "timestamp_unix_ms": {
             "type": "integer",
+            "format": "int64"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RequestTargetApplication": {
+        "type": "object",
+        "required": [
+          "target",
+          "state"
+        ],
+        "properties": {
+          "composition": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RequestApplicationComposition",
+                "description": "Absent until the ledger records an application for this generation."
+              }
+            ]
+          },
+          "failure_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/RequestApplicationState"
+          },
+          "target": {
+            "$ref": "#/components/schemas/EnvironmentSandboxTarget"
+          },
+          "timestamp_unix_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
             "format": "int64"
           }
         },

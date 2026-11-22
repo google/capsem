@@ -6,8 +6,10 @@ import {EnvironmentReviewContentSchema} from "./EnvironmentReviewContent.js";
 import {EnvironmentSandboxTargetSchema} from "./EnvironmentSandboxTarget.js";
 import {RequestDecisionDetailsSchema} from "./RequestDecisionDetails.js";
 import {RequestSummarySchema} from "./RequestSummary.js";
+import {RequestTargetApplicationSchema} from "./RequestTargetApplication.js";
 
 export const RequestDetailResponseSchema: z.ZodType<RequestDetailResponse> = z.strictObject({
+  "applications": z.array(z.lazy(() => RequestTargetApplicationSchema)).exactOptional(),
   "base": z.union([z.null(), z.lazy(() => EnvironmentReviewContentSchema)]).exactOptional(),
   "disposition": z.union([z.null(), z.lazy(() => RequestDecisionDetailsSchema)]).exactOptional(),
   "observed_revision": z.string(),

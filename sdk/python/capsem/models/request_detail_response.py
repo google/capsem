@@ -9,10 +9,13 @@ from .environment_sandbox_target import EnvironmentSandboxTarget
 from .model_base import Model
 from .request_decision_details import RequestDecisionDetails
 from .request_summary import RequestSummary
+from .request_target_application import RequestTargetApplication
 
 
 class RequestDetailResponse(Model):
+    nonnullable_optional = frozenset(['applications'])
     model_config = ConfigDict(strict=True, populate_by_name=True, extra="forbid")
+    applications: list[RequestTargetApplication] | None = None
     base: EnvironmentReviewContent | None = None
     disposition: RequestDecisionDetails | None = None
     observed_revision: StrictStr

@@ -370,4 +370,5 @@ async fn abandoned_pending_creation_expires_without_approval_or_source_refresh()
     );
 }
 
+mod application_receipts;
 mod changes;

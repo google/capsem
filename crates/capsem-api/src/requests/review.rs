@@ -86,6 +86,27 @@ pub struct RequestDecisionDetails {
     pub timestamp_unix_ms: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RequestApplicationComposition {
+    pub boot: EnvironmentRevisionReference,
+    pub live_policy: EnvironmentRevisionReference,
+    pub desired: EnvironmentRevisionReference,
+    pub corporate_policy_id: String,
+    pub pending_restart: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RequestTargetApplication {
+    pub target: EnvironmentSandboxTarget,
+    pub state: RequestApplicationState,
+    /// Absent until the ledger records an application for this generation.
+    pub composition: Option<RequestApplicationComposition>,
+    pub timestamp_unix_ms: Option<i64>,
+    pub failure_reason: Option<String>,
+}
+
 impl std::fmt::Debug for RequestDecisionDetails {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RequestDecisionDetails")
@@ -104,6 +125,9 @@ pub struct RequestDetailResponse {
     pub base: Option<EnvironmentReviewContent>,
     pub proposed: EnvironmentReviewContent,
     pub targets: Vec<EnvironmentSandboxTarget>,
+    /// Exact selected generations and their individual application outcomes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub applications: Vec<RequestTargetApplication>,
     /// Whether the reviewed change would need a restart on the requesting
     /// VM's current boot revision. Absent when the live preview is unavailable.
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -4,13 +4,14 @@ use super::{
     EnvironmentMutationError as Error, EnvironmentRevisionParent, EnvironmentRevisions,
 };
 use capsem_api::{
-    environments::{EnvironmentRevisionReference, EnvironmentSandboxTarget},
+    environments::{EnvironmentMutationResponse, EnvironmentRevisionReference, EnvironmentSandboxTarget},
     requests::*,
 };
 use capsem_logger::{
     db::{EnvironmentHistoryPayload, EnvironmentRequestQuery, EnvironmentRequestRecord},
     events::environment::request::{EnvironmentRequestKind, EnvironmentRequestPayload, EnvironmentRequestTarget},
 };
+mod applications;
 
 impl EnvironmentRevisions {
     pub async fn list_requests(&self, query: RequestListQuery) -> Result<RequestListResponse, Error> {
@@ -35,11 +36,14 @@ impl EnvironmentRevisions {
         let next_cursor = (records.len() == usize::from(limit))
             .then(|| records.last().map(|record| record.cursor))
             .flatten();
-        let requests = records
-            .into_iter()
-            .map(|record| summary(record, at))
-            .filter(|item| query.pending_only != Some(true) || item.decision == RequestState::Pending)
-            .collect();
+        let mut requests = Vec::with_capacity(records.len());
+        for record in records {
+            let observed = self.mutation_view(record.clone()).await?;
+            let item = summary(record, at, observed);
+            if query.pending_only != Some(true) || item.decision == RequestState::Pending {
+                requests.push(item);
+            }
+        }
         Ok(RequestListResponse { requests, next_cursor })
     }
 
@@ -64,9 +68,16 @@ impl EnvironmentRevisions {
                 timestamp_unix_ms: decision.timestamp_unix_ms,
             })
         };
-        let summary = summary(history.record, now()?);
-        let base = match &summary.base {
-            Some(base) => Some(self.revision_review(base).await?),
+        let mut observed = view(history.record.clone());
+        let mut applications = Vec::new();
+        let base = match &history.record.base_revision_id {
+            Some(revision_id) => Some(
+                self.revision_review(&EnvironmentRevisionReference {
+                    environment_id: history.record.environment_id.clone(),
+                    revision_id: revision_id.clone(),
+                })
+                .await?,
+            ),
             None => None,
         };
         let (availability, payload, purged_variables) = content(history.payload);
@@ -90,18 +101,21 @@ impl EnvironmentRevisions {
                     revision,
                     targets: intended,
                 } => {
+                    applications = self.apply_outcomes(&observed, &intended).await?;
+                    observed.application = applications::summary_state(&applications);
                     proposed = self.revision_review(&reference(revision)).await?;
                     targets = intended.into_iter().map(target).collect();
                 }
             }
         }
         Ok(RequestDetailResponse {
-            summary,
+            summary: summary(history.record, now()?, observed),
             observed_revision,
             disposition,
             base,
             proposed,
             targets,
+            applications,
             restart_required: None,
         })
     }
@@ -130,8 +144,7 @@ impl EnvironmentRevisions {
     }
 }
 
-fn summary(record: EnvironmentRequestRecord, at: i64) -> RequestSummary {
-    let observed = view(record.clone());
+fn summary(record: EnvironmentRequestRecord, at: i64, observed: EnvironmentMutationResponse) -> RequestSummary {
     let kind = match record.kind {
         EnvironmentRequestKind::Change => RequestKind::EnvironmentChange,
         EnvironmentRequestKind::Archive => RequestKind::EnvironmentArchive,

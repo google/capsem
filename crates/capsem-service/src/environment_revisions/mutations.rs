@@ -129,7 +129,7 @@ impl EnvironmentMutationCoordinator {
     }
 
     pub async fn request_status(&self, id: String) -> Result<EnvironmentMutationResponse, EnvironmentMutationError> {
-        self.read_request(id).await.map(view)
+        self.revisions.mutation_view(self.read_request(id).await?).await
     }
 
     /// Dropping the HTTP response or this job cannot cancel accepted work.
@@ -624,7 +624,7 @@ impl EnvironmentMutationCoordinator {
         }
         // Pending, interrupted or stale requests remain visible. Reconciliation
         // never casts another vote, creates a revision, or retries application.
-        Ok(view(record))
+        self.revisions.mutation_view(record).await
     }
 
     async fn read_request(&self, request_id: String) -> Result<EnvironmentRequestRecord, EnvironmentMutationError> {
@@ -704,7 +704,9 @@ pub(super) fn view(record: EnvironmentRequestRecord) -> EnvironmentMutationRespo
             Some((Application::Applying, _)) => RequestApplicationState::Applying,
             Some((Application::Applied, false)) => RequestApplicationState::Applied,
             Some((Application::Failed, _)) => RequestApplicationState::Failed,
-            None if result.is_some() && record.requester.is_none() => RequestApplicationState::Applied,
+            None if result.is_some() && record.requester.is_none() && record.kind != EnvironmentRequestKind::Apply => {
+                RequestApplicationState::Applied
+            }
             _ => RequestApplicationState::Pending,
         },
         result,
