@@ -249,14 +249,9 @@ pub(super) async fn read_manifest_source(source: &str) -> Result<Vec<u8>> {
             if !has_scheme_authority_prefix(source, url.scheme()) {
                 anyhow::bail!("--manifest must use https://, http://, or file:// URLs, got {source}");
             }
-            release_http_get_bytes(
-                url.clone(),
-                Some("application/json"),
-                source,
-                Trust::ManifestAuthority,
-            )
-            .await
-            .with_context(|| format!("read manifest body from {source}"))
+            release_http_get_bytes(url.clone(), Some("application/json"), source, Trust::ManifestAuthority)
+                .await
+                .with_context(|| format!("read manifest body from {source}"))
         }
         scheme => anyhow::bail!("unsupported --manifest URL scheme {scheme}: use https://, http://, or file://"),
     }

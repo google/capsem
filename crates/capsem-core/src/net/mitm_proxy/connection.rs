@@ -142,10 +142,7 @@ where
 }
 
 /// Returns the domain, or (domain, decision, reason); TelemetryHook records requests.
-async fn handle_inner(
-    vsock_fd: OwnedFd,
-    config: &Arc<MitmProxyConfig>,
-) -> Result<String, (String, Decision, String)> {
+async fn handle_inner(vsock_fd: OwnedFd, config: &Arc<MitmProxyConfig>) -> Result<String, (String, Decision, String)> {
     let std_fd = std::fs::File::from(vsock_fd);
     capsem_foundation::unix::fd::set_nonblocking(std_fd.as_fd(), true)
         .map_err(|e| (String::new(), Decision::Error, format!("set nonblocking: {e}")))?;
