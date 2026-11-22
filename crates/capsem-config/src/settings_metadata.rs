@@ -158,7 +158,7 @@ fn collect_settings(
     }
 }
 
-pub(super) const DEFAULTS_JSON: &str = include_str!("../../../config/settings/ui-metadata.generated.json");
+pub(super) const DEFAULTS_JSON: &str = include_str!("../ui-metadata.generated.json");
 
 /// Returns setting definitions parsed from generated UI metadata.
 pub fn setting_definitions() -> Vec<SettingDef> {
