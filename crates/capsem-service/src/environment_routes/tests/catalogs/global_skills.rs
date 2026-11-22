@@ -114,3 +114,56 @@ async fn global_skills_follow_the_corporate_source_and_never_fall_back() {
         .iter()
         .all(|path| !path.starts_with("team/skills/")));
 }
+
+#[tokio::test]
+async fn catalog_review_precondition_refuses_changed_bytes_and_reconciles_the_same_intent() {
+    let fx = Fixture::new().await;
+    let kind = CatalogKind::Skills;
+    let original = document(kind, false);
+    let digest = fx.registry.publish(kind, original.clone());
+    let app = crate::router_runtime::build_service_router(fx.state.clone());
+    let intent = json!({"request_id": id(389), "reason": "review exact skill", "specification": {
+        "name": "exact-catalog-review", "skills": {"selected": [{
+            "id": "review", "version": "1.0.0", "expected_catalog": {
+                "reference": fx.registry.reference(kind), "digest": digest
+            }
+        }]}
+    }});
+    let mut changed = original.clone();
+    changed["entries"][0]["metadata"]["name"] = "Replaced review".into();
+    assert_ne!(fx.registry.publish(kind, changed), digest);
+    let (status, body) = route_request(app.clone(), Method::POST, "/environments/create", Some(intent.clone())).await;
+    assert_eq!(status, StatusCode::PRECONDITION_FAILED, "{body}");
+    assert!(body["error"].as_str().unwrap().contains("catalog selection changed"));
+    assert!(fx
+        .state
+        .host_ledger
+        .environment_request_snapshot(&id(389))
+        .await
+        .unwrap()
+        .is_none());
+
+    assert_eq!(fx.registry.publish(kind, original), digest);
+    let (status, saved) = route_request(app.clone(), Method::POST, "/environments/create", Some(intent.clone())).await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let result = &saved["result"];
+    let route = format!("/environments/{}/info", result["environment_id"].as_str().unwrap());
+    let (_, current) = route_request(app.clone(), Method::GET, &route, None).await;
+    let pin = &current["document"]["specification"]["skills"]["selected"][0];
+    assert_eq!(pin["resolved_digest"], digest);
+    assert!(pin.get("expected_catalog").is_none());
+    let calls = fx.registry.requests.lock().unwrap().len();
+    let (status, replay) = route_request(app.clone(), Method::POST, "/environments/create", Some(intent.clone())).await;
+    assert_eq!(status, StatusCode::OK, "{replay}");
+    assert_eq!(saved, replay);
+    assert_eq!(fx.registry.requests.lock().unwrap().len(), calls);
+    let mut different = intent;
+    different["specification"]["skills"]["selected"][0]["expected_catalog"]["digest"] =
+        format!("sha256:{}", "0".repeat(64)).into();
+    assert_eq!(
+        route_request(app, Method::POST, "/environments/create", Some(different))
+            .await
+            .0,
+        StatusCode::CONFLICT
+    );
+}

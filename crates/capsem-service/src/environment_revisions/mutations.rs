@@ -39,6 +39,7 @@ impl std::fmt::Display for EnvironmentMutationError {
             Self::Refused => "delegated session scope ended or does not cover this operation and owner",
             Self::Conflict => "request identity already has different or non-replayable intent",
             Self::Archived => "environment is archived",
+            Self::Resolution(error @ EnvironmentResolutionError::CatalogChanged) => return std::fmt::Display::fmt(error, f),
             Self::Resolution(_) => "environment source resolution failed",
             Self::LedgerFailure => "environment request durability is unconfirmed",
             Self::Publication(_) => "environment publication is unconfirmed; reconcile the request",
@@ -461,7 +462,7 @@ impl EnvironmentMutationCoordinator {
                 .as_ref()
                 .is_some_and(|base| base.environment_id != record.environment_id)
             || record.reason != request.reason
-            || specification.into_draft() != request.specification
+            || !specification.matches_draft(&request.specification)
         {
             return Err(EnvironmentMutationError::Conflict);
         }

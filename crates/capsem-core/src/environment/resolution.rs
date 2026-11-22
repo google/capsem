@@ -9,6 +9,7 @@ pub enum EnvironmentResolutionError {
     Unavailable,
     Refused,
     UnusableCatalogEntry,
+    CatalogChanged,
 }
 impl std::fmt::Display for EnvironmentResolutionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -18,6 +19,7 @@ impl std::fmt::Display for EnvironmentResolutionError {
             Self::Unavailable => "environment resolution source unavailable",
             Self::Refused => "environment source refused by current policy",
             Self::UnusableCatalogEntry => "environment catalog entry is no longer usable",
+            Self::CatalogChanged => "catalog selection changed since it was inspected",
         })
     }
 }
@@ -192,6 +194,9 @@ async fn selections(
             }
             pin
         };
+        if !selection.expects(&pin) {
+            return Err(EnvironmentResolutionError::CatalogChanged);
+        }
         sources.admit_catalog(kind, &pin).await?;
         selected.push(pin);
     }

@@ -212,6 +212,7 @@ fn mutation_error(error: EnvironmentMutationError) -> AppError {
         Mutation::Resolution(
             EnvironmentResolutionError::Refused | EnvironmentResolutionError::UnusableCatalogEntry,
         ) => StatusCode::FORBIDDEN,
+        Mutation::Resolution(EnvironmentResolutionError::CatalogChanged) => StatusCode::PRECONDITION_FAILED,
         Mutation::Resolution(EnvironmentResolutionError::InvalidPin) => StatusCode::BAD_GATEWAY,
         _ => StatusCode::SERVICE_UNAVAILABLE,
     };

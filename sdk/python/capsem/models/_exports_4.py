@@ -1,5 +1,6 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .service_manager import ServiceManager
 from .session_db_status import SessionDbStatus
 from .session_grant_list_response import SessionGrantListResponse
 from .session_grant_summary import SessionGrantSummary
@@ -74,6 +75,7 @@ from .vm_summary import VmSummary
 from .widget import Widget
 
 __all__ = [
+    'ServiceManager',
     'SessionDbStatus',
     'SessionGrantListResponse',
     'SessionGrantSummary',

@@ -93,6 +93,14 @@ Open **Change history** to inspect older revisions. Complete revisions show
 canonical TOML. When values have been purged, the view identifies the removed
 variables and shows the remaining content when it is available.
 
+Open **Browse skill catalog** or **Browse rule catalog** in the environment
+editor. Search the catalog and choose **Inspect** to read a skill’s files or a
+rule’s template and parameter defaults. Add the entry to the draft, then
+review the change before saving. The service checks that the published content
+still matches what you inspected. If the catalog moves, browse it again before
+resubmitting. Entries already selected in the saved environment keep their
+pinned versions.
+
 The hypervisor overview reports each catalog's effective registry source, whether
 it came from the release manifest or corporate configuration, and the last
 verified digest and refresh time. An unverified source has yet to pass a

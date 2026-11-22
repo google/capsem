@@ -7,6 +7,31 @@ use super::*;
 pub struct EnvironmentCatalogSelection {
     pub id: String,
     pub version: String,
+    /// Optional precondition from a catalog detail read. The host still verifies the selection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_catalog: Option<EnvironmentCatalogExpectation>,
+}
+
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentCatalogExpectation {
+    pub reference: String,
+    pub digest: String,
+}
+
+impl EnvironmentCatalogExpectation {
+    pub(super) fn matches(&self, pin: &EnvironmentCatalogPin) -> bool {
+        self.reference == pin.catalog_reference && self.digest == pin.resolved_digest
+    }
+}
+
+impl EnvironmentCatalogSelection {
+    pub fn expects(&self, pin: &EnvironmentCatalogPin) -> bool {
+        self.expected_catalog
+            .as_ref()
+            .is_none_or(|expected| expected.matches(pin))
+    }
 }
 
 /// The registry owner verifies the OCI source and digest before constructing
@@ -58,6 +83,9 @@ impl EnvironmentCatalogSelections<EnvironmentCatalogSelection> {
         identities(self.selected.iter().map(|entry| entry.id.as_str()))?;
         for entry in &self.selected {
             selection(&entry.id, &entry.version)?;
+            if let Some(expected) = &entry.expected_catalog {
+                catalog_identity(&expected.reference, &expected.digest)?;
+            }
         }
         Ok(())
     }
@@ -67,16 +95,20 @@ impl EnvironmentCatalogSelections<EnvironmentCatalogPin> {
         identities(self.selected.iter().map(|entry| entry.id.as_str()))?;
         for entry in &self.selected {
             selection(&entry.id, &entry.version)?;
-            let reference = &entry.catalog_reference;
-            if reference.is_empty()
-                || reference.len() > capsem_proto::ENVIRONMENT_MAX_CATALOG_REFERENCE_BYTES
-                || reference.contains("://")
-                || reference.chars().any(|ch| ch.is_control() || ch.is_whitespace())
-                || !crate::validation::is_sha256_digest_shape(&entry.resolved_digest)
-            {
-                return Err("invalid environment catalog pin".into());
-            }
+            catalog_identity(&entry.catalog_reference, &entry.resolved_digest)?;
         }
         Ok(())
     }
+}
+
+fn catalog_identity(reference: &str, digest: &str) -> Result<(), String> {
+    if reference.is_empty()
+        || reference.len() > capsem_proto::ENVIRONMENT_MAX_CATALOG_REFERENCE_BYTES
+        || reference.contains("://")
+        || reference.chars().any(|ch| ch.is_control() || ch.is_whitespace())
+        || !crate::validation::is_sha256_digest_shape(digest)
+    {
+        return Err("invalid environment catalog pin or expectation".into());
+    }
+    Ok(())
 }

@@ -6914,6 +6914,22 @@
           "block"
         ]
       },
+      "EnvironmentCatalogExpectation": {
+        "type": "object",
+        "required": [
+          "reference",
+          "digest"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
       "EnvironmentCatalogPin": {
         "type": "object",
         "description": "The registry owner verifies the OCI source and digest before constructing\na canonical revision. Format validation alone does not attest provenance.",
@@ -6985,6 +7001,17 @@
                 "version"
               ],
               "properties": {
+                "expected_catalog": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "$ref": "#/components/schemas/EnvironmentCatalogExpectation",
+                      "description": "Optional precondition from a catalog detail read. The host still verifies the selection."
+                    }
+                  ]
+                },
                 "id": {
                   "type": "string"
                 },

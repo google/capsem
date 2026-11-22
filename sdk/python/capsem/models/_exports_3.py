@@ -1,5 +1,6 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .network_member_state import NetworkMemberState
 from .network_protocol import NetworkProtocol
 from .panic_event import PanicEvent
 from .panics_response import PanicsResponse
@@ -117,9 +118,9 @@ from .security_ask_status import SecurityAskStatus
 from .security_plugin_mode import SecurityPluginMode
 from .security_rule_action import SecurityRuleAction
 from .service_availability import ServiceAvailability
-from .service_manager import ServiceManager
 
 __all__ = [
+    'NetworkMemberState',
     'NetworkProtocol',
     'PanicEvent',
     'PanicsResponse',
@@ -199,5 +200,4 @@ __all__ = [
     'SecurityPluginMode',
     'SecurityRuleAction',
     'ServiceAvailability',
-    'ServiceManager',
 ]

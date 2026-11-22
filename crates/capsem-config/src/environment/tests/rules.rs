@@ -89,6 +89,7 @@ fn environment_rule_counts_and_parameter_collections_enforce_exact_bounds() {
     draft.access.catalog.selected.push(EnvironmentCatalogSelection {
         id: "network".into(),
         version: "1.0.0".into(),
+        expected_catalog: None,
     });
     let values = draft.access.parameters.entry("network".into()).or_default();
     for index in 0..capsem_proto::ENVIRONMENT_MAX_CONFIGURATION_ENTRIES {

@@ -1,5 +1,6 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+export {InteractionRequestKindSchema} from "./InteractionRequestKind.js";
 export {InteractionRoleSchema} from "./InteractionRole.js";
 export {InteractionToolCallSchema} from "./InteractionToolCall.js";
 export {InteractionToolCallKindSchema} from "./InteractionToolCallKind.js";

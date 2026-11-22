@@ -68,7 +68,7 @@ pub struct EnvironmentSpecification<I = EnvironmentImage, R = EnvironmentReposit
     pub plugins: crate::plugins::EnvironmentPlugins,
 }
 
-/// Agent/operator intent has selectors, never self-attested resolution metadata.
+/// Agent/operator intent has selectors and optional content expectations. The host resolves all pins.
 pub type EnvironmentDraft =
     EnvironmentSpecification<EnvironmentImageSelection, EnvironmentRepositorySelection, EnvironmentCatalogSelection>;
 

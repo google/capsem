@@ -174,6 +174,7 @@ fn selection() -> EnvironmentCatalogSelection {
     EnvironmentCatalogSelection {
         id: "review".into(),
         version: "1.0.0".into(),
+        expected_catalog: None,
     }
 }
 fn document(kind: CatalogKind, revoked: bool) -> serde_json::Value {

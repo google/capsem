@@ -1,5 +1,6 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .environment_detection_rule import EnvironmentDetectionRule
 from .environment_document import EnvironmentDocument
 from .environment_effective_access_rule import EnvironmentEffectiveAccessRule
 from .environment_effective_detection_rule import EnvironmentEffectiveDetectionRule
@@ -111,9 +112,9 @@ from .file_action_count import FileActionCount
 from .file_entry_type import FileEntryType
 from .file_event import FileEvent
 from .file_event_action import FileEventAction
-from .file_list_entry import FileListEntry
 
 __all__ = [
+    'EnvironmentDetectionRule',
     'EnvironmentDocument',
     'EnvironmentEffectiveAccessRule',
     'EnvironmentEffectiveDetectionRule',
@@ -193,5 +194,4 @@ __all__ = [
     'FileEntryType',
     'FileEvent',
     'FileEventAction',
-    'FileListEntry',
 ]

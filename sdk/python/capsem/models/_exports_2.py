@@ -1,5 +1,6 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .file_list_entry import FileListEntry
 from .file_list_response import FileListResponse
 from .fork_request import ForkRequest
 from .fork_response import ForkResponse
@@ -79,9 +80,9 @@ from .network_list_response import NetworkListResponse
 from .network_log_event import NetworkLogEvent
 from .network_logs_response import NetworkLogsResponse
 from .network_member_info import NetworkMemberInfo
-from .network_member_state import NetworkMemberState
 
 __all__ = [
+    'FileListEntry',
     'FileListResponse',
     'ForkRequest',
     'ForkResponse',
@@ -161,5 +162,4 @@ __all__ = [
     'NetworkLogEvent',
     'NetworkLogsResponse',
     'NetworkMemberInfo',
-    'NetworkMemberState',
 ]

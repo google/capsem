@@ -70,6 +70,7 @@ from .environment_access_rule import EnvironmentAccessRule
 from .environment_archive_action import EnvironmentArchiveAction
 from .environment_archive_request import EnvironmentArchiveRequest
 from .environment_capability_decision import EnvironmentCapabilityDecision
+from .environment_catalog_expectation import EnvironmentCatalogExpectation
 from .environment_catalog_pin import EnvironmentCatalogPin
 from .environment_catalog_selections__environment_catalog_pin import (
     EnvironmentCatalogSelections_EnvironmentCatalogPin,
@@ -87,7 +88,6 @@ from .environment_change_intent import EnvironmentChangeIntent
 from .environment_change_request import EnvironmentChangeRequest
 from .environment_create_request import EnvironmentCreateRequest
 from .environment_current_response import EnvironmentCurrentResponse
-from .environment_detection_rule import EnvironmentDetectionRule
 
 __all__ = [
     'AgentAccessScope',
@@ -160,6 +160,7 @@ __all__ = [
     'EnvironmentArchiveAction',
     'EnvironmentArchiveRequest',
     'EnvironmentCapabilityDecision',
+    'EnvironmentCatalogExpectation',
     'EnvironmentCatalogPin',
     'EnvironmentCatalogSelections_EnvironmentCatalogPin',
     'EnvironmentCatalogSelections_EnvironmentCatalogPinSelectedItem',
@@ -169,5 +170,4 @@ __all__ = [
     'EnvironmentChangeRequest',
     'EnvironmentCreateRequest',
     'EnvironmentCurrentResponse',
-    'EnvironmentDetectionRule',
 ]

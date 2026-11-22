@@ -1,8 +1,8 @@
 // Gateway API client. Token is module-scoped -- never in localStorage, DOM, logs, or URLs.
 
 import * as gateway from '@capsem/sdk/operations';
-import { Connections, CredentialGrants, Environments, HostLogSource, NetworkError, ServiceAvailability, creationDeadlineMs } from '@capsem/sdk';
-import type { EnvironmentListOptions, EnvironmentRevisionListOptions, EnvironmentRevisionReference } from '@capsem/sdk';
+import { Connections, CredentialGrants, Environments, HostLogSource, NetworkError, Rules, ServiceAvailability, Skills, creationDeadlineMs } from '@capsem/sdk';
+import type { CatalogListOptions, CatalogSnapshot, EnvironmentListOptions, EnvironmentRevisionListOptions, EnvironmentRevisionReference, RuleCatalogListResponse, SkillCatalogListResponse } from '@capsem/sdk';
 import type { AuthorizeGoogleRequest, CreateSessionGrantRequest } from '@capsem/sdk';
 import type { StopResponse, VmActionResponse, LogsResponse, VmStatsDetailResponse, EventBodiesResponse } from '@capsem/sdk';
 import type { ContainerStatusResponse, ImageListResponse, ImagePullResponse, CredentialInjectProvider, CredentialInjectResponse, CredentialStorage } from '@capsem/sdk';
@@ -83,6 +83,25 @@ export function listEnvironmentPlugins(reference: EnvironmentRevisionReference |
 
 export function listEnvironmentRules(reference: EnvironmentRevisionReference, signal: AbortSignal) {
   return _sdk.call(transport => new Environments(transport).rules(reference, { signal }));
+}
+
+export function listEnvironmentCatalog(kind: 'skills' | 'rules', options: CatalogListOptions) {
+  return _sdk.call<SkillCatalogListResponse | RuleCatalogListResponse>(transport => kind === 'skills'
+    ? new Skills(transport).list(options)
+    : new Rules(transport).list(options));
+}
+
+export function getPublishedSkill(id: string, version: string, catalog: CatalogSnapshot, signal: AbortSignal) {
+  return _sdk.call(transport => new Skills(transport).get(id, version, catalog, { signal }));
+}
+
+export function getPublishedRule(id: string, version: string, catalog: CatalogSnapshot, signal: AbortSignal) {
+  return _sdk.call(transport => new Rules(transport).get(id, version, catalog, { signal }));
+}
+
+export async function environmentCatalogStatus(signal: AbortSignal) {
+  const status = await _sdk.call(transport => gateway.getHypervisorInfo(transport, { signal }));
+  return status.catalogs ?? [];
 }
 
 export function listSavedEnvironmentRevisions(id: string, options: EnvironmentRevisionListOptions) {

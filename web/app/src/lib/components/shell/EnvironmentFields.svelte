@@ -4,6 +4,7 @@
   import { listEnvironmentRules } from '../../api';
   import { environmentSectionKeys, environmentSections, type EnvironmentFields } from '../../models/environment-editor';
   import { sessionActionError } from '../../models/session-action-error';
+  import EnvironmentCatalogBrowser from './EnvironmentCatalogBrowser.svelte';
   import EnvironmentPluginFields from './EnvironmentPluginFields.svelte';
   import EnvironmentRuleView from './EnvironmentRuleView.svelte';
   let { fields = $bindable(), pin, reference }: { fields: EnvironmentFields; pin?: string; reference: EnvironmentRevisionReference | null } = $props();
@@ -76,6 +77,8 @@
   </fieldset>
 
   <div class="space-y-2">
+    <EnvironmentCatalogBrowser kind="skills" bind:sections={fields.sections} />
+    <EnvironmentCatalogBrowser kind="rules" bind:sections={fields.sections} />
     {#each environmentSectionKeys as key (key)}
       {#if key === 'plugins'}
       <EnvironmentPluginFields {reference} bind:value={fields.sections.plugins} />

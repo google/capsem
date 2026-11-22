@@ -211,7 +211,13 @@
       onsaved();
       focusTitle();
     } catch (err) {
-      if (err instanceof ApiError && err.status === 409) {
+      if (err instanceof ApiError && err.status === 412) {
+        phase = 'editing';
+        error = 'A catalog selection changed. Browse the catalog again and review the updated draft.';
+        attempt = null;
+        draft = null;
+        focusTitle();
+      } else if (err instanceof ApiError && err.status === 409) {
         phase = 'stale';
         error = 'The saved environment changed. Reload the current revision.';
       } else if (err instanceof ApiError && [400, 403, 404, 413, 422].includes(err.status)) {
