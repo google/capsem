@@ -261,7 +261,8 @@ def test_linux_original_owner_selects_gateway_without_second_request(tmp_path):
 
     root = Path(__file__).resolve().parents[3]
     request = shlex.split(shell(root, "request", tmp_path / "receipt"))
-    control = shlex.split(shell(root, "disable-automatic", tmp_path / "control"))
     assert request.count("request") == 1
     assert "--gateway-run-dir" in request and "--socket" not in request
-    assert "--socket" in control and "--gateway-run-dir" not in control
+    for command in ("disable-automatic", "restore-automatic"):
+        control = shlex.split(shell(root, command, tmp_path / "control"))
+        assert "--gateway-run-dir" in control and "--socket" not in control

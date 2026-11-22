@@ -27,7 +27,7 @@ def _json(owner, args, method, path, body=None):
         max_response_bytes=args.maximum,
     )
     if response.status != 200:
-        raise ValueError("installed settings request refused")
+        raise ValueError(f"installed settings request {method} {path} returned HTTP {response.status}")
     return json.loads(response.body)
 
 

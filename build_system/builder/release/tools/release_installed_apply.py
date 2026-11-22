@@ -16,15 +16,9 @@ from .release_glowup import PairingIdentity
 
 def shell(root: Path, command: str, output: Path, *arguments: str) -> str:
     config = gate_config.load(root)
-    # Reuse the standard strict test transport, already in the sealed source
-    # image. No installed binary replacement, fresh executable or TCP authority.
+    # The installed gateway authenticates both Apply and operator settings.
     pythonpath = str(Path(config.install.suite.path).parent)
     runtime = Path.home() / ".capsem" / "run"
-    address = (
-        ("--gateway-run-dir", str(runtime))
-        if command == "request"
-        else ("--socket", str(runtime / "service.sock"))
-    )
     argv = [
         "env",
         f"PYTHONPATH={pythonpath}",
@@ -32,7 +26,8 @@ def shell(root: Path, command: str, output: Path, *arguments: str) -> str:
         "-m",
         "helpers.installed_apply_probe",
         command,
-        *address,
+        "--gateway-run-dir",
+        str(runtime),
         "--output",
         str(output),
         "--timeout",
