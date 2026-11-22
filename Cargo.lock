@@ -582,7 +582,7 @@ dependencies = [
 
 [[package]]
 name = "capsem"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "bytes",
@@ -617,7 +617,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-admin"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "capsem-assets",
@@ -639,7 +639,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-agent"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "capsem-crypto",
  "capsem-foundation",
@@ -655,7 +655,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-api"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "base64 0.22.1",
  "capsem-config",
@@ -669,7 +669,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-app"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "capsem-foundation",
  "capsem-proto",
@@ -692,7 +692,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-archive"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "capsem-crypto",
  "capsem-foundation",
@@ -705,7 +705,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-assets"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "axum",
@@ -725,7 +725,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-bench"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "capsem-foundation",
@@ -744,7 +744,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-cache"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "capsem-telemetry",
  "metrics",
@@ -753,7 +753,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-config"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "capsem-proto",
  "regex",
@@ -769,7 +769,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-core"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
@@ -839,7 +839,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-credentials"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -864,7 +864,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-crypto"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "aws-lc-rs",
@@ -890,7 +890,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-foundation"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "capsem-crypto",
  "capsem-proto",
@@ -909,7 +909,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-gateway"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -946,7 +946,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-guard"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "capsem-foundation",
  "tempfile",
@@ -956,7 +956,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-ledger"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "capsem-archive",
@@ -977,7 +977,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-logger"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "capsem-archive",
@@ -1006,7 +1006,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-mcp-aggregator"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "axum",
@@ -1035,7 +1035,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-mcp-builtin"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "capsem-core",
@@ -1057,7 +1057,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-mcp-transport"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1076,7 +1076,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-mock-server"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -1106,7 +1106,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-network"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "capsem-proto",
  "tokio",
@@ -1114,7 +1114,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-process"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1144,7 +1144,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-proto"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "capsem-crypto",
@@ -1165,7 +1165,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-proxy"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1187,7 +1187,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-router"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "bytes",
  "capsem-foundation",
@@ -1205,7 +1205,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-sdk"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "axum",
  "bytes",
@@ -1229,7 +1229,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-service"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1284,7 +1284,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-telemetry"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "async-trait",
  "axum",
@@ -1310,7 +1310,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-tray"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "capsem-api",
@@ -1332,7 +1332,7 @@ dependencies = [
 
 [[package]]
 name = "capsem-tui"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "capsem-foundation",
