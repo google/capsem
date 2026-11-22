@@ -196,6 +196,32 @@ def test_approval_applies_live_policy_and_saves_deferred_configuration(service, 
         assert settled["application"] == "applied"
         assert settled["result"] == fork
         assert operator.call_json("POST", path, approved) == (200, {**receipt, "application": "applied"})
+
+        edit = {
+            "request_id": str(uuid.uuid4()),
+            "base_revision_id": fork["revision_id"],
+            "specification": {**proposed, "description": "operator edit of the saved fork"},
+            "reason": "update the saved fork for future launches",
+        }
+        fork_path = f"/environments/{fork['environment_id']}"
+        status, edited = operator.call_json("POST", fork_path + "/changes", edit)
+        assert status == 200, edited
+        assert edited["application"] == "applied"
+        assert edited["result"]["environment_id"] == fork["environment_id"]
+        assert edited["result"]["revision_id"] != fork["revision_id"]
+        assert operator.call_json("POST", fork_path + "/changes", edit) == (200, edited)
+        saved_fork = operator.get(fork_path + "/info")["document"]
+        assert saved_fork["identity"]["revision_id"] == edited["result"]["revision_id"]
+        assert saved_fork["identity"]["parent_environment_id"] == base["environment_id"]
+        assert saved_fork["identity"]["parent_revision_id"] == base["revision_id"]
+        assert saved_fork["specification"]["description"] == "operator edit of the saved fork"
+        assert operator.get(f"/environments/{base['environment_id']}/info")["document"] == shared
+        assert operator.get(owner_path)["environment"] == restarted
+        assert operator.get(sibling_path)["environment"] == sibling_binding
+        future = create(service, edited["result"], vm_name("revised-fork"))
+        future_binding = operator.get(f"/vms/{future}/info")["environment"]
+        assert future_binding["boot"] == future_binding["live_policy"] == future_binding["desired"] == edited["result"]
+        assert marker(future) == marker(owner)
     finally:
         if agent is not None:
             agent.close()

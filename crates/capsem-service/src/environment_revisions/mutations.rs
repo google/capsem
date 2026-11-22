@@ -463,7 +463,7 @@ impl EnvironmentMutationCoordinator {
             .map(|_| self.revisions.lock_for(&environment_id))
             .transpose()
             .map_err(EnvironmentMutationError::Publication)?;
-        let environment_guard = if let Some(lock) = &environment_lock {
+        let (environment_guard, fork_parent) = if let Some(lock) = &environment_lock {
             let guard = lock.lock().await;
             self.revisions
                 .reconcile_locked(&environment_id, now()?)
@@ -489,9 +489,9 @@ impl EnvironmentMutationCoordinator {
             {
                 return Err(EnvironmentMutationError::Conflict);
             }
-            Some(guard)
+            (Some(guard), current.revision.fork_parent)
         } else {
-            None
+            (None, None)
         };
         let at = now()?;
         let kind = payload.kind();
@@ -539,7 +539,7 @@ impl EnvironmentMutationCoordinator {
             environment_id,
             revision_id: capsem_crypto::uuid_v4().to_string(),
             previous_revision_id: base.as_ref().map(|base| base.revision_id.clone()),
-            fork_parent: None,
+            fork_parent,
             timestamp_unix_ms: at,
             actor: "operator".into(),
             reason,
