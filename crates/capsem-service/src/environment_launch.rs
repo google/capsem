@@ -49,10 +49,7 @@ pub(crate) fn validate_preparation(specification: &EnvironmentSpecification) -> 
         specification.packages == Default::default(),
         "environment packages require registry policy resolution"
     );
-    ensure!(
-        specification.mcps.servers.is_empty() && specification.mcps.catalog.selected.is_empty(),
-        "environment MCP definitions require scoped launch preparation"
-    );
+    capsem_core::environment::validate_environment_mcp_launch(&specification.mcps).map_err(anyhow::Error::msg)?;
     Ok(())
 }
 

@@ -93,6 +93,11 @@ pub enum EnvironmentMcpDefinition {
 }
 
 impl EnvironmentMcpDefinition {
+    /// Validate the structural configuration independently of launch admission.
+    pub fn validate_for_environment(&self, has_image: bool) -> Result<(), String> {
+        validate_definition(self, has_image)
+    }
+
     pub(super) fn has_same_catalog_template(&self, saved: &Self) -> bool {
         match (self, saved) {
             (Self::Remote { url, .. }, Self::Remote { url: previous, .. }) => url == previous,
@@ -114,7 +119,8 @@ impl EnvironmentMcpDefinition {
         }
     }
 
-    pub(super) fn into_catalog_input(self) -> EnvironmentMcpCatalogInput {
+    /// Recover the editable values and references from a materialized definition.
+    pub fn into_catalog_input(self) -> EnvironmentMcpCatalogInput {
         match self {
             Self::Remote {
                 headers, binding_id, ..

@@ -9,12 +9,15 @@ import copy
 import hashlib
 import json
 import secrets
+import shlex
 import time
 import uuid
+from urllib.parse import urlsplit
 
 import pytest
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
-from helpers.service import exec_output_text, vm_name
+from helpers.mock_server import start_mock_server, stop_process
+from helpers.service import exec_output_text, vm_name, wait_exec_ready
 
 from tests.fixtures.oci.registry import publish_catalog, registry
 from tests.ironbank.kingslanding.test_image_catalog import entry, use_catalog
@@ -81,6 +84,93 @@ def observe(service, vm, reference, count):
     redis = request(service, "POST", f"/vms/{vm}/exec", {"command": "redis-cli PING"})
     assert redis["exit_code"] == 0 and exec_output_text(redis).strip() == "PONG", redis
     return info["owner_generation"]
+
+
+def test_saved_environment_remote_mcp_is_scoped_to_its_guest(service, tmp_path):
+    log = tmp_path / "mcp-upstream.jsonl"
+    upstream, ready = start_mock_server(addr="127.0.0.1:0", request_log=log)
+    probe = """import json, subprocess, sys
+from contextlib import closing
+
+with subprocess.Popen(['/run/capsem-mcp-server'], stdin=subprocess.PIPE,
+                      stdout=subprocess.PIPE, text=True) as relay:
+    def send(method, params=None, *, notification=False):
+        message = {'jsonrpc': '2.0', 'method': method}
+        if params is not None:
+            message['params'] = params
+        if not notification:
+            message['id'] = method
+        relay.stdin.write(json.dumps(message) + '\\n')
+        relay.stdin.flush()
+        if not notification:
+            return json.loads(relay.stdout.readline())
+
+    with closing(relay.stdin):
+        assert 'result' in send('initialize', {
+            'protocolVersion': '2025-06-18', 'capabilities': {},
+            'clientInfo': {'name': 'environment-mcp-test', 'version': '1'},
+        })
+        send('notifications/initialized', notification=True)
+        print(json.dumps({
+            'tools': send('tools/list')['result']['tools'],
+            'call': send('tools/call', {
+                'name': 'scoped__fixture_lookup', 'arguments': {'query': sys.argv[1]},
+            }),
+        }))
+"""
+    try:
+        endpoint = f"{ready['base_url']}/mcp"
+        port = urlsplit(endpoint).port
+        spec = {
+            "name": "scoped-mcp-allowed",
+            "access": {"custom": {"fixture": {
+                "name": "Local MCP fixture", "action": "allow",
+                "match": f'http.host == "127.0.0.1" && tcp.port == "{port}"',
+            }}},
+            "mcps": {
+                "servers": {"scoped": {
+                    "kind": "remote", "url": endpoint, "headers": {"X-Workspace": "approved"},
+                }},
+                "permissions": {
+                    "scoped": {"default": "block", "tools": {"fixture_lookup": "allow"}},
+                },
+            },
+        }
+        allowed = save(service, spec)
+        blocked_spec = copy.deepcopy(spec)
+        blocked_spec["name"] = "scoped-mcp-blocked"
+        blocked_spec["mcps"]["permissions"]["scoped"]["tools"].clear()
+        blocked = save(service, blocked_spec)
+        replies = {}
+        for decision, reference in [("blocked", blocked), ("allowed", allowed)]:
+            vm = create(service, reference, vm_name(f"mcp-{decision}"))
+            assert wait_exec_ready(service.client(), vm)
+            response = request(service, "POST", f"/vms/{vm}/exec", {
+                "command": f"python3 -c {shlex.quote(probe)} {decision}",
+                "timeout_secs": 30,
+            })
+            assert response["exit_code"] == 0, response
+            replies[decision] = json.loads(exec_output_text(response))
+
+        assert replies["allowed"]["call"]["result"]["content"] == [
+            {"type": "text", "text": "capsem-mock-server:mcp:fixture_lookup"},
+        ]
+        for reply in replies.values():
+            assert "scoped__fixture_lookup" in {tool["name"] for tool in reply["tools"]}
+        assert "environment.mcps.scoped.default" in replies["blocked"]["call"]["error"]["message"]
+        posts = [
+            row
+            for line in log.read_text().splitlines()
+            if (row := json.loads(line))["path"] == "/mcp" and row["method"] == "POST"
+        ]
+        assert posts and all(row["headers"].get("x-workspace") == "approved" for row in posts)
+        messages = [json.loads(row["request_body"]) for row in posts]
+        calls = [message["params"] for message in messages if message["method"] == "tools/call"]
+        assert [(call["name"], call["arguments"]) for call in calls] == [
+            ("fixture_lookup", {"query": "allowed"}),
+        ]
+    finally:
+        stop_process(upstream)
 
 
 @pytest.mark.parametrize("operation", ["clone", "start", "fork"])

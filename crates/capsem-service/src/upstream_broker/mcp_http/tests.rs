@@ -97,6 +97,71 @@ fn remote_request(method: Method, url: &str) -> reqwest::Request {
 }
 
 #[tokio::test]
+async fn environment_mcp_broker_requires_http_policy_and_the_exact_enabled_endpoint() {
+    use capsem_config::environment::{EnvironmentMcpPermissions, EnvironmentSpecification};
+    use capsem_core::environment::EnvironmentPolicyInputs;
+    let upstream = upstream().await;
+    let boot: EnvironmentSpecification = toml::from_str(&format!(
+        "name='mcp-test'\n[mcps.servers.assigned]\nkind='remote'\nurl='{}'\n[mcps.servers.assigned.headers]\nX-Workspace='approved'",
+        upstream.url,
+    )).unwrap();
+    let request = || {
+        let mut request = remote_request(Method::POST, &upstream.url);
+        request
+            .headers_mut()
+            .insert("x-workspace", HeaderValue::from_static("caller-value"));
+        request
+    };
+    let policy = |boot, live, corporate| {
+        let active =
+            ActivePolicyFile::from_environment(&EnvironmentPolicyInputs::new(boot, live, corporate), None).unwrap();
+        BrokerPolicy::new("environment".into(), Arc::new(active.compile_runtime().unwrap()))
+    };
+    let corporate = SettingsFile::default();
+    let (client, publisher, authority, task) =
+        capability(policy(&boot, &boot, &corporate), McpHttpRole::Aggregator).await;
+    assert_eq!(client.execute(request()).await.unwrap().status(), StatusCode::FORBIDDEN);
+    assert!(upstream.requests.lock().unwrap().is_empty());
+    let mut boot = boot.clone();
+    boot.access.custom.insert(
+        "local-fixture".into(),
+        toml::from_str("name='Allow local fixture'\naction='allow'\nmatch='http.host == \"127.0.0.1\"'").unwrap(),
+    );
+    publisher.send(policy(&boot, &boot, &corporate)).unwrap();
+    assert_eq!(client.execute(request()).await.unwrap().status(), StatusCode::OK);
+    assert_eq!(upstream.requests.lock().unwrap()[0].1["x-workspace"], "approved");
+    assert_eq!(
+        client
+            .execute(remote_request(
+                Method::POST,
+                &format!("{}?unexpected=true", upstream.url)
+            ))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::FORBIDDEN,
+    );
+    let corporate_block =
+        toml::from_str("[corp.rules.remote]\nname='block-fixture'\naction='block'\nmatch='http.host == \"127.0.0.1\"'")
+            .unwrap();
+    publisher.send(policy(&boot, &boot, &corporate_block)).unwrap();
+    assert_eq!(client.execute(request()).await.unwrap().status(), StatusCode::FORBIDDEN);
+    let mut live = boot.clone();
+    live.mcps.permissions.insert(
+        "assigned".into(),
+        EnvironmentMcpPermissions {
+            enabled: false,
+            ..Default::default()
+        },
+    );
+    publisher.send(policy(&boot, &live, &corporate)).unwrap();
+    assert_eq!(client.execute(request()).await.unwrap().status(), StatusCode::FORBIDDEN);
+    assert_eq!(upstream.requests.lock().unwrap().len(), 1);
+    authority.revoke();
+    task.await.unwrap();
+}
+
+#[tokio::test]
 async fn configured_capability_owns_destination_and_credentials_and_retires_independently() {
     let _lock = crate::tests::SETTINGS_ENV_LOCK.lock().await;
     let first = upstream().await;

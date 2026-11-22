@@ -112,6 +112,11 @@ fn environment_policy_roundtrip_uses_boot_mcp_scope_and_live_permissions() {
         ActivePolicyFile::from_environment(&EnvironmentPolicyInputs::new(&boot, &live, &corporate), None).unwrap();
     let exact: ActivePolicyFile = toml::from_str(&toml::to_string(&active).unwrap()).unwrap();
     let runtime = exact.compile_runtime().unwrap();
+    assert_eq!(runtime.mcp.servers.len(), 1);
+    assert_eq!(runtime.mcp.servers[0].name, "remote");
+    assert_eq!(runtime.mcp.servers[0].url, "https://mcp.example/rpc");
+    assert!(runtime.mcp.servers[0].enabled);
+    assert_eq!(runtime.scoped_mcp_servers, BTreeSet::from(["remote".into()]));
     assert!(!runtime
         .security_rules
         .rules()
@@ -126,4 +131,54 @@ fn environment_policy_roundtrip_uses_boot_mcp_scope_and_live_permissions() {
         let result = evaluate_security_boundary(&runtime.security_rules, runtime.plugins.clone(), event).unwrap();
         assert_eq!(result.enforcement.is_allowed(), allowed);
     }
+}
+
+#[test]
+fn environment_mcp_runtime_respects_corporate_ownership_and_disablement() {
+    use capsem_config::environment::*;
+    let mut boot = specification();
+    boot.mcps.servers.insert(
+        "remote".into(),
+        toml::from_str("kind='remote'\nurl='https://mcp.example/rpc'").unwrap(),
+    );
+    let mut live = boot.clone();
+    live.mcps.permissions.insert(
+        "remote".into(),
+        EnvironmentMcpPermissions {
+            enabled: false,
+            ..Default::default()
+        },
+    );
+    let corporate = parse("[mcp.server_enabled]\nremote=true\nlocal=false");
+    let compile = |boot, live, corporate| {
+        ActivePolicyFile::from_environment(&EnvironmentPolicyInputs::new(boot, live, corporate), None)
+    };
+    let mcp = compile(&boot, &live, &corporate)
+        .unwrap()
+        .compile_runtime()
+        .unwrap()
+        .mcp;
+    assert!(!mcp.server_enabled["remote"]);
+    assert!(!mcp.server_enabled["local"]);
+    let corporate = parse("[mcp.server_enabled]\nremote=false");
+    assert!(
+        !compile(&boot, &boot, &corporate)
+            .unwrap()
+            .compile_runtime()
+            .unwrap()
+            .mcp
+            .server_enabled["remote"]
+    );
+    let collision = parse("[[mcp.servers]]\nname='remote'\nurl='https://different.example/rpc'");
+    assert!(compile(&boot, &boot, &collision)
+        .unwrap_err()
+        .contains("owned by corporate"));
+    let mut binding = boot.clone();
+    let EnvironmentMcpDefinition::Remote { binding_id, .. } = binding.mcps.servers.get_mut("remote").unwrap() else {
+        panic!("fixture must be remote");
+    };
+    *binding_id = Some("00000000-0000-4000-8000-000000000010".into());
+    assert!(compile(&binding, &binding, &corporate)
+        .unwrap_err()
+        .contains("binding requires scoped admission"));
 }

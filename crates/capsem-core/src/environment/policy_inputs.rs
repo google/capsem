@@ -17,8 +17,7 @@ pub struct EnvironmentPolicyInputs<'a> {
     mcp_permissions: &'a BTreeMap<String, EnvironmentMcpPermissions>,
     detection: &'a EnvironmentDetectionRules,
     plugins: &'a EnvironmentPlugins,
-    mcp_catalog: &'a EnvironmentCatalogSelections<EnvironmentCatalogPin>,
-    mcp_servers: &'a BTreeMap<String, EnvironmentMcpDefinition>,
+    boot_mcps: &'a EnvironmentMcps,
     corporate: &'a SettingsFile,
 }
 impl<'a> EnvironmentPolicyInputs<'a> {
@@ -34,8 +33,7 @@ impl<'a> EnvironmentPolicyInputs<'a> {
             mcp_permissions: &live.mcps.permissions,
             detection: &boot.detection,
             plugins: &boot.plugins,
-            mcp_catalog: &boot.mcps.catalog,
-            mcp_servers: &boot.mcps.servers,
+            boot_mcps: &boot.mcps,
             corporate,
         }
     }
@@ -58,10 +56,13 @@ impl<'a> EnvironmentPolicyInputs<'a> {
         self.plugins
     }
     pub fn mcp_catalog(&self) -> &'a EnvironmentCatalogSelections<EnvironmentCatalogPin> {
-        self.mcp_catalog
+        &self.boot_mcps.catalog
     }
     pub fn mcp_servers(&self) -> &'a BTreeMap<String, EnvironmentMcpDefinition> {
-        self.mcp_servers
+        &self.boot_mcps.servers
+    }
+    pub fn boot_mcps(&self) -> &'a EnvironmentMcps {
+        self.boot_mcps
     }
     pub fn corporate(&self) -> &'a SettingsFile {
         self.corporate

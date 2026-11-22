@@ -10,7 +10,7 @@
 //! inputs. A file in any other shape, such as one carrying an id and revision,
 //! is refused, not adapted.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
 
 use serde::{Deserialize, Serialize};
@@ -53,6 +53,8 @@ pub struct CompiledActivePolicy {
     pub plugins: crate::security_engine::SecurityPluginPolicy,
     pub model_endpoints: ModelEndpointRegistry,
     pub mcp: McpConfig,
+    /// Names whose endpoint permission comes from the scoped environment.
+    pub scoped_mcp_servers: BTreeSet<String>,
 }
 
 /// Digest of an active policy's serialized bytes, as `blake3:<hex>`.
@@ -164,6 +166,10 @@ impl ActivePolicyFile {
     /// Compile one complete runtime snapshot from this file alone.
     pub fn compile_runtime(&self) -> Result<CompiledActivePolicy, String> {
         self.validate()?;
+        let (mcp, scoped_mcp_servers) = match &self.environment {
+            Some(environment) => environment.compile_mcp(self.mcp.as_ref())?,
+            None => (self.mcp.clone().unwrap_or_default(), BTreeSet::new()),
+        };
         let (user, corp) = self.merged_policy_inputs();
         let mut merged = MergedPolicies::from_files(&user, &corp)?;
         apply_network_config(&self.network, &mut merged.network);
@@ -190,7 +196,8 @@ impl ActivePolicyFile {
                 None => self.plugins.clone().into(),
             },
             model_endpoints: merged.model_endpoints,
-            mcp: self.mcp.clone().unwrap_or_default(),
+            mcp,
+            scoped_mcp_servers,
         })
     }
 

@@ -137,7 +137,7 @@ async fn prepare(
     );
     let mut headers = request.headers().clone();
     let (client, admission) = match role {
-        McpHttpRole::Aggregator => configured_client(&url, &method, &mut headers, policy, client)?,
+        McpHttpRole::Aggregator => configured_client(&url, &method, &mut headers, policy, client).await?,
         McpHttpRole::Builtin => builtin_client(&url, &method, &mut headers, policy).await?,
     };
     let body = http_body_util::Limited::new(request.into_body(), capsem_proto::MCP_JSON_RPC_MAX_BYTES)
@@ -159,7 +159,7 @@ async fn prepare(
     Ok(Prepared { response, admission })
 }
 
-fn configured_client(
+async fn configured_client(
     url: &reqwest::Url,
     method: &Method,
     headers: &mut HeaderMap,
@@ -226,9 +226,24 @@ fn configured_client(
         selected.insert(http::header::AUTHORIZATION, authorization);
     }
     *headers = selected;
-    // The trusted config grants this exact endpoint. Reuse its connection
-    // pool; workers never choose an address or perform a DNS lookup.
-    Ok((client.clone(), None))
+    let client = if policy.runtime.scoped_mcp_servers.contains(name) {
+        // An environment definition selects the exact URL. The active HTTP
+        // policy judges the method and resolved addresses before the dial.
+        let admission = capsem_core::mcp::builtin_tools::authorize_upstream(
+            url.as_str(),
+            method.as_str(),
+            &policy.runtime.security_rules,
+            &policy.runtime.plugins,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+        client_builder()
+            .resolve_to_addrs(&admission.domain, &admission.addresses)
+            .build()?
+    } else {
+        client.clone()
+    };
+    Ok((client, None))
 }
 
 async fn builtin_client(

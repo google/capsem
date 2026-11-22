@@ -10,6 +10,21 @@ pub(crate) async fn launch_policy(
     state: &ServiceState,
     inputs: &EnvironmentPolicyInputs<'_>,
 ) -> Result<ActivePolicyFile, Error> {
+    let mcps = inputs.boot_mcps();
+    for pin in &mcps.catalog.selected {
+        let saved = mcps
+            .catalog_configuration
+            .as_ref()
+            .and_then(|configuration| configuration.get(&pin.id))
+            .ok_or(Error::InvalidPin)?;
+        let verified = mcp_definition(state, pin)
+            .await?
+            .configure(saved.clone().into_catalog_input(), false)
+            .map_err(|_| Error::InvalidPin)?;
+        if saved != &verified {
+            return Err(Error::InvalidPin);
+        }
+    }
     let pins = inputs
         .access_rules()
         .catalog

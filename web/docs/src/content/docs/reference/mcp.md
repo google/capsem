@@ -41,7 +41,9 @@ inputs in `mcps.catalog_configuration` under its ID. Use `values` for ordinary
 headers or variables, `binding_id` for a remote credential reference, and
 `secrets` for sandbox credential references with their target `env_name`.
 Saved revisions and request reviews show the exact resolved definition.
-Starting it requires scoped runtime preparation.
+Remote servers without a credential binding run through the session MCP broker.
+The boot revision fixes the endpoint. The broker checks the method and resolved
+addresses against the active HTTP policy before connecting.
 
 In the desktop environment editor, open **Browse MCP catalog** to inspect a
 version, fill its configuration fields, and add it to the draft.

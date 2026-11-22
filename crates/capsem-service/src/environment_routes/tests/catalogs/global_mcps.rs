@@ -1,4 +1,66 @@
 use super::*;
+use crate::environment_routes::launch_policy;
+
+#[tokio::test]
+async fn environment_mcp_launch_rechecks_the_exact_catalog_and_revocations() {
+    let fx = Fixture::new().await;
+    let digest = fx.registry.publish(CatalogKind::Mcp, document(CatalogKind::Mcp, false));
+    fx.select_mcp_digest(&digest);
+    let app = crate::router_runtime::build_service_router(fx.state.clone());
+    let (status, response) = route_request(
+        app.clone(),
+        Method::POST,
+        "/environments/create",
+        Some(json!({
+            "request_id":id(614),"reason":"approved remote MCP","specification":{"name":"catalog-runtime","mcps":{
+                "catalog":{"selected":[{"id":"review","version":"1.0.0"}]}
+            }}
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    let id = response["result"]["environment_id"].as_str().unwrap();
+    let saved = fx
+        .state
+        .environments
+        .load_current(id)
+        .await
+        .unwrap()
+        .document
+        .specification;
+    let corporate = SettingsFile::default();
+    let compile = async |specification: &capsem_config::environment::EnvironmentSpecification| {
+        let inputs = capsem_core::environment::EnvironmentPolicyInputs::new(specification, specification, &corporate);
+        launch_policy(&fx.state, &inputs).await
+    };
+    let policy = compile(&saved).await.unwrap().compile_runtime().unwrap();
+    assert_eq!(policy.mcp.servers[0].url, "https://mcp.example.invalid/service");
+    assert!(policy.scoped_mcp_servers.contains("review"));
+    let mut altered = saved.clone();
+    let configuration = altered.mcps.catalog_configuration.as_mut().unwrap();
+    let capsem_config::environment::EnvironmentMcpDefinition::Remote { url, .. } =
+        configuration.get_mut("review").unwrap()
+    else {
+        panic!("remote template changed kind")
+    };
+    *url = "https://unapproved.invalid/mcp".into();
+    assert_eq!(
+        compile(&altered).await.err(),
+        Some(EnvironmentResolutionError::InvalidPin)
+    );
+    let revoked = fx.registry.publish(CatalogKind::Mcp, document(CatalogKind::Mcp, true));
+    fx.select_mcp_digest(&revoked);
+    assert_eq!(compile(&saved).await.err(), Some(EnvironmentResolutionError::Refused));
+    assert_eq!(
+        route_request(app, Method::GET, "/mcps/list", None).await.0,
+        StatusCode::OK
+    );
+    fx.select_mcp_digest(&digest);
+    assert_eq!(
+        compile(&saved).await.err(),
+        Some(EnvironmentResolutionError::UnusableCatalogEntry)
+    );
+}
 
 #[tokio::test]
 async fn saved_mcp_catalog_configuration_records_the_verified_launch_definition() {
@@ -67,7 +129,10 @@ async fn saved_mcp_catalog_configuration_records_the_verified_launch_definition(
         .await
         .unwrap_err();
     assert_eq!(refusal.status, StatusCode::NOT_IMPLEMENTED);
-    assert!(refusal.body.error.contains("scoped launch preparation"));
+    assert!(refusal
+        .body
+        .error
+        .contains("credential binding requires scoped admission"));
 
     let requests = fx.registry.requests.lock().unwrap().len();
     assert_eq!(create(request.clone()).await, (StatusCode::OK, response));

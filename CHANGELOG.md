@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Run approved remote MCP servers without credential bindings from a saved environment, using its boot revision, live permissions, and current HTTP policy.
 - Added: Browse MCP catalog definitions, configure declared inputs, and review exact launch commands and endpoints before saving an environment in the desktop.
 - Added: Save exact MCP catalog definitions in environment revisions with the declared configuration inputs and separate credential references.
 - Added: Browse digest-pinned MCP catalogs in the gateway and SDKs, including published server definitions, configuration requirements, and optional tool indexes.

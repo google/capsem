@@ -18,7 +18,9 @@ pub use catalog_contents::{
     CatalogContentEntry, CatalogContentError, CatalogContents, RuleCatalogContents, SkillCatalogContents,
 };
 pub use catalog_rules::RuleCatalogInputs;
+mod mcp_launch;
 mod mcp_permissions;
+pub use mcp_launch::validate_environment_mcp_launch;
 mod repositories;
 mod resolution;
 pub use repositories::{

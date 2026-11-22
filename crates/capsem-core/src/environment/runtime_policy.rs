@@ -1,14 +1,15 @@
 //! Selected rule/plugin inputs for the existing service-owned active-policy file.
 //! Revision and generation identities belong to the instance, not these bytes.
-use super::{EnvironmentPolicyInputs, RuleCatalogInputs};
+use super::{mcp_launch, EnvironmentPolicyInputs, RuleCatalogInputs};
 use capsem_config::{
     catalogs::{ResolvedCatalogRule, RuleCatalogDefinition},
     environment::*,
+    mcp::McpConfig,
     plugins::EnvironmentPlugins,
     SecurityRuleSet,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -18,6 +19,9 @@ pub struct EnvironmentRuntimePolicy {
     plugins: EnvironmentPlugins,
     corporate_plugins: EnvironmentPlugins,
     mcp_servers: Vec<String>,
+    /// Exact endpoint and ordinary headers from the acknowledged boot revision.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    mcp_remote: BTreeMap<String, EnvironmentMcpDefinition>,
     mcp_permissions: BTreeMap<String, EnvironmentMcpPermissions>,
     /// Only the selected, resolved definitions, never entire catalog payloads.
     /// Original pin and parameter values remain correlated after serialization.
@@ -45,6 +49,9 @@ impl EnvironmentRuntimePolicy {
         // Reject ambiguous legacy corporate modes before selecting typed options.
         inputs.compile_plugins()?;
         inputs.compile_mcp_permissions()?;
+        let mcp_remote: BTreeMap<_, _> = mcp_launch::definitions(inputs.boot_mcps())?
+            .map(|(name, definition)| (name.clone(), definition.clone()))
+            .collect();
         let mut catalog_rules = Vec::new();
         for (pins, parameters) in [
             (
@@ -77,12 +84,8 @@ impl EnvironmentRuntimePolicy {
             detection: inputs.detection_rules().clone(),
             plugins: inputs.plugins().clone(),
             corporate_plugins: inputs.corporate().environment_plugins.clone().unwrap_or_default(),
-            mcp_servers: inputs
-                .mcp_servers()
-                .keys()
-                .cloned()
-                .chain(inputs.mcp_catalog().selected.iter().map(|pin| pin.id.clone()))
-                .collect(),
+            mcp_servers: mcp_remote.keys().cloned().collect(),
+            mcp_remote,
             mcp_permissions: inputs.mcp_permissions().clone(),
             catalog_rules,
         };
@@ -111,7 +114,20 @@ impl EnvironmentRuntimePolicy {
             self.mcp_servers.iter().map(String::as_str),
             &self.mcp_permissions,
         )?;
+        if self.mcp_remote.len() != self.mcp_servers.len()
+            || self.mcp_servers.iter().any(|id| !self.mcp_remote.contains_key(id))
+        {
+            return Err("environment policy requires each approved MCP endpoint".into());
+        }
+        for (name, definition) in &self.mcp_remote {
+            mcp_launch::validate_remote(name, definition)?;
+        }
         Ok(())
+    }
+
+    pub(crate) fn compile_mcp(&self, corporate: Option<&McpConfig>) -> Result<(McpConfig, BTreeSet<String>), String> {
+        let config = mcp_launch::compose(&self.mcp_remote, &self.mcp_permissions, corporate)?;
+        Ok((config, self.mcp_remote.keys().cloned().collect()))
     }
     fn resolve(
         &self,
