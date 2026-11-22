@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Fixed: Keep MCP spawn requests independent after a correlated denial, and close an interrupted handoff before reusing its channel.
 - Fixed: Apply the saved environment MCP server's default permission to resource reads and prompt retrieval, alongside independent tool overrides.
 - Added: Run approved remote MCP servers without credential bindings from a saved environment, using its boot revision, live permissions, and current HTTP policy.
 - Added: Browse MCP catalog definitions, configure declared inputs, and review exact launch commands and endpoints before saving an environment in the desktop.

@@ -142,6 +142,17 @@ struct SpawnWire {
     failed: bool,
 }
 
+/// A dropped or incomplete exchange leaves the request/reply stream unusable.
+struct SpawnExchange<'a>(&'a mut SpawnWire);
+
+impl Drop for SpawnExchange<'_> {
+    fn drop(&mut self) {
+        if self.0.failed {
+            let _ = fd::shutdown(self.0.socket.as_fd(), SocketShutdown::Both);
+        }
+    }
+}
+
 /// Requests only the trusted parent's predefined builtin; never an executable path.
 #[derive(Clone)]
 pub struct McpSpawnClient(Arc<tokio::sync::Mutex<SpawnWire>>);
@@ -169,19 +180,17 @@ impl McpSpawnClient {
             .await
             .context("MCP spawn queue deadline")?;
         ensure!(!wire.failed, "MCP spawn capability is closed");
-        let result = tokio::time::timeout(STARTUP_TIMEOUT, request_builtin(&mut wire, peer_index))
+        wire.failed = true;
+        let exchange = SpawnExchange(&mut wire);
+        let result = tokio::time::timeout(STARTUP_TIMEOUT, request_builtin(exchange.0, peer_index))
             .await
-            .context("MCP spawn capability deadline")
-            .and_then(|result| result);
-        if result.is_err() {
-            wire.failed = true;
-            fd::shutdown(wire.socket.as_fd(), SocketShutdown::Both).context("close failed MCP spawn capability")?;
-        }
-        result
+            .context("MCP spawn capability deadline")??;
+        exchange.0.failed = false;
+        result.context("MCP spawn was denied")
     }
 }
 
-async fn request_builtin(wire: &mut SpawnWire, peer_index: u32) -> Result<UnixStream> {
+async fn request_builtin(wire: &mut SpawnWire, peer_index: u32) -> Result<Option<UnixStream>> {
     let request_id = wire.next;
     wire.next = request_id.checked_add(1).context("MCP spawn ids exhausted")?;
     let request = encode_spawn_record(McpSpawnRecord::Builtin { request_id, peer_index })?;
@@ -192,9 +201,12 @@ async fn request_builtin(wire: &mut SpawnWire, peer_index: u32) -> Result<UnixSt
         frame.fds.len() == record.expected_descriptor_count(),
         "MCP spawn descriptor count mismatch"
     );
+    if record == (McpSpawnRecord::Denied { request_id }) {
+        return Ok(None);
+    }
     ensure!(
         record == McpSpawnRecord::Granted { request_id },
-        "MCP spawn rejected or reply identity changed"
+        "MCP spawn reply identity changed"
     );
     let descriptor: OwnedFd = frame.fds.into_iter().next().context("MCP spawn missing channel")?;
     fd::validate_connected_stream(descriptor.as_fd())?;
@@ -203,7 +215,7 @@ async fn request_builtin(wire: &mut SpawnWire, peer_index: u32) -> Result<UnixSt
     wire.sender
         .send(&encode_spawn_record(McpSpawnRecord::Adopted { request_id })?, &[])
         .await?;
-    Ok(UnixStream::from(descriptor))
+    Ok(Some(UnixStream::from(descriptor)))
 }
 
 #[cfg(test)]

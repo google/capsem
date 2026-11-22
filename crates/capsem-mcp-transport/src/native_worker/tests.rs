@@ -132,6 +132,70 @@ async fn malformed_spawn_reply_closes_capability_instead_of_reusing_old_authorit
 }
 
 #[tokio::test]
+async fn correlated_spawn_denial_preserves_the_next_independent_request() {
+    let (parent, worker) = UnixStream::pair().unwrap();
+    let receiver = DescriptorReceiver::<MCP_SPAWN_FRAME_SIZE, MCP_SPAWN_MAX_FDS>::new(UnixStream::from(
+        fd::duplicate(parent.as_fd()).unwrap(),
+    ))
+    .unwrap();
+    let sender = DescriptorSender::<MCP_SPAWN_FRAME_SIZE, MCP_SPAWN_MAX_FDS>::new(parent).unwrap();
+    let (peer, _tool) = UnixStream::pair().unwrap();
+    let server = tokio::spawn(async move {
+        for (request_id, record, descriptors) in [
+            (1, McpSpawnRecord::Denied { request_id: 1 }, vec![]),
+            (2, McpSpawnRecord::Granted { request_id: 2 }, vec![peer.as_raw_fd()]),
+        ] {
+            let request = receiver.recv().await.unwrap();
+            assert!(request.fds.is_empty());
+            assert_eq!(
+                decode_spawn_record(&request.bytes).unwrap(),
+                McpSpawnRecord::Builtin {
+                    request_id,
+                    peer_index: 0
+                }
+            );
+            sender
+                .send(&encode_spawn_record(record).unwrap(), &descriptors)
+                .await
+                .unwrap();
+        }
+        let receipt = receiver.recv().await.unwrap();
+        assert_eq!(
+            decode_spawn_record(&receipt.bytes).unwrap(),
+            McpSpawnRecord::Adopted { request_id: 2 }
+        );
+    });
+    let client = McpSpawnClient::new(worker).unwrap();
+    assert!(client.builtin(0).await.is_err());
+    assert!(client.builtin(0).await.is_ok());
+    server.await.unwrap();
+}
+
+#[tokio::test]
+async fn canceling_an_inflight_spawn_closes_the_unacknowledged_capability() {
+    let (parent, worker) = UnixStream::pair().unwrap();
+    let receiver = DescriptorReceiver::<MCP_SPAWN_FRAME_SIZE, MCP_SPAWN_MAX_FDS>::new(parent).unwrap();
+    let client = McpSpawnClient::new(worker).unwrap();
+    let requester = client.clone();
+    let in_flight = tokio::spawn(async move { requester.builtin(0).await });
+    let frame = receiver.recv().await.unwrap();
+    assert_eq!(
+        decode_spawn_record(&frame.bytes).unwrap(),
+        McpSpawnRecord::Builtin {
+            request_id: 1,
+            peer_index: 0
+        }
+    );
+    in_flight.abort();
+    assert!(in_flight.await.unwrap_err().is_cancelled());
+    assert!(tokio::time::timeout(Duration::from_millis(250), receiver.recv())
+        .await
+        .unwrap()
+        .is_err());
+    assert!(client.builtin(0).await.unwrap_err().to_string().contains("closed"));
+}
+
+#[tokio::test]
 async fn real_worker_acknowledges_only_after_confinement_and_uses_its_http_capability() {
     use http_body_util::Full;
     use hyper_util::rt::{TokioExecutor, TokioIo};
