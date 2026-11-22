@@ -384,6 +384,8 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/vms/list", get(proxy::handle_proxy))
         .route("/vms/{id}/info", get(proxy::handle_proxy))
         .route("/vms/{id}/skills/list", get(proxy::handle_proxy))
+        .route("/vms/{id}/mcps", get(proxy::handle_proxy))
+        .route("/vms/{id}/mcps/{server_id}/tools", get(proxy::handle_proxy))
         .route("/vms/{id}/skills/{skill_id}/info", get(proxy::handle_proxy))
         .route("/vms/{id}/readiness", get(proxy::handle_proxy))
         .route("/vms/{id}/status", get(proxy::handle_proxy))

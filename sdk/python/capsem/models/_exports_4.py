@@ -78,8 +78,8 @@ from .vm_files_info import VmFilesInfo
 from .vm_lifecycle_intent import VmLifecycleIntent
 from .vm_lifecycle_selection import VmLifecycleSelection
 from .vm_lifecycle_state import VmLifecycleState
-from .vm_network_info import VmNetworkInfo
-from .vm_readiness_response import VmReadinessResponse
+from .vm_mcp_server import VmMcpServer
+from .vm_mcp_server_kind import VmMcpServerKind
 
 __all__ = [
     'RuleCatalogDetailResponse',
@@ -160,6 +160,6 @@ __all__ = [
     'VmLifecycleIntent',
     'VmLifecycleSelection',
     'VmLifecycleState',
-    'VmNetworkInfo',
-    'VmReadinessResponse',
+    'VmMcpServer',
+    'VmMcpServerKind',
 ]

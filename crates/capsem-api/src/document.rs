@@ -164,6 +164,8 @@ pub fn openapi() -> OpenApi {
     doc.post::<ProxyLeaseRequest, StopProxyResponse>("/proxies/{id}/stop", "stopProxy");
     doc.post::<PersistRequest, PersistResponse>("/vms/{id}/save", "persistVm");
     doc.get::<SandboxInfo>("/vms/{id}/info", "getVmInfo");
+    doc.get::<VmMcpServersResponse>("/vms/{id}/mcps", "listVmMcps");
+    doc.get::<VmMcpToolsResponse>("/vms/{id}/mcps/{server_id}/tools", "listVmMcpTools");
     let vm_skills = doc
         .operation::<VmSkillListResponse>("/vms/{id}/skills/list", "listVmSkills")
         .description(Some(

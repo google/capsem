@@ -82,6 +82,22 @@ export class VM extends Client {
     const {transport, id} = await this.context(options);
     return api.getVmInfo(transport, {id}, options);
   }
+  /** List the MCP servers reported by the running VM. */
+  async mcps(options: CallOptions = {}): Promise<models.VmMcpServersResponse> {
+    const {transport, id} = await this.context(options);
+    const result = await api.listVmMcps(transport, {id}, options);
+    if (result.vm_id !== id) throw new Error('Sandbox MCP inventory identity changed');
+    return result;
+  }
+  /** List definitions reported by one of the running VM's MCP servers. */
+  async mcpTools(serverId: string, options: CallOptions = {}): Promise<models.VmMcpToolsResponse> {
+    const {transport, id} = await this.context(options);
+    const result = await api.listVmMcpTools(transport, {id, server_id: serverId}, options);
+    if (result.vm_id !== id || result.server_id !== serverId) {
+      throw new Error('Sandbox MCP inventory identity changed');
+    }
+    return result;
+  }
   /** List selections applied to the running VM's boot revision. */
   async skills({revisionId, signal, timeoutMs, ...query}: EnvironmentListOptions & {revisionId?: string} = {}): Promise<models.VmSkillListResponse> {
     const options = {signal, timeoutMs};

@@ -65,6 +65,8 @@ operation!(get_catalog_mcp, "getCatalogMcp", GetCatalogMcpParams);
 operation!(list_catalog_skills, "listCatalogSkills", ListCatalogSkillsParams);
 operation!(get_catalog_skill, "getCatalogSkill", GetCatalogSkillParams);
 operation!(list_vm_skills, "listVmSkills", ListVmSkillsParams);
+operation!(list_vm_mcps, "listVmMcps", ListVmMcpsParams);
+operation!(list_vm_mcp_tools, "listVmMcpTools", ListVmMcpToolsParams);
 operation!(get_vm_skill, "getVmSkill", GetVmSkillParams);
 operation!(
     list_environment_revisions,

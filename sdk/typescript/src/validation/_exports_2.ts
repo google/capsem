@@ -1,5 +1,10 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+export {VmMcpServersResponseSchema} from "./VmMcpServersResponse.js";
+export {VmMcpToolSchema} from "./VmMcpTool.js";
+export {VmMcpToolsResponseSchema} from "./VmMcpToolsResponse.js";
+export {VmNetworkInfoSchema} from "./VmNetworkInfo.js";
+export {VmReadinessResponseSchema} from "./VmReadinessResponse.js";
 export {VmSkillDetailResponseSchema} from "./VmSkillDetailResponse.js";
 export {VmSkillListResponseSchema} from "./VmSkillListResponse.js";
 export {VmStartRequestSchema} from "./VmStartRequest.js";

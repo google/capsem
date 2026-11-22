@@ -589,7 +589,7 @@ async fn gateway_does_not_forward_retired_mcp_policy_route() {
 }
 
 #[tokio::test]
-async fn readiness_routes_forward_exact_qualified_paths_only_after_authentication() {
+async fn qualified_vm_and_environment_routes_require_authentication_and_forward_the_exact_path() {
     let root = tempfile::tempdir().unwrap();
     let socket = root.path().join("readiness.sock");
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
@@ -614,6 +614,8 @@ async fn readiness_routes_forward_exact_qualified_paths_only_after_authenticatio
         "/environments/00000000-0000-4000-8000-000000000001/revisions/00000000-0000-4000-8000-000000000002/readiness",
         "/environments/00000000-0000-4000-8000-000000000001/revisions/00000000-0000-4000-8000-000000000002/image-update",
         "/vms/00000000-0000-4000-8000-000000000003/readiness?intent=fork",
+        "/vms/00000000-0000-4000-8000-000000000003/mcps",
+        "/vms/00000000-0000-4000-8000-000000000003/mcps/fixture/tools",
     ] {
         for (method, bearer, status) in [
             ("GET", None, http::StatusCode::UNAUTHORIZED),

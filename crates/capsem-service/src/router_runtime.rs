@@ -129,6 +129,8 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/vms/list", get(handle_list))
         .route("/vms/{id}/info", get(handle_info))
         .route("/vms/{id}/skills/list", get(environment_routes::skills::vm_list))
+        .route("/vms/{id}/mcps", get(mcp_routes::scoped::list_servers))
+        .route("/vms/{id}/mcps/{server_id}/tools", get(mcp_routes::scoped::list_tools))
         .route(
             "/vms/{id}/skills/{skill_id}/info",
             get(environment_routes::skills::vm_info),

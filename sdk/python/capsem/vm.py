@@ -106,6 +106,27 @@ class VM(Client):
         vm_id = await self._resolve()
         return await self._call(vm_id, api.get_vm_info(self._transport, id=vm_id))
 
+    async def mcps(self, *, request_timeout: float | None = None) -> models.VmMcpServersResponse:
+        """List the MCP servers reported by the running VM."""
+        vm_id = await self._resolve(request_timeout=request_timeout)
+        result = await self._call(vm_id, api.list_vm_mcps(
+            self._transport, id=vm_id, request_timeout=request_timeout,
+        ))
+        if result.vm_id != vm_id:
+            raise ValueError("sandbox MCP inventory identity changed")
+        return result
+
+    async def mcp_tools(self, server_id: str, *,
+                        request_timeout: float | None = None) -> models.VmMcpToolsResponse:
+        """List definitions reported by one of the running VM's MCP servers."""
+        vm_id = await self._resolve(request_timeout=request_timeout)
+        result = await self._call(vm_id, api.list_vm_mcp_tools(
+            self._transport, id=vm_id, server_id=server_id, request_timeout=request_timeout,
+        ))
+        if result.vm_id != vm_id or result.server_id != server_id:
+            raise ValueError("sandbox MCP inventory identity changed")
+        return result
+
     async def skills(self, *, revision_id: str | None = None, search: str | None = None,
                      after: str | None = None, limit: int | None = None,
                      request_timeout: float | None = None) -> models.VmSkillListResponse:

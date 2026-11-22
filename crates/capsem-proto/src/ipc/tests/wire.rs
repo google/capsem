@@ -184,6 +184,7 @@ fn process_to_service_variant_names_and_roundtrips_are_stable() {
         },
         ProcessToService::CloneStateReady { id: 11 },
         ProcessToService::McpServersResult { id: 5, servers: vec![] },
+        ProcessToService::McpServersFailed { id: 5 },
         ProcessToService::McpToolsResult { id: 6, tools: vec![] },
         ProcessToService::McpRefreshResult {
             id: 7,
@@ -224,6 +225,7 @@ fn process_to_service_variant_names_and_roundtrips_are_stable() {
         "CloneStateResult",
         "CloneStateReady",
         "McpServersResult",
+        "McpServersFailed",
         "McpToolsResult",
         "McpRefreshResult",
         "McpCallToolResult",

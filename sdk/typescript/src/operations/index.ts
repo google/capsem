@@ -80,6 +80,8 @@ export {listSecurityAsks} from "./listSecurityAsks.js";
 export {listSessionCredentialGrants} from "./listSessionCredentialGrants.js";
 export {listVmExposures} from "./listVmExposures.js";
 export {listVmFiles} from "./listVmFiles.js";
+export {listVmMcpTools} from "./listVmMcpTools.js";
+export {listVmMcps} from "./listVmMcps.js";
 export {listVmSkills} from "./listVmSkills.js";
 export {listVms} from "./listVms.js";
 export {pauseVm} from "./pauseVm.js";

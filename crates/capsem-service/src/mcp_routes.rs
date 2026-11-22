@@ -5,6 +5,8 @@ use super::*;
 use capsem_core::mcp::policy::McpConfig;
 use capsem_core::net::policy_config::{mcp_default_permission, mcp_server_configured, mcp_tool_permission};
 
+pub(crate) mod scoped;
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct McpPermissionEditRequest {
@@ -131,15 +133,7 @@ pub(super) fn persist_mcp_tool_cache(
 ) -> Result<(), AppError> {
     let tools = tools
         .into_iter()
-        .map(|tool| capsem_proto::mcp_contracts::McpToolDef {
-            namespaced_name: tool.namespaced_name,
-            original_name: tool.original_name,
-            description: tool.description,
-            input_schema: tool.input_schema,
-            server_name: tool.server_name,
-            annotations: tool.annotations,
-            timeout_secs: None,
-        })
+        .map(capsem_proto::mcp_contracts::McpToolDef::from)
         .collect::<Vec<_>>();
     let mut cache = state
         .mcp_tool_cache

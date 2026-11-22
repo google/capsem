@@ -106,6 +106,8 @@ from .list_session_credential_grants import (
 )
 from .list_vm_exposures import list_vm_exposures as list_vm_exposures
 from .list_vm_files import list_vm_files as list_vm_files
+from .list_vm_mcp_tools import list_vm_mcp_tools as list_vm_mcp_tools
+from .list_vm_mcps import list_vm_mcps as list_vm_mcps
 from .list_vm_skills import list_vm_skills as list_vm_skills
 from .list_vms import list_vms as list_vms
 from .pause_vm import pause_vm as pause_vm

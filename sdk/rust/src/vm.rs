@@ -154,6 +154,31 @@ impl VM {
         .await
     }
 
+    /// List the MCP servers reported by the running VM.
+    pub async fn mcps(&self) -> Result<models::VmMcpServersResponse> {
+        let input = api::ListVmMcpsParams {
+            id: self.resolve().await?,
+        };
+        let result = api::list_vm_mcps(&self.client.transport, &input, self.client.options).await?;
+        if result.vm_id != input.id {
+            return Err(Error::InvalidResponse("sandbox MCP inventory identity changed"));
+        }
+        Ok(result)
+    }
+
+    /// List definitions reported by one of the running VM's MCP servers.
+    pub async fn mcp_tools(&self, server_id: &str) -> Result<models::VmMcpToolsResponse> {
+        let input = api::ListVmMcpToolsParams {
+            id: self.resolve().await?,
+            server_id: server_id.to_owned(),
+        };
+        let result = api::list_vm_mcp_tools(&self.client.transport, &input, self.client.options).await?;
+        if result.vm_id != input.id || result.server_id != input.server_id {
+            return Err(Error::InvalidResponse("sandbox MCP inventory identity changed"));
+        }
+        Ok(result)
+    }
+
     /// List skills from the acknowledged boot revision of the running VM.
     pub async fn skills(
         &self,

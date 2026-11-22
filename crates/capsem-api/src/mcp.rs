@@ -70,3 +70,48 @@ pub struct McpRefreshResponse {
     pub server_id: String,
     pub instances: usize,
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum VmMcpServerKind {
+    Builtin,
+    Remote,
+    Sandbox,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, ToSchema)]
+pub struct VmMcpServer {
+    pub name: String,
+    pub kind: VmMcpServerKind,
+    pub enabled: bool,
+    pub connected: bool,
+    pub tool_count: usize,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, ToSchema)]
+pub struct VmMcpServersResponse {
+    pub vm_id: String,
+    #[schema(format = "uuid")]
+    pub owner_generation: String,
+    pub servers: Vec<VmMcpServer>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, ToSchema)]
+pub struct VmMcpTool {
+    pub namespaced_name: String,
+    pub original_name: String,
+    pub description: Option<String>,
+    pub input_schema: serde_json::Value,
+    pub annotations: Option<serde_json::Value>,
+    /// Digest of the definition currently reported by this VM's MCP runtime.
+    pub definition_digest: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, ToSchema)]
+pub struct VmMcpToolsResponse {
+    pub vm_id: String,
+    #[schema(format = "uuid")]
+    pub owner_generation: String,
+    pub server_id: String,
+    pub tools: Vec<VmMcpTool>,
+}

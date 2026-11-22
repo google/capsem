@@ -13,13 +13,16 @@ import shlex
 import ssl
 import time
 import uuid
+from contextlib import closing
 from urllib.parse import urlsplit
 from urllib.request import urlopen
 
 import pytest
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
+from helpers.gateway import TcpHttpClient
 from helpers.mock_server import start_mock_server, stop_process
 from helpers.service import exec_output_text, vm_name, wait_exec_ready
+from helpers.service_gateway import ServiceGateway
 
 from tests.fixtures.oci.registry import publish_catalog, registry
 from tests.ironbank.kingslanding.test_image_catalog import entry, use_catalog
@@ -213,8 +216,10 @@ with subprocess.Popen(['/run/capsem-mcp-server'], stdin=subprocess.PIPE,
         }
         resource_only = save(service, resource_spec)
         replies = {}
+        instances = {}
         for decision, reference in [("blocked", blocked), ("allowed", allowed), ("resource", resource_only)]:
             vm = create(service, reference, vm_name(f"mcp-{decision}"))
+            instances[decision] = vm
             assert wait_exec_ready(service.client(), vm)
             response = request(service, "POST", f"/vms/{vm}/exec", {
                 "command": f"python3 -c {shlex.quote(probe)} {decision}",
@@ -222,6 +227,37 @@ with subprocess.Popen(['/run/capsem-mcp-server'], stdin=subprocess.PIPE,
             })
             assert response["exit_code"] == 0, response
             replies[decision] = json.loads(exec_output_text(response))
+
+        vm = instances["allowed"]
+        route = f"/vms/{vm}/mcps"
+        inventory = request(service, "GET", route)
+        assert inventory["vm_id"] == vm
+        (server,) = [entry for entry in inventory["servers"] if entry["name"] == "scoped"]
+        assert server["kind"] == "remote" and server["connected"], inventory
+        tool_list = request(service, "GET", f"{route}/scoped/tools")
+        assert tool_list["owner_generation"] == inventory["owner_generation"]
+        (tool,) = [entry for entry in tool_list["tools"] if entry["original_name"] == "fixture_lookup"]
+        assert tool["input_schema"]["properties"]["query"]["type"] == "string"
+        assert tool["definition_digest"]
+        request(service, "GET", f"{route}/unknown/tools", expected=404)
+
+        gateway = ServiceGateway(service)
+        gateway.start()
+        try:
+            with closing(TcpHttpClient(gateway.base_url, gateway.token)) as operator:
+                secret = secrets.token_hex(32)
+                status, grant = operator.call_json("POST", "/agent-access", {
+                    "request_id": str(uuid.uuid4()), "ownership_token": secret, "lease_seconds": 300,
+                    "scope": {"operations": ["inspect"], "sessions": [{
+                        "session_id": vm, "owner_generation": inventory["owner_generation"],
+                    }]},
+                })
+                assert status == 200, grant
+                with closing(TcpHttpClient(gateway.base_url, f"{grant['access']['id']}.{secret}")) as agent:
+                    assert agent.call_json("GET", f"{route}/scoped/tools") == (200, tool_list)
+                    assert agent.call_json("GET", f"/vms/{instances['blocked']}/mcps")[0] == 403
+        finally:
+            gateway.stop()
 
         assert replies["allowed"]["call"]["result"]["content"] == [
             {"type": "text", "text": "capsem-mock-server:mcp:fixture_lookup"},

@@ -198,5 +198,5 @@ export type { VmFilesInfo } from "./VmFilesInfo.js";
 export { VmLifecycleIntent } from "./VmLifecycleIntent.js";
 export type { VmLifecycleSelection } from "./VmLifecycleSelection.js";
 export { VmLifecycleState } from "./VmLifecycleState.js";
-export type { VmNetworkInfo } from "./VmNetworkInfo.js";
-export type { VmReadinessResponse } from "./VmReadinessResponse.js";
+export type { VmMcpServer } from "./VmMcpServer.js";
+export { VmMcpServerKind } from "./VmMcpServerKind.js";

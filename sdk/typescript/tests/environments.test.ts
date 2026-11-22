@@ -82,6 +82,29 @@ it('correlates applied VM skills with the requested owner and revision', async (
   });
 });
 
+it('checks the VM and server identity of live MCP inventory', async () => {
+  const scope = {vm_id: 'vm-1', owner_generation: requestId};
+  const inputSchema = {type: 'object', properties: {query: {type: 'string'}}};
+  let payload: unknown = {...scope, servers: []};
+  await gateway((_request, reply) => reply.end(JSON.stringify(payload)), async (url, received) => {
+    const hv = new Hypervisor(url, 'token');
+    try {
+      const vm = hv.vm({id: 'vm-1'});
+      expect((await vm.mcps()).owner_generation).toBe(requestId);
+      expect(received.at(-1)?.url).toBe('/vms/vm-1/mcps');
+      payload = {...scope, vm_id: 'vm-2', servers: []};
+      await expect(vm.mcps()).rejects.toThrow('inventory identity changed');
+      payload = {...scope, server_id: 'library', tools: [{
+        namespaced_name: 'library__search', original_name: 'search',
+        input_schema: inputSchema, definition_digest: 'observed',
+      }]};
+      expect((await vm.mcpTools('library')).tools[0]?.input_schema).toEqual(inputSchema);
+      expect(received.at(-1)?.url).toBe('/vms/vm-1/mcps/library/tools');
+      await expect(vm.mcpTools('other')).rejects.toThrow('inventory identity changed');
+    } finally { hv.close(); }
+  });
+});
+
 it('runs a command from an exact saved revision and refuses inline variables', async () => {
   const reference = {environment_id: environmentId, revision_id: requestId};
   const output = {stdout: {encoding: 'utf8', data: 'pinned'}, stderr: {encoding: 'utf8', data: ''}, exit_code: 0};

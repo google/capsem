@@ -37,6 +37,77 @@ async fn get(app: &Router, uri: &str) -> serde_json::Value {
 }
 
 #[tokio::test]
+async fn vm_mcp_inventory_reads_the_requested_owner_and_preserves_the_tool_schema() {
+    use capsem_proto::ipc::{McpServerStatus, McpToolStatus};
+    let (state, directory) = make_test_state_with_tempdir();
+    let first = capsem_crypto::uuid_v4().to_string();
+    let second = capsem_crypto::uuid_v4().to_string();
+    for id in [&first, &second] {
+        let path = directory.path().join(id);
+        std::fs::create_dir(&path).unwrap();
+        insert_fake_instance_with_session_dir(&state, id, std::process::id(), path);
+    }
+    let (socket, generation) = {
+        let instances = state.instances.lock().unwrap();
+        let owner = &instances[&second];
+        (owner.uds_path.clone(), owner.generation.to_string())
+    };
+    let schema = json!({"type":"object","properties":{"query":{"type":"string"}}});
+    let owner_schema = schema.clone();
+    let process = spawn_fake_process(&socket, 3, move |command| {
+        let reply = match command {
+            ServiceToProcess::McpListServers { id } => ProcessToService::McpServersResult {
+                id: *id,
+                servers: vec![McpServerStatus {
+                    name: "library".into(),
+                    url: "https://library.example/mcp".into(),
+                    source: "config".into(),
+                    enabled: true,
+                    is_stdio: false,
+                    connected: true,
+                    tool_count: 1,
+                }],
+            },
+            ServiceToProcess::McpListTools { id } => ProcessToService::McpToolsResult {
+                id: *id,
+                tools: vec![McpToolStatus {
+                    namespaced_name: "library__search".into(),
+                    original_name: "search".into(),
+                    description: Some("Search library".into()),
+                    input_schema: owner_schema.clone(),
+                    server_name: "library".into(),
+                    annotations: None,
+                }],
+            },
+            other => panic!("unexpected inventory command {other:?}"),
+        };
+        Box::pin(async move { Some(reply) })
+    });
+    let app = build_service_router(state);
+    let servers = get(&app, &format!("/vms/{second}/mcps")).await;
+    assert_eq!(servers["vm_id"], second);
+    assert_eq!(servers["owner_generation"], generation);
+    assert_eq!(
+        servers["servers"],
+        json!([{
+            "name":"library", "kind":"remote", "enabled":true, "connected":true, "tool_count":1
+        }])
+    );
+    let tools = get(&app, &format!("/vms/{second}/mcps/library/tools")).await;
+    assert_eq!(tools["vm_id"], second);
+    assert_eq!(tools["owner_generation"], generation);
+    assert_eq!(tools["server_id"], "library");
+    let listed = tools["tools"].as_array().unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0]["original_name"], "search");
+    assert_eq!(listed[0]["input_schema"], schema);
+    assert!(listed[0]["definition_digest"]
+        .as_str()
+        .is_some_and(|hash| !hash.is_empty()));
+    assert_eq!(process.await.unwrap().len(), 3);
+}
+
+#[tokio::test]
 async fn mcp_reads_list_the_configured_and_builtin_servers() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();

@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Operators and delegated inspectors can list the MCP servers and tool definitions reported by a specific running sandbox generation.
 - Added: Operators can review and approve an exact image update for future sandbox creations. Existing sandboxes retain their saved revisions.
 - Added: Operators can check for image updates against an exact active environment revision. Pinned environments keep their selected digest.
 - Added: Saved environments can select built-in package registry read rules under current corporate policy.

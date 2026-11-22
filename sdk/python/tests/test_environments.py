@@ -96,6 +96,30 @@ def test_vm_skill_reads_bind_sandbox_id_and_applied_revision():
     asyncio.run(run())
 
 
+def test_vm_mcp_inventory_preserves_identity_and_input_schema():
+    async def run():
+        scope = {"vm_id": "vm-1", "owner_generation": REQUEST}
+        schema = {"type": "object", "properties": {"query": {"type": "string"}}}
+        response: dict[str, object] = {**scope, "servers": []}
+        async with gateway(response=response) as (url, received), Hypervisor(url, "gateway-token") as hv:
+            vm = hv.vm(id="vm-1")
+            assert (await vm.mcps()).owner_generation == REQUEST
+            assert received[-1][1] == "/vms/vm-1/mcps"
+            response["vm_id"] = "vm-2"
+            with pytest.raises(ValueError, match="inventory identity changed"):
+                await vm.mcps()
+            response.clear()
+            response.update(**scope, server_id="library", tools=[{
+                "namespaced_name": "library__search", "original_name": "search",
+                "input_schema": schema, "definition_digest": "observed",
+            }])
+            assert (await vm.mcp_tools("library")).tools[0].input_schema == schema
+            assert received[-1][1] == "/vms/vm-1/mcps/library/tools"
+            with pytest.raises(ValueError, match="inventory identity changed"):
+                await vm.mcp_tools("other")
+    asyncio.run(run())
+
+
 def test_environment_creation_inspection_and_explicit_reconciliation():
     async def run():
         response = dict(PENDING)

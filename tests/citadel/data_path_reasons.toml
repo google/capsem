@@ -143,7 +143,8 @@ json = { count = 2, reason = "http" }
 json = { count = 3, reason = "http" }
 
 [sources."crates/capsem-api/src/mcp.rs"]
-json = { count = 2, reason = "http" }
+# The HTTP inventory carries each MCP tool's native schema and annotations for inspection.
+json = { count = 4, reason = "http" }
 
 [sources."crates/capsem-api/src/networks.rs"]
 json = { count = 1, reason = "http" }
@@ -980,6 +981,12 @@ json = { count = 1, reason = "http" }
 json = { count = 1, reason = "http" }
 
 [sources."sdk/rust/src/operations/generated/list_vm_skills.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/list_vm_mcps.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/list_vm_mcp_tools.rs"]
 json = { count = 1, reason = "http" }
 
 [sources."sdk/rust/src/operations/generated/create_environment.rs"]

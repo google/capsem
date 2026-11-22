@@ -734,9 +734,7 @@ pub(crate) async fn handle_ipc_connection(
                         Err(e) => {
                             capsem_core::try_send!(
                                 "ipc_mcp_servers_err",
-                                ipc_tx_out
-                                    .send(ProcessToService::McpServersResult { id, servers: vec![] })
-                                    .await
+                                ipc_tx_out.send(ProcessToService::McpServersFailed { id }).await
                             );
                             warn!(error = %e, "failed to list MCP servers");
                         }

@@ -107,6 +107,35 @@ async fn vm_skill_reads_bind_the_sandbox_and_expected_boot_revision() {
 }
 
 #[tokio::test]
+async fn vm_mcp_inventory_preserves_identity_and_input_schema() {
+    let mut server = Server::respond(|parts| {
+        let body = if parts.uri.path().ends_with("/mcps") {
+            json!({"vm_id":"vm-1","owner_generation":REQUEST,"servers":[]})
+        } else {
+            json!({"vm_id":"vm-1","owner_generation":REQUEST,"server_id":"library","tools":[{
+                "namespaced_name":"library__search","original_name":"search",
+                "input_schema":{"type":"object","properties":{"query":{"type":"string"}}},
+                "definition_digest":"observed",
+            }]})
+        };
+        Response::new(Body::from(body.to_string()))
+    })
+    .await;
+    let hv = Hypervisor::new(&server.url, "private-token").unwrap();
+    let vm = hv.vm(crate::VmSelector::Id("vm-1".into())).unwrap();
+    assert_eq!(vm.mcps().await.unwrap().owner_generation, REQUEST);
+    let (listing, _) = server.received.recv().await.unwrap();
+    assert_eq!(listing.uri.path(), "/vms/vm-1/mcps");
+    let list = vm.mcp_tools("library").await.unwrap();
+    assert_eq!(list.tools[0].input_schema["properties"]["query"]["type"], "string");
+    let (tools, _) = server.received.recv().await.unwrap();
+    assert_eq!(tools.uri.path(), "/vms/vm-1/mcps/library/tools");
+    assert!(matches!(vm.mcp_tools("other").await, Err(Error::InvalidResponse(_))));
+    let other = hv.vm(crate::VmSelector::Id("vm-2".into())).unwrap();
+    assert!(matches!(other.mcps().await, Err(Error::InvalidResponse(_))));
+}
+
+#[tokio::test]
 async fn plugin_defaults_and_saved_results_require_their_exact_revision_context() {
     let mut server = Server::respond(|parts| {
         let revision = if parts.uri.path() == "/environments/plugins/list" {

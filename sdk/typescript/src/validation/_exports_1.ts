@@ -198,5 +198,5 @@ export {VmFilesInfoSchema} from "./VmFilesInfo.js";
 export {VmLifecycleIntentSchema} from "./VmLifecycleIntent.js";
 export {VmLifecycleSelectionSchema} from "./VmLifecycleSelection.js";
 export {VmLifecycleStateSchema} from "./VmLifecycleState.js";
-export {VmNetworkInfoSchema} from "./VmNetworkInfo.js";
-export {VmReadinessResponseSchema} from "./VmReadinessResponse.js";
+export {VmMcpServerSchema} from "./VmMcpServer.js";
+export {VmMcpServerKindSchema} from "./VmMcpServerKind.js";

@@ -395,6 +395,10 @@ pub enum ProcessToService {
         id: u64,
         servers: Vec<McpServerStatus>,
     },
+    /// Server discovery failed; an empty successful inventory means no servers.
+    McpServersFailed {
+        id: u64,
+    },
     /// Response to McpListTools.
     McpToolsResult {
         id: u64,
@@ -596,6 +600,7 @@ impl ProcessToService {
             | Self::LogFileBoundaryResult { id, .. }
             | Self::CloneStateResult { id, .. }
             | Self::McpServersResult { id, .. }
+            | Self::McpServersFailed { id }
             | Self::McpToolsResult { id, .. }
             | Self::McpToolsFailed { id, .. }
             | Self::McpRefreshResult { id, .. }
@@ -655,6 +660,20 @@ pub struct McpToolStatus {
     /// Typed so SDK and UI consumers get one stable annotation contract.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub annotations: Option<crate::mcp_contracts::ToolAnnotations>,
+}
+
+impl From<McpToolStatus> for crate::mcp_contracts::McpToolDef {
+    fn from(tool: McpToolStatus) -> Self {
+        Self {
+            namespaced_name: tool.namespaced_name,
+            original_name: tool.original_name,
+            description: tool.description,
+            input_schema: tool.input_schema,
+            server_name: tool.server_name,
+            annotations: tool.annotations,
+            timeout_secs: None,
+        }
+    }
 }
 
 #[cfg(test)]

@@ -4408,6 +4408,98 @@
         }
       }
     },
+    "/vms/{id}/mcps": {
+      "get": {
+        "operationId": "listVmMcps",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VmMcpServersResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/mcps/{server_id}/tools": {
+      "get": {
+        "operationId": "listVmMcpTools",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "server_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VmMcpToolsResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/vms/{id}/pause": {
       "post": {
         "operationId": "pauseVm",
@@ -15307,6 +15399,121 @@
           "Defunct",
           "Incompatible"
         ]
+      },
+      "VmMcpServer": {
+        "type": "object",
+        "required": [
+          "name",
+          "kind",
+          "enabled",
+          "connected",
+          "tool_count"
+        ],
+        "properties": {
+          "connected": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/VmMcpServerKind"
+          },
+          "name": {
+            "type": "string"
+          },
+          "tool_count": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "VmMcpServerKind": {
+        "type": "string",
+        "enum": [
+          "builtin",
+          "remote",
+          "sandbox"
+        ]
+      },
+      "VmMcpServersResponse": {
+        "type": "object",
+        "required": [
+          "vm_id",
+          "owner_generation",
+          "servers"
+        ],
+        "properties": {
+          "owner_generation": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "servers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VmMcpServer"
+            }
+          },
+          "vm_id": {
+            "type": "string"
+          }
+        }
+      },
+      "VmMcpTool": {
+        "type": "object",
+        "required": [
+          "namespaced_name",
+          "original_name",
+          "input_schema",
+          "definition_digest"
+        ],
+        "properties": {
+          "annotations": {},
+          "definition_digest": {
+            "type": "string",
+            "description": "Digest of the definition currently reported by this VM's MCP runtime."
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "input_schema": {},
+          "namespaced_name": {
+            "type": "string"
+          },
+          "original_name": {
+            "type": "string"
+          }
+        }
+      },
+      "VmMcpToolsResponse": {
+        "type": "object",
+        "required": [
+          "vm_id",
+          "owner_generation",
+          "server_id",
+          "tools"
+        ],
+        "properties": {
+          "owner_generation": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "server_id": {
+            "type": "string"
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VmMcpTool"
+            }
+          },
+          "vm_id": {
+            "type": "string"
+          }
+        }
       },
       "VmNetworkInfo": {
         "type": "object",
