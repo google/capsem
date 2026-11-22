@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import copy
+import json
 import os
 import subprocess
 import time
 import uuid
+from functools import cache
 from pathlib import Path
 
 import psutil
@@ -142,7 +144,35 @@ def test_installed_sdk_cold_lifecycle_waits_for_the_retained_revision(
     assert_cold_lifecycle_waits(service, tmp_path, client, "clone", 238)
 
 
-def run_cold_client(client, operation, service, gateway, source, source_name, timeout):
+@cache
+def rust_gateway_probe():
+    # A cold SDK build and the test's live startup deadline have separate budgets.
+    build = subprocess.run(
+        bounded(
+            ["cargo", "build", "--locked", "--offline", "--message-format=json",
+             "-p", "capsem-sdk", "--example", "gateway_acceptance"],
+            600,
+        ),
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=610,
+        check=False,
+    )
+    assert build.returncode == 0, build.stderr
+    messages = (json.loads(line) for line in build.stdout.splitlines())
+    artifacts = [
+        message["executable"]
+        for message in messages
+        if message.get("reason") == "compiler-artifact"
+        and message["target"]["name"] == "gateway_acceptance"
+        and message.get("executable")
+    ]
+    assert len(artifacts) == 1, artifacts
+    return artifacts[0]
+
+
+def run_cold_client(client, operation, service, gateway, source, source_name, timeout, rust_probe):
     target_name = vm_name("cold-clone")
     env = environment(service)
     if client == "cli":
@@ -163,22 +193,8 @@ def run_cold_client(client, operation, service, gateway, source, source_name, ti
         )
         command = cli(service, *args)
     else:
-        command = bounded(
-            [
-                "cargo",
-                "run",
-                "--quiet",
-                "--locked",
-                "--offline",
-                "-p",
-                "capsem-sdk",
-                "--example",
-                "gateway_acceptance",
-                "--",
-                operation,
-            ],
-            timeout,
-        )
+        assert rust_probe is not None
+        command = bounded([rust_probe, operation], timeout)
         env.update(
             SDK_GATEWAY_URL=gateway.base_url,
             SDK_GATEWAY_TOKEN=gateway.token,
@@ -204,6 +220,7 @@ def run_cold_client(client, operation, service, gateway, source, source_name, ti
 
 
 def assert_cold_lifecycle_waits(service, tmp_path, client, operation, startup_seconds):
+    rust_probe = rust_gateway_probe() if client == "rust" else None
     artifacts = {}
     with registry(tmp_path, image_config=IMAGE_CONFIG, artifacts=artifacts) as (
         image,
@@ -329,6 +346,7 @@ def assert_cold_lifecycle_waits(service, tmp_path, client, operation, startup_se
                     source,
                     source_name,
                     startup_seconds + 75,
+                    rust_probe,
                 )
             assert time.monotonic() - started >= startup_seconds
             assert (target != source) == (operation == "clone")
