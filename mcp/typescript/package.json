@@ -1,6 +1,6 @@
 {
   "name": "@capsem/mcp",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "description": "Capsem MCP server over the authenticated gateway SDK",
   "license": "Apache-2.0",
   "repository": {"type": "git", "url": "git+https://github.com/google/capsem.git", "directory": "mcp/typescript"},
@@ -18,7 +18,7 @@
     "prepack": "pnpm run build"
   },
   "dependencies": {
-    "@capsem/sdk": "workspace:0.7.2",
+    "@capsem/sdk": "workspace:0.7.3",
     "@modelcontextprotocol/sdk": "1.32.0",
     "zod": "4.6.7"
   },

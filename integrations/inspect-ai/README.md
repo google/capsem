@@ -3,9 +3,8 @@
 `inspect-capsem-sandbox` (`inspect_capsem`) registers the `capsem` [`SandboxEnvironment`](https://inspect.aisi.org.uk/sandboxing.html) for [Inspect AI](https://inspect.aisi.org.uk/), running evaluations inside isolated Capsem micro-VMs via the Python [`capsem`](../../sdk/python/README.md) SDK.
 
 Use Python 3.11.5 or newer and a Capsem 0.7.1 or newer service and Python SDK.
-The extension needs the VM
-labels and typed errors introduced with that SDK cohort. It is not published
-to PyPI yet.
+The extension needs the VM labels and typed errors introduced with that SDK
+cohort. Install the extension from PyPI with `python -m pip install inspect-capsem-sandbox`.
 
 From a repository checkout:
 

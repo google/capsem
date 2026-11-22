@@ -5,12 +5,11 @@ your application.
 
 ## Installation
 
-Requires Python 3.11 or later. This example targets Capsem 0.7.1. Until its
-Python package is published, install the SDK from the 0.7.1 source revision;
-PyPI's `capsem` 0.3.2 does not provide this API.
+Requires Python 3.11 or later. This example targets Capsem 0.7.3 and the
+matching Python SDK.
 
 ```sh
-python -m pip install "capsem @ git+https://github.com/google/capsem.git@3c17b44f7a4c0457cb4b168df829daf293415c12#subdirectory=sdk/python"
+python -m pip install capsem==0.7.3
 ```
 
 [Install Capsem](https://docs.capsem.org/getting-started/installation/) and

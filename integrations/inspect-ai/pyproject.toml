@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "inspect-capsem-sandbox"
-version = "0.1.0"
+version = "0.1.1"
 description = "Capsem SandboxEnvironment extension for Inspect AI"
 readme = "README.md"
 license = "Apache-2.0"

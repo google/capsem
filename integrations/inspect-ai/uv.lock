@@ -324,7 +324,7 @@ wheels = [
 
 [[package]]
 name = "capsem"
-version = "0.7.2"
+version = "0.7.3"
 source = { editable = "../../sdk/python" }
 dependencies = [
     { name = "aiohttp" },
@@ -1015,7 +1015,7 @@ wheels = [
 
 [[package]]
 name = "inspect-capsem-sandbox"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "capsem" },
