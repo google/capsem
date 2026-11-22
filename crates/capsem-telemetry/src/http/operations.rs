@@ -51,6 +51,8 @@ pub const ROUTES: &[&str] = &[
     "/mcp/servers/{server_id}/tools/list",
     "/mcp/servers/{server_id}/tools/{tool_id}/call",
     "/mcp/servers/{server_id}/tools/{tool_id}/edit",
+    "/mcps/list",
+    "/mcps/{mcp_id}/info",
     "/networks",
     "/networks/private/resolve",
     "/networks/{id}",

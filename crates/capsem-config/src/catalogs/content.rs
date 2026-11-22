@@ -87,13 +87,13 @@ pub struct CatalogEntryMetadata {
     pub status_reason: Option<String>,
 }
 
-fn text(value: &str, max: usize, multiline: bool) -> bool {
+pub(super) fn text(value: &str, max: usize, multiline: bool) -> bool {
     value.len() <= max
         && !value
             .chars()
             .any(|ch| ch.is_control() && !(multiline && matches!(ch, '\n' | '\r' | '\t')))
 }
-fn label(value: &str, max: usize) -> bool {
+pub(super) fn label(value: &str, max: usize) -> bool {
     !value.trim().is_empty() && text(value, max, false)
 }
 impl CatalogEntryMetadata {

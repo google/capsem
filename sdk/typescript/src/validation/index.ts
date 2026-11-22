@@ -2,3 +2,4 @@
 
 export * from "./_exports_0.js";
 export * from "./_exports_1.js";
+export * from "./_exports_2.js";

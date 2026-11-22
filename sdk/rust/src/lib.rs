@@ -21,7 +21,7 @@ pub mod operations;
 mod options;
 mod requests;
 mod catalogs;
-pub use catalogs::{Rules, Skills};
+pub use catalogs::{Mcps, Rules, Skills};
 pub use requests::Requests;
 pub mod resources;
 pub mod transport;

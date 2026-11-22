@@ -1,23 +1,25 @@
-"""Global rule discovery is read-only and requires Discover delegation."""
+"""Native global rule and MCP discovery require Discover delegation."""
 
-from contextlib import closing
 import secrets
 import uuid
+from contextlib import closing
 
 import pytest
 from helpers.gateway import TcpHttpClient
 from helpers.service_gateway import ServiceGateway
+
 from tests.ironbank.kingslanding.test_run import service
 
 __all__ = ["service"]
 pytestmark = pytest.mark.integration
 
 
-def test_native_rule_catalog_routes_require_discover_scope(service):
+@pytest.mark.parametrize("catalog", ["rules", "mcps"])
+def test_native_catalog_routes_require_discover_scope(service, catalog):
     gateway = ServiceGateway(service)
     gateway.start()
     try:
-        paths = ("/rules/list?limit=0", "/rules/review/info?version=1.0.0&snapshot=invalid")
+        paths = (f"/{catalog}/list?limit=0", f"/{catalog}/review/info?version=1.0.0&snapshot=invalid")
         with closing(TcpHttpClient(gateway.base_url, gateway.token)) as operator:
             for path in paths:
                 assert operator.call_json("GET", path)[0] == 400

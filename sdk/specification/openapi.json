@@ -426,7 +426,7 @@
     },
     "/environments/create": {
       "post": {
-        "description": "Create an operator blueprint. Reconcile the same request ID explicitly after interruption; never infer completed application from an accepted decision. Skills and rules resolve from configured catalogs. Anonymous public HTTPS Git references resolve under current corporate policy; this does not prepare a sandbox checkout. MCP catalog verification is unavailable.",
+        "description": "Create an operator blueprint. Reconcile the same request ID explicitly after interruption; never infer completed application from an accepted decision. Skills and rules resolve from configured catalogs. Anonymous public HTTPS Git references resolve under current corporate policy; this does not prepare a sandbox checkout. Catalog-based MCP configuration is unavailable.",
         "operationId": "createEnvironment",
         "requestBody": {
           "content": {
@@ -1574,6 +1574,131 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Value"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcps/list": {
+      "get": {
+        "description": "Discover published MCP server versions in the configured, digest-pinned OCI catalog. Continue with next_cursor against the same source and digest.",
+        "operationId": "listCatalogMcps",
+        "parameters": [
+          {
+            "name": "search",
+            "in": "query",
+            "description": "Case-insensitive match on catalog entry metadata.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "Continue with the cursor for the same source and catalog digest.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Number of matches per page, from 1 to 64. Defaults to 24.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpCatalogListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mcps/{mcp_id}/info": {
+      "get": {
+        "description": "Read the published server template, configuration requirements and optional tool index for an exact version. A moved catalog snapshot returns a conflict. This route only contacts the OCI registry.",
+        "operationId": "getCatalogMcp",
+        "parameters": [
+          {
+            "name": "mcp_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "Exact published entry version.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "snapshot",
+            "in": "query",
+            "description": "Source and digest token returned by the list.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpCatalogDetailResponse"
                 }
               }
             }
@@ -10850,6 +10975,193 @@
           "credential"
         ]
       },
+      "McpCatalogDefinition": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "url",
+              "kind"
+            ],
+            "properties": {
+              "headers": {
+                "type": "object",
+                "description": "Ordinary header inputs supplied during environment configuration.",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/McpCatalogRequirement"
+                },
+                "propertyNames": {
+                  "type": "string"
+                }
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "remote"
+                ]
+              },
+              "secret_binding": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/McpCatalogRequirement"
+                  }
+                ]
+              },
+              "url": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "executable",
+              "kind"
+            ],
+            "properties": {
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "executable": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "sandbox"
+                ]
+              },
+              "secret_variables": {
+                "type": "object",
+                "description": "Names of guest variables backed by approved secret bindings.",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/McpCatalogRequirement"
+                },
+                "propertyNames": {
+                  "type": "string"
+                }
+              },
+              "variables": {
+                "type": "object",
+                "description": "Values supplied as ordinary guest environment variables.",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/McpCatalogRequirement"
+                },
+                "propertyNames": {
+                  "type": "string"
+                }
+              },
+              "workdir": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "McpCatalogDetailResponse": {
+        "type": "object",
+        "required": [
+          "selection",
+          "metadata",
+          "definition"
+        ],
+        "properties": {
+          "definition": {
+            "$ref": "#/components/schemas/McpCatalogDefinition",
+            "description": "Published endpoint or sandbox command and the inputs required for configuration."
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/CatalogEntryMetadata"
+          },
+          "published_tools": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/McpPublishedTool"
+            },
+            "description": "Optional index from the publisher. Live discovery has its own scope and policy."
+          },
+          "selection": {
+            "$ref": "#/components/schemas/EnvironmentCatalogPin"
+          }
+        },
+        "additionalProperties": false
+      },
+      "McpCatalogKind": {
+        "type": "string",
+        "enum": [
+          "remote",
+          "sandbox"
+        ]
+      },
+      "McpCatalogListResponse": {
+        "type": "object",
+        "required": [
+          "catalog",
+          "mcps"
+        ],
+        "properties": {
+          "catalog": {
+            "$ref": "#/components/schemas/CatalogSnapshot"
+          },
+          "mcps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/McpCatalogSummary"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "McpCatalogRequirement": {
+        "type": "object",
+        "required": [
+          "description",
+          "required"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      },
+      "McpCatalogSummary": {
+        "type": "object",
+        "required": [
+          "metadata",
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/McpCatalogKind"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/CatalogEntryMetadata"
+          }
+        },
+        "additionalProperties": false
+      },
       "McpDefaultPermissionResponse": {
         "type": "object",
         "required": [
@@ -10902,6 +11214,21 @@
           "rewrite",
           "postprocess"
         ]
+      },
+      "McpPublishedTool": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "McpRefreshResponse": {
         "type": "object",

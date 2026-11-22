@@ -1,7 +1,7 @@
 # Exact reviewed source uses. Additions/growth require a concrete documented contract.
 # Retired event hashes, internal JSON cache keys and duplicate client body hashing are not approved.
 [reasons]
-environment-catalog = "Independently published skills and rule catalogs are external OCI JSON documents; the Core content owner bounds bytes before directly decoding their typed schema."
+environment-catalog = "Independently published skill, rule and MCP catalogs are external OCI JSON documents; the Core content owner bounds bytes before directly decoding their typed schema."
 hash-skill-content = "Published skill file manifests declare SHA-256 over exact UTF-8 content. The Core integrity owner verifies every file for consistency; this is not independent publisher authentication or a runtime event fingerprint."
 oci-and-owned-cache = "OCI platform/config documents require external JSON. The same cache owner streams current persisted JSON metadata into bounded XXH3 checks without a temporary document; neither path converts runtime binary envelopes to JSON."
 hash-mixed-oci-cache = "Fetched OCI content retains protocol-required SHA-256 verification. Repository namespace lookup uses full XXH3-128 and never authorizes cached bytes; exact lowercase current name shapes determine ownership."
@@ -958,6 +958,12 @@ json = { count = 1, reason = "http" }
 json = { count = 1, reason = "http" }
 
 [sources."sdk/rust/src/operations/generated/list_catalog_rules.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/get_catalog_mcp.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/list_catalog_mcps.rs"]
 json = { count = 1, reason = "http" }
 
 [sources."sdk/rust/src/operations/generated/get_catalog_skill.rs"]

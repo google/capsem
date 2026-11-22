@@ -1,5 +1,7 @@
 //! Shared source and snapshot contract for read-only catalog discovery.
-pub use capsem_config::catalogs::CatalogEntryMetadata;
+pub use capsem_config::catalogs::{
+    CatalogEntryMetadata, McpCatalogDefinition, McpCatalogKind, McpCatalogRequirement, McpPublishedTool,
+};
 pub use capsem_proto::catalogs::{CatalogKind, CatalogSourceOrigin};
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
@@ -78,4 +80,40 @@ pub struct CatalogStatus {
     pub last_successful_refresh: Option<i64>,
     #[schema(required = true)]
     pub error: Option<CatalogRefreshError>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct McpCatalogSummary {
+    pub metadata: CatalogEntryMetadata,
+    pub kind: McpCatalogKind,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct McpCatalogListResponse {
+    pub catalog: CatalogSnapshot,
+    pub mcps: Vec<McpCatalogSummary>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct McpCatalogDetailResponse {
+    pub selection: super::EnvironmentCatalogPin,
+    pub metadata: CatalogEntryMetadata,
+    /// Published endpoint or sandbox command and the inputs required for configuration.
+    pub definition: McpCatalogDefinition,
+    /// Optional index from the publisher. Live discovery has its own scope and policy.
+    pub published_tools: Option<Vec<McpPublishedTool>>,
+}
+
+impl std::fmt::Debug for McpCatalogDetailResponse {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("McpCatalogDetailResponse")
+            .field("mcp_id", &self.selection.id)
+            .field("kind", &self.definition.kind())
+            .finish_non_exhaustive()
+    }
 }

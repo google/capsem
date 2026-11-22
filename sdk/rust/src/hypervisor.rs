@@ -83,6 +83,10 @@ impl Hypervisor {
         crate::Rules(&self.client)
     }
 
+    pub fn mcps(&self) -> crate::Mcps<'_> {
+        crate::Mcps(&self.client)
+    }
+
     pub fn requests(&self) -> crate::Requests<'_> {
         crate::Requests(&self.client)
     }

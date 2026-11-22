@@ -8,7 +8,7 @@ from typing import Self
 
 from . import _operations as api
 from . import models
-from ._catalogs import Rules, Skills
+from ._catalogs import Mcps, Rules, Skills
 from ._client import Client
 from ._connections import Connections
 from ._credentials import Credentials
@@ -103,6 +103,7 @@ class Hypervisor(Client):
         self.environments = Environments(self._transport)
         self.skills = Skills(self._transport)
         self.rules = Rules(self._transport)
+        self.mcps = Mcps(self._transport)
         self.requests = Requests(self._transport)
         self.credentials = Credentials(self._transport)
         self.connections = Connections(self._transport)

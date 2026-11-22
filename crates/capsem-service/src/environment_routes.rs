@@ -20,6 +20,7 @@ pub(crate) mod catalog_discovery;
 pub(crate) mod decisions;
 pub(crate) mod history;
 pub(crate) mod library;
+pub(crate) mod mcps;
 pub(crate) mod plugins;
 pub(crate) mod proposals;
 pub(crate) mod reviews;

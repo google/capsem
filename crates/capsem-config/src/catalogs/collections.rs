@@ -1,5 +1,5 @@
 //! Reject duplicate or excessive external map keys before reading replacements.
-use super::{CatalogRuleParameter, SkillFile};
+use super::{CatalogRuleParameter, McpCatalogRequirement, SkillFile};
 use serde::de::{Error, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 use std::{collections::BTreeMap, fmt, marker::PhantomData};
@@ -11,6 +11,11 @@ pub(super) fn rule_parameters<'de, D: Deserializer<'de>>(
 }
 pub(super) fn skill_files<'de, D: Deserializer<'de>>(deserializer: D) -> Result<BTreeMap<String, SkillFile>, D::Error> {
     unique_map(deserializer, capsem_proto::CATALOG_MAX_SKILL_FILES)
+}
+pub(super) fn mcp_requirements<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<BTreeMap<String, McpCatalogRequirement>, D::Error> {
+    unique_map(deserializer, capsem_proto::ENVIRONMENT_MAX_CONFIGURATION_ENTRIES)
 }
 fn unique_map<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
     deserializer: D,

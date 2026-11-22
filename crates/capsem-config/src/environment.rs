@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 mod catalog;
 mod drafts;
-mod mcps;
+pub(crate) mod mcps;
 mod rules;
 pub use mcps::{EnvironmentCapabilityDecision, EnvironmentMcpDefinition, EnvironmentMcpPermissions, EnvironmentMcps};
 pub use rules::{
@@ -16,6 +16,7 @@ pub use rules::{
 mod tests;
 mod toml_edit;
 mod validation;
+pub(crate) use validation::variable_name;
 pub use catalog::{EnvironmentCatalogPin, EnvironmentCatalogSelection, EnvironmentCatalogSelections};
 
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]

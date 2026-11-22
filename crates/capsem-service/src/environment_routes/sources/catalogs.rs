@@ -66,12 +66,8 @@ fn select_source(kind: CatalogKind, manifest: &CatalogSources, corporate: &Catal
     let validated = ValidatedCatalogSource::new(kind, chosen).map_err(|_| Error::Refused);
     if let Ok(source) = &validated {
         status.reference = Some(source.reference().to_string());
-        if kind == CatalogKind::Mcp {
-            status.error = Some(CatalogRefreshError::Unsupported);
-        } else {
-            status.availability = CatalogAvailability::Unverified;
-            status.error = None;
-        }
+        status.availability = CatalogAvailability::Unverified;
+        status.error = None;
     }
     Selection { status, validated }
 }
@@ -96,8 +92,8 @@ pub(super) async fn resolve(
     match kind {
         CatalogKind::Skills => resolve_typed::<SkillCatalogEntry>(state, kind, selection).await,
         CatalogKind::Rules => resolve_typed::<RuleCatalogEntry>(state, kind, selection).await,
-        // MCP sources are digest-pinned at OCI admission; typed MCP content
-        // verification and selection are pending.
+        // Discoverable MCP templates require environment configuration and
+        // runtime admission before they may be selected.
         CatalogKind::Mcp => Err(Error::Unavailable),
     }
 }

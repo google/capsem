@@ -1,5 +1,6 @@
 """Typed async access to the Capsem HTTP gateway."""
 
+from ._catalogs import Mcps as Mcps
 from ._catalogs import Rules as Rules
 from ._catalogs import Skills as Skills
 from ._connections import Connections as Connections

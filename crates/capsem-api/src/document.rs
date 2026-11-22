@@ -69,6 +69,16 @@ pub fn openapi() -> OpenApi {
         .description(Some("Read the typed template and parameter definitions for an exact rule version. A moved catalog snapshot returns a conflict."))
         .parameters(Some(environments::CatalogEntryQuery::into_params(|| Some(ParameterIn::Query))));
     doc.add("/rules/{rule_id}/info", HttpMethod::Get, catalog_rule);
+    let catalog_mcps = doc
+        .operation::<environments::McpCatalogListResponse>("/mcps/list", "listCatalogMcps")
+        .description(Some("Discover published MCP server versions in the configured, digest-pinned OCI catalog. Continue with next_cursor against the same source and digest."))
+        .parameters(Some(environments::CatalogListQuery::into_params(|| Some(ParameterIn::Query))));
+    doc.add("/mcps/list", HttpMethod::Get, catalog_mcps);
+    let catalog_mcp = doc
+        .operation::<environments::McpCatalogDetailResponse>("/mcps/{mcp_id}/info", "getCatalogMcp")
+        .description(Some("Read the published server template, configuration requirements and optional tool index for an exact version. A moved catalog snapshot returns a conflict. This route only contacts the OCI registry."))
+        .parameters(Some(environments::CatalogEntryQuery::into_params(|| Some(ParameterIn::Query))));
+    doc.add("/mcps/{mcp_id}/info", HttpMethod::Get, catalog_mcp);
     let revisions = doc
         .operation::<EnvironmentRevisionListResponse>("/environments/{id}/revisions/list", "listEnvironmentRevisions")
         .description(Some("List committed revisions newest first for the operator."))
@@ -90,7 +100,7 @@ pub fn openapi() -> OpenApi {
     );
     let request = doc.schema::<EnvironmentCreateRequest>();
     let create = doc.operation::<EnvironmentMutationResponse>("/environments/create", "createEnvironment")
-        .description(Some("Create an operator blueprint. Reconcile the same request ID explicitly after interruption; never infer completed application from an accepted decision. Skills and rules resolve from configured catalogs. Anonymous public HTTPS Git references resolve under current corporate policy; this does not prepare a sandbox checkout. MCP catalog verification is unavailable."))
+        .description(Some("Create an operator blueprint. Reconcile the same request ID explicitly after interruption; never infer completed application from an accepted decision. Skills and rules resolve from configured catalogs. Anonymous public HTTPS Git references resolve under current corporate policy; this does not prepare a sandbox checkout. Catalog-based MCP configuration is unavailable."))
         .request_body(Some(RequestBodyBuilder::new().required(Some(Required::True))
             .content("application/json", Content::new(Some(request))).build()))
         .extensions(Some([("x-capsem-request-timeout-ms", IMAGE_PULL_REQUEST_TIMEOUT_MS)].into_iter().collect()));

@@ -48,6 +48,8 @@ operation!(list_environment_skills, "listEnvironmentSkills", ListEnvironmentSkil
 operation!(get_environment_skill, "getEnvironmentSkill", GetEnvironmentSkillParams);
 operation!(list_catalog_rules, "listCatalogRules", ListCatalogRulesParams);
 operation!(get_catalog_rule, "getCatalogRule", GetCatalogRuleParams);
+operation!(list_catalog_mcps, "listCatalogMcps", ListCatalogMcpsParams);
+operation!(get_catalog_mcp, "getCatalogMcp", GetCatalogMcpParams);
 operation!(list_catalog_skills, "listCatalogSkills", ListCatalogSkillsParams);
 operation!(get_catalog_skill, "getCatalogSkill", GetCatalogSkillParams);
 operation!(list_vm_skills, "listVmSkills", ListVmSkillsParams);

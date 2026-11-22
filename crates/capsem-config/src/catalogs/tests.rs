@@ -1,5 +1,6 @@
 use super::*;
 mod content;
+mod mcps;
 mod rules;
 mod skills;
 

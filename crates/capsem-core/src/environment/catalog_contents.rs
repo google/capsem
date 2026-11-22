@@ -4,7 +4,7 @@ use capsem_assets::{
     oci::{Digest, Puller},
 };
 use capsem_config::{
-    catalogs::{CatalogDocument, CatalogEntry, RuleCatalogEntry, SkillCatalogEntry},
+    catalogs::{CatalogDocument, CatalogEntry, McpCatalogEntry, RuleCatalogEntry, SkillCatalogEntry},
     environment::EnvironmentCatalogPin,
 };
 use serde::de::DeserializeOwned;
@@ -12,15 +12,20 @@ use std::{fmt, path::Path};
 
 mod sealed {
     pub trait Sealed {}
+    impl Sealed for capsem_config::catalogs::McpCatalogEntry {}
     impl Sealed for capsem_config::catalogs::RuleCatalogEntry {}
     impl Sealed for capsem_config::catalogs::SkillCatalogEntry {}
 }
 
-/// Only the content schemas whose integrity contracts this owner implements.
-/// MCP catalog sources are digest-pinned at OCI admission and await a typed
-/// content schema here.
+/// Entry-specific integrity checks after OCI digest and schema verification.
 pub trait CatalogContentEntry: CatalogEntry + DeserializeOwned + Send + sealed::Sealed + 'static {
     fn verify_contents(&self) -> Result<(), CatalogContentError>;
+}
+impl CatalogContentEntry for McpCatalogEntry {
+    fn verify_contents(&self) -> Result<(), CatalogContentError> {
+        // The authorized OCI digest binds the complete MCP template.
+        Ok(())
+    }
 }
 impl CatalogContentEntry for RuleCatalogEntry {
     fn verify_contents(&self) -> Result<(), CatalogContentError> {

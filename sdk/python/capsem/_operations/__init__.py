@@ -37,6 +37,7 @@ from .exec_vm import exec_vm as exec_vm
 from .export_vm_bodies import export_vm_bodies as export_vm_bodies
 from .fork_vm import fork_vm as fork_vm
 from .get_asset_status import get_asset_status as get_asset_status
+from .get_catalog_mcp import get_catalog_mcp as get_catalog_mcp
 from .get_catalog_rule import get_catalog_rule as get_catalog_rule
 from .get_catalog_skill import get_catalog_skill as get_catalog_skill
 from .get_connection import get_connection as get_connection
@@ -75,6 +76,7 @@ from .get_vm_status import get_vm_status as get_vm_status
 from .get_vm_timeline import get_vm_timeline as get_vm_timeline
 from .heartbeat_proxy import heartbeat_proxy as heartbeat_proxy
 from .inject_credential import inject_credential as inject_credential
+from .list_catalog_mcps import list_catalog_mcps as list_catalog_mcps
 from .list_catalog_rules import list_catalog_rules as list_catalog_rules
 from .list_catalog_skills import list_catalog_skills as list_catalog_skills
 from .list_connections import list_connections as list_connections

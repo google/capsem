@@ -44,6 +44,8 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/requests/{id}/info", get(environment_routes::reviews::info))
         .route("/requests/{id}/resolve", post(environment_routes::decisions::resolve))
         .route("/rules/list", get(environment_routes::rules::catalog::list))
+        .route("/mcps/list", get(environment_routes::mcps::list))
+        .route("/mcps/{mcp_id}/info", get(environment_routes::mcps::info))
         .route("/rules/{rule_id}/info", get(environment_routes::rules::catalog::info))
         .route("/skills/list", get(environment_routes::skills::catalog::list))
         .route("/skills/{skill_id}/info", get(environment_routes::skills::catalog::info))

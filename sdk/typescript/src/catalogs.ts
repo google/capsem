@@ -44,6 +44,24 @@ export class Rules {
   }
 }
 
+/** Published MCP templates from the configured catalog. */
+export class Mcps {
+  constructor(private readonly transport: Transport) {}
+
+  async list({signal, timeoutMs, ...query}: CatalogListOptions = {}): Promise<models.McpCatalogListResponse> {
+    return api.listCatalogMcps(this.transport, query, {signal, timeoutMs});
+  }
+
+  /** Read published configuration requirements and tool metadata for one version. */
+  async get(
+    mcpId: string, version: string, catalog: models.CatalogSnapshot, options: CallOptions = {},
+  ): Promise<models.McpCatalogDetailResponse> {
+    const result = await api.getCatalogMcp(this.transport, {mcp_id: mcpId, version, snapshot: catalog.snapshot}, options);
+    verifyEntry(mcpId, version, catalog, result.selection, result.metadata);
+    return result;
+  }
+}
+
 function verifyEntry(
   id: string, version: string, catalog: models.CatalogSnapshot,
   selection: models.EnvironmentCatalogPin, metadata: models.CatalogEntryMetadata,

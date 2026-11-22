@@ -18,7 +18,7 @@ fn text(value: &str) -> bool {
         .any(|ch| ch.is_control() && !matches!(ch, '\n' | '\r' | '\t'))
 }
 
-fn variable_name(value: &str) -> bool {
+pub(crate) fn variable_name(value: &str) -> bool {
     let bytes = value.as_bytes();
     bytes
         .first()

@@ -5,12 +5,14 @@ pub use capsem_proto::catalogs::{
 };
 mod collections;
 mod content;
+mod mcps;
 mod rules;
 mod skills;
 pub use content::{
     CatalogCompatibility, CatalogDocument, CatalogEntry, CatalogEntryMetadata, CatalogEntryStatus,
     CATALOG_RUNTIME_CONTRACT,
 };
+pub use mcps::{McpCatalogDefinition, McpCatalogEntry, McpCatalogKind, McpCatalogRequirement, McpPublishedTool};
 pub use rules::{CatalogRuleParameter, ResolvedCatalogRule, RuleCatalogDefinition, RuleCatalogEntry};
 pub use skills::{SkillCatalogEntry, SkillFile, SkillPayload};
 

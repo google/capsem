@@ -95,6 +95,70 @@ fn enabled() -> bool {
 fn text(value: &str) -> bool {
     value.len() <= capsem_proto::ENVIRONMENT_MAX_CONFIGURATION_TEXT_BYTES && !value.chars().any(char::is_control)
 }
+pub(crate) fn remote_endpoint(url: &str) -> Result<(), &'static str> {
+    if !text(url) || url.chars().any(char::is_whitespace) {
+        return Err("invalid environment MCP endpoint");
+    }
+    let endpoint = url::Url::parse(url).map_err(|_| "invalid environment MCP endpoint")?;
+    if !matches!(endpoint.scheme(), "https" | "http")
+        || endpoint.host_str().is_none()
+        || !endpoint.username().is_empty()
+        || endpoint.password().is_some()
+        || endpoint.fragment().is_some()
+    {
+        return Err("invalid environment MCP endpoint or binding");
+    }
+    Ok(())
+}
+
+pub(crate) fn ordinary_header_name(name: &str) -> bool {
+    let token = !name.is_empty()
+        && name.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(
+                    byte,
+                    b'!' | b'#'
+                        | b'$'
+                        | b'%'
+                        | b'&'
+                        | b'\''
+                        | b'*'
+                        | b'+'
+                        | b'-'
+                        | b'.'
+                        | b'^'
+                        | b'_'
+                        | b'\x60'
+                        | b'|'
+                        | b'~'
+                )
+        });
+    let reserved = matches!(
+        name.to_ascii_lowercase().as_str(),
+        "host"
+            | "connection"
+            | "transfer-encoding"
+            | "content-length"
+            | "upgrade"
+            | "proxy-connection"
+            | "te"
+            | "trailer"
+    );
+    text(name) && token && !reserved && !crate::mcp::is_secret_header(name)
+}
+
+pub(crate) fn sandbox_command(executable: &str, args: &[String], workdir: Option<&str>) -> bool {
+    !executable.is_empty()
+        && text(executable)
+        && args.len() <= capsem_proto::ENVIRONMENT_MAX_MCP_ARGUMENTS
+        && args
+            .iter()
+            .all(|arg| arg.len() <= capsem_proto::ENVIRONMENT_MAX_CONFIGURATION_TEXT_BYTES && !arg.contains('\0'))
+        && workdir.is_none_or(|path| {
+            text(path) && path.starts_with('/') && path.split('/').all(|part| !matches!(part, "." | ".."))
+        })
+}
+
 fn definition(definition: &EnvironmentMcpDefinition, image: bool) -> Result<(), String> {
     match definition {
         EnvironmentMcpDefinition::Remote {
@@ -102,16 +166,8 @@ fn definition(definition: &EnvironmentMcpDefinition, image: bool) -> Result<(), 
             headers,
             binding_id,
         } => {
-            if !text(url) || url.chars().any(char::is_whitespace) {
-                return Err("invalid environment MCP endpoint".into());
-            }
-            let endpoint = url::Url::parse(url).map_err(|_| "invalid environment MCP endpoint")?;
-            if !matches!(endpoint.scheme(), "https" | "http")
-                || endpoint.host_str().is_none()
-                || !endpoint.username().is_empty()
-                || endpoint.password().is_some()
-                || endpoint.fragment().is_some()
-                || headers.len() > capsem_proto::ENVIRONMENT_MAX_CONFIGURATION_ENTRIES
+            remote_endpoint(url)?;
+            if headers.len() > capsem_proto::ENVIRONMENT_MAX_CONFIGURATION_ENTRIES
                 || binding_id.as_deref().is_some_and(|id| !validation::canonical_uuid(id))
             {
                 return Err("invalid environment MCP endpoint or binding".into());
@@ -120,39 +176,7 @@ fn definition(definition: &EnvironmentMcpDefinition, image: bool) -> Result<(), 
                 if !text(name) || !text(value) {
                     return Err("environment MCP headers exceed their configuration bounds".into());
                 }
-                let token = !name.is_empty()
-                    && name.bytes().all(|byte| {
-                        byte.is_ascii_alphanumeric()
-                            || matches!(
-                                byte,
-                                b'!' | b'#'
-                                    | b'$'
-                                    | b'%'
-                                    | b'&'
-                                    | b'\''
-                                    | b'*'
-                                    | b'+'
-                                    | b'-'
-                                    | b'.'
-                                    | b'^'
-                                    | b'_'
-                                    | b'\x60'
-                                    | b'|'
-                                    | b'~'
-                            )
-                    });
-                let reserved = matches!(
-                    name.to_ascii_lowercase().as_str(),
-                    "host"
-                        | "connection"
-                        | "transfer-encoding"
-                        | "content-length"
-                        | "upgrade"
-                        | "proxy-connection"
-                        | "te"
-                        | "trailer"
-                );
-                if !token || reserved || crate::mcp::is_secret_header(name) {
+                if !ordinary_header_name(name) {
                     return Err("environment MCP headers must be ordinary transport-safe metadata; use a binding for authentication".into());
                 }
             }
@@ -164,17 +188,7 @@ fn definition(definition: &EnvironmentMcpDefinition, image: bool) -> Result<(), 
             variables,
             secrets,
         } => {
-            if !image
-                || executable.is_empty()
-                || !text(executable)
-                || args.len() > capsem_proto::ENVIRONMENT_MAX_MCP_ARGUMENTS
-                || args
-                    .iter()
-                    .any(|arg| arg.len() > capsem_proto::ENVIRONMENT_MAX_CONFIGURATION_TEXT_BYTES || arg.contains('\0'))
-                || workdir.as_deref().is_some_and(|path| {
-                    !text(path) || !path.starts_with('/') || path.split('/').any(|part| matches!(part, "." | ".."))
-                })
-            {
+            if !image || !sandbox_command(executable, args, workdir.as_deref()) {
                 return Err("invalid sandbox MCP executable, arguments or workdir".into());
             }
             validation::validate_values(variables, secrets)?;

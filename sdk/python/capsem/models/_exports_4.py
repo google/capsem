@@ -1,5 +1,14 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .scope_profile_summary import ScopeProfileSummary
+from .security_ask_decision import SecurityAskDecision
+from .security_ask_list_response import SecurityAskListResponse
+from .security_ask_request import SecurityAskRequest
+from .security_ask_resolve_request import SecurityAskResolveRequest
+from .security_ask_status import SecurityAskStatus
+from .security_plugin_mode import SecurityPluginMode
+from .security_rule_action import SecurityRuleAction
+from .service_availability import ServiceAvailability
 from .service_manager import ServiceManager
 from .session_db_status import SessionDbStatus
 from .session_grant_list_response import SessionGrantListResponse
@@ -71,10 +80,17 @@ from .vm_start_request import VmStartRequest
 from .vm_stats_detail_response import VmStatsDetailResponse
 from .vm_stats_summary_response import VmStatsSummaryResponse
 from .vm_status_response import VmStatusResponse
-from .vm_summary import VmSummary
-from .widget import Widget
 
 __all__ = [
+    'ScopeProfileSummary',
+    'SecurityAskDecision',
+    'SecurityAskListResponse',
+    'SecurityAskRequest',
+    'SecurityAskResolveRequest',
+    'SecurityAskStatus',
+    'SecurityPluginMode',
+    'SecurityRuleAction',
+    'ServiceAvailability',
     'ServiceManager',
     'SessionDbStatus',
     'SessionGrantListResponse',
@@ -146,6 +162,4 @@ __all__ = [
     'VmStatsDetailResponse',
     'VmStatsSummaryResponse',
     'VmStatusResponse',
-    'VmSummary',
-    'Widget',
 ]

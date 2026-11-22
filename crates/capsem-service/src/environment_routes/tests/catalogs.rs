@@ -18,6 +18,7 @@ mod registry;
 mod applied_skills;
 mod global_skills;
 mod global_rules;
+mod global_mcps;
 mod status;
 use registry::Registry;
 
@@ -163,6 +164,13 @@ impl Fixture {
     fn source(&self) -> super::super::sources::Sources {
         super::super::sources::Sources(self.state.clone())
     }
+    fn select_mcp_digest(&self, digest: &str) -> String {
+        let reference = format!("{}/team/mcp@{digest}", self.registry.address);
+        let mut manifest = self.state.manifest.write().unwrap();
+        let manifest = Arc::make_mut(manifest.as_mut().unwrap());
+        manifest.catalogs.as_mut().unwrap().mcp = Some(descriptor(reference.clone()));
+        reference
+    }
 }
 fn descriptor(reference: String) -> CatalogSourceDescriptor {
     CatalogSourceDescriptor {
@@ -194,7 +202,9 @@ fn document(kind: CatalogKind, revoked: bool) -> serde_json::Value {
             CatalogKind::Rules => {
                 entry["definition"] = json!({"kind":"access","rule":{"name":"Review endpoint","action":"allow","match":"http.host == 'api.example'"}})
             }
-            CatalogKind::Mcp => unreachable!(),
+            CatalogKind::Mcp => {
+                entry["definition"] = json!({"kind":"remote","url":"https://mcp.example.invalid/service"});
+            }
         }
     }
     json!({"schema_version":1,"kind":kind.as_str(),"entries":[entry]})

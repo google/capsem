@@ -340,3 +340,50 @@ async fn global_rules_return_typed_definitions_from_the_listed_catalog() {
     wrong.reference = "registry.example/other:stable".into();
     assert!(matches!(rules.get("review", "1.0.0", &wrong).await, Err(Error::InvalidResponse(_))));
 }
+
+#[tokio::test]
+async fn global_mcps_return_published_requirements_from_the_listed_catalog() {
+    let mut server = Server::respond(|parts| {
+        let digest = format!("sha256:{}", "0".repeat(64));
+        let reference = format!("registry.example/mcp@{digest}");
+        let metadata = json!({"id":"review","version":"1.0.0","name":"Review","status":"active",
+            "publisher":"fixture","provenance":"fixture","license":"Apache-2.0","compatibility":{"min_runtime_contract":1}});
+        let body = if parts.uri.path() == "/mcps/list" {
+            json!({"catalog":{"reference":reference,"digest":digest,"snapshot":"listed-snapshot"},
+                "mcps":[{"metadata":metadata,"kind":"sandbox"}]})
+        } else {
+            json!({"selection":{"id":"review","version":"1.0.0","catalog_reference":reference,"resolved_digest":digest},
+                "metadata":metadata,"definition":{"kind":"sandbox","executable":"review","args":["--stdio"],
+                    "secret_variables":{"TOKEN":{"description":"Workspace key","required":true}}},
+                "published_tools":[{"name":"review_file"}]})
+        };
+        Response::new(Body::from(body.to_string()))
+    }).await;
+    let hv = Hypervisor::new(&server.url, "private-token").unwrap();
+    let mcps = hv.mcps();
+    let page = mcps
+        .list(models::environments::CatalogListQuery {
+            search: Some("review".into()),
+            limit: Some(1),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(page.mcps[0].kind, models::environments::McpCatalogKind::Sandbox);
+    let (request, _) = server.received.recv().await.unwrap();
+    assert_eq!(request.uri.path(), "/mcps/list");
+    assert_eq!(request.uri.query().unwrap(), "search=review&limit=1");
+    let detail = mcps.get("review", "1.0.0", &page.catalog).await.unwrap();
+    let definition = serde_json::to_value(detail.definition).unwrap();
+    assert_eq!(definition["secret_variables"]["TOKEN"]["required"], true);
+    assert_eq!(detail.published_tools.unwrap()[0].name, "review_file");
+    let (request, _) = server.received.recv().await.unwrap();
+    assert_eq!(request.uri.path(), "/mcps/review/info");
+    assert_eq!(request.uri.query().unwrap(), "version=1.0.0&snapshot=listed-snapshot");
+    let mut wrong = page.catalog;
+    wrong.digest = format!("sha256:{}", "1".repeat(64));
+    assert!(matches!(
+        mcps.get("review", "1.0.0", &wrong).await,
+        Err(Error::InvalidResponse(_))
+    ));
+}

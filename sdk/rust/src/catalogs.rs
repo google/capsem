@@ -65,6 +65,37 @@ impl Rules<'_> {
     }
 }
 
+pub struct Mcps<'a>(pub(crate) &'a Client);
+
+impl Mcps<'_> {
+    /// List published server templates from the configured catalog.
+    pub async fn list(&self, query: CatalogListQuery) -> Result<models::McpCatalogListResponse> {
+        let input = api::ListCatalogMcpsParams {
+            search: query.search,
+            after: query.after,
+            limit: query.limit.map(u32::from),
+        };
+        api::list_catalog_mcps(&self.0.transport, &input, self.0.options).await
+    }
+
+    /// Read published configuration requirements and tool metadata for one version.
+    pub async fn get(
+        &self,
+        mcp_id: &str,
+        version: &str,
+        catalog: &models::CatalogSnapshot,
+    ) -> Result<models::McpCatalogDetailResponse> {
+        let input = api::GetCatalogMcpParams {
+            mcp_id: mcp_id.into(),
+            version: version.into(),
+            snapshot: catalog.snapshot.clone(),
+        };
+        let result = api::get_catalog_mcp(&self.0.transport, &input, self.0.options).await?;
+        verify_entry(mcp_id, version, catalog, &result.selection, &result.metadata)?;
+        Ok(result)
+    }
+}
+
 fn verify_entry(
     id: &str,
     version: &str,

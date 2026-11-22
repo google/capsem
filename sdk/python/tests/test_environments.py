@@ -313,3 +313,33 @@ def test_global_rules_return_typed_definitions_and_bind_catalog_identity():
             with pytest.raises(ValueError, match="catalog entry identity changed"):
                 await hv.rules.get("review", "1.0.0", page.catalog)
     asyncio.run(run())
+
+
+def test_global_mcps_return_published_requirements_and_bind_catalog_identity():
+    async def run():
+        digest = "sha256:" + "0" * 64
+        catalog = {"reference": f"registry.example/mcp@{digest}", "digest": digest, "snapshot": "listed-snapshot"}
+        selection = {"id": "review", "version": "1.0.0", "catalog_reference": catalog["reference"],
+                     "resolved_digest": digest}
+        metadata = {"id": "review", "version": "1.0.0", "name": "Review", "publisher": "Fixture",
+                    "provenance": "Fixture catalog", "license": "Apache-2.0",
+                    "compatibility": {"min_runtime_contract": 1}, "status": "active"}
+        response = {"catalog": catalog, "mcps": [{"metadata": metadata, "kind": "remote"}]}
+        async with gateway(response=response) as (url, received), Hypervisor(url, "gateway-token") as hv:
+            page = await hv.mcps.list(search="review", limit=1)
+            assert page.mcps[0].kind == models.McpCatalogKind.REMOTE
+            assert received[-1][1] == "/mcps/list?search=review&limit=1"
+            response.clear()
+            response.update(selection=selection, metadata=metadata, definition={
+                "kind": "remote", "url": "https://example.invalid/mcp",
+                "secret_binding": {"description": "Workspace key", "required": True},
+            }, published_tools=[{"name": "review_file"}])
+            detail = await hv.mcps.get("review", "1.0.0", page.catalog)
+            assert isinstance(detail.definition, models.McpCatalogDefinitionRemote)
+            assert detail.definition.secret_binding.required is True
+            assert detail.published_tools[0].name == "review_file"
+            assert received[-1][1] == "/mcps/review/info?version=1.0.0&snapshot=listed-snapshot"
+            selection["resolved_digest"] = "sha256:" + "1" * 64
+            with pytest.raises(ValueError, match="catalog entry identity changed"):
+                await hv.mcps.get("review", "1.0.0", page.catalog)
+    asyncio.run(run())

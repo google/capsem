@@ -137,8 +137,20 @@ pub(crate) async fn restrict_owner_routes(
                     .is_some_and(|path| path.as_str() == "/environments/list")
                 && crate::environment_routes::library::permits_list(&actor);
             let catalog_discovery = request.method() == axum::http::Method::GET
-                && request.extensions().get::<axum::extract::MatchedPath>()
-                    .is_some_and(|path| matches!(path.as_str(), "/skills/list" | "/skills/{skill_id}/info" | "/rules/list" | "/rules/{rule_id}/info"))
+                && request
+                    .extensions()
+                    .get::<axum::extract::MatchedPath>()
+                    .is_some_and(|path| {
+                        matches!(
+                            path.as_str(),
+                            "/skills/list"
+                                | "/skills/{skill_id}/info"
+                                | "/rules/list"
+                                | "/rules/{rule_id}/info"
+                                | "/mcps/list"
+                                | "/mcps/{mcp_id}/info"
+                        )
+                    })
                 && crate::environment_routes::catalog_discovery::permits_discover(&actor);
             let own_cancellation = request.method() == axum::http::Method::POST
                 && request

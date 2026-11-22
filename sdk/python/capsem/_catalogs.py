@@ -58,6 +58,32 @@ class Rules:
         return result
 
 
+class Mcps:
+    def __init__(self, transport: Transport) -> None:
+        self._transport = transport
+
+    async def list(
+        self, *, search: str | None = None, after: str | None = None,
+        limit: int | None = None, request_timeout: float | None = None,
+    ) -> models.McpCatalogListResponse:
+        """List published server templates from the configured catalog."""
+        return await api.list_catalog_mcps(
+            self._transport, search=search, after=after, limit=limit, request_timeout=request_timeout,
+        )
+
+    async def get(
+        self, mcp_id: str, version: str, catalog: models.CatalogSnapshot, *,
+        request_timeout: float | None = None,
+    ) -> models.McpCatalogDetailResponse:
+        """Read published configuration requirements and tool metadata for one version."""
+        result = await api.get_catalog_mcp(
+            self._transport, mcp_id=mcp_id, version=version, snapshot=catalog.snapshot,
+            request_timeout=request_timeout,
+        )
+        _match_entry(mcp_id, version, catalog, result.selection, result.metadata)
+        return result
+
+
 def _match_entry(
     entry_id: str, version: str, catalog: models.CatalogSnapshot,
     selection: models.EnvironmentCatalogPin, metadata: models.CatalogEntryMetadata,

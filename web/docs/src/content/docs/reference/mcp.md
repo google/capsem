@@ -20,6 +20,20 @@ Configured external servers currently use HTTP. A host stdio program in a
 third-party MCP client configuration is not automatically an admitted native
 server executable.
 
+## Published MCP catalogs
+
+Use `GET /mcps/list` to browse the configured digest-pinned OCI catalog.
+Supply `search`, `limit`, and `after` to filter and page through results.
+`GET /mcps/{mcp_id}/info` takes the listed `version` and catalog `snapshot`.
+It returns the remote endpoint or sandbox command, configuration and
+secret-binding requirements, and any tool index the publisher supplied.
+If the snapshot changes, list the catalog again. Operator credentials and
+delegated credentials with the Discover operation can use both routes.
+
+Catalog reads only contact the OCI registry. Live tool discovery accesses a
+configured MCP server under the transport and permissions for that server.
+The catalog describes the inputs an operator needs to configure.
+
 ## Host server installation and options
 
 Requires Node.js 20 or later, installed Capsem, and gateway access.
