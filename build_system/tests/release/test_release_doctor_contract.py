@@ -2000,11 +2000,11 @@ def test_release_lanes_reuse_complete_modules_without_independent_sha_authority(
 
 def test_clean_build_pins_sse_stream_api() -> None:
     workspace = _source_text("Cargo.toml")
-    server_manager = _source_text("crates/capsem-mcp-aggregator/src/server_manager.rs")
+    http_response = _source_text("crates/capsem-mcp-aggregator/src/server_manager/http_response.rs")
 
     assert 'sse-stream = "=0.2.4"' in workspace
-    assert "SseStream::from_bytes_stream" in server_manager
-    assert "SseStream::from_byte_stream" not in server_manager
+    assert "SseStream::from_bytes_stream" in http_response
+    assert "SseStream::from_byte_stream" not in http_response
 
 
 def test_binary_release_installs_exact_artifacts_before_publication() -> None:
