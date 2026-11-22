@@ -26,6 +26,7 @@ hash-oci = "OCI blob, manifest and configuration identities are SHA-256 content 
 hash-archive = "Storage owners use XXH3-128 for current archive corruption checks, body-index span identities, deduplication and WARC block digests. Obsolete formats are refused, owned fixtures are regenerated, and no producer event commitment is justified by this storage contract."
 hash-oauth = "OAuth PKCE S256 challenges and OIDC identity validation require SHA-256 by the external authentication protocol."
 hash-identity = "A stable bounded name or protocol identity is derived from existing path/configuration bytes for reuse across processes and restarts; this is compatibility, not event tamper proof."
+hash-ledger-predecessor = "Preinstall and the ledger writer compare the SQLite declarations to the published 0.7.2 schema before taking the in-place transition. The digest covers schema only and is never computed per event."
 hash-capability = "Managed-session and delegated-agent capability digests are compared with a presented secret at the service boundary. Each binds the public identity and a distinct trusted purpose domain; retaining only the digest avoids retaining the secret as authority. The managed-session durable preimage remains unchanged."
 hash-credential-ref = "A credential correlation identifier must be stable without exposing the raw credential to logs and telemetry; its digest is a redacted identity, not proof of event integrity."
 hash-tool-definition = "Approved MCP tool definitions are pinned with persisted BLAKE3 digests. Discovery compares them to reject changed descriptions/input schemas under the same tool name; this is a trusted security-policy reference, not a non-security cache key."
@@ -489,6 +490,9 @@ json = { count = 2, reason = "db-json" }
 
 [sources."crates/capsem-logger/src/schema.rs"]
 hash = { count = 1, reason = "hash-identity" }
+
+[sources."crates/capsem-logger/src/schema/v072.rs"]
+hash = { count = 1, reason = "hash-ledger-predecessor" }
 
 [sources."crates/capsem-logger/src/writer/bodies/staging.rs"]
 hash = { count = 2, reason = "hash-archive" }

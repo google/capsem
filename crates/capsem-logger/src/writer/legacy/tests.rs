@@ -107,44 +107,21 @@ fn pre_environment_ledger(path: &Path) {
 }
 
 #[test]
-fn pre_environment_cohort_is_preserved_before_fresh_writer_opens() {
+fn unrecognized_pre_environment_shape_fails_without_moving_history() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("main.db");
     pre_environment_ledger(&path);
     let archive = super::archive_path_for_db(&path);
     let canary = archive.join("preserved-cohort-canary");
     std::fs::write(&canary, b"archive must remain exact").unwrap();
-    drop(DbWriter::open(&path, 8).expect("released pre-environment ledger must not prevent startup"));
-    let kept = std::fs::read_dir(dir.path())
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .find(|path| {
-            path.file_name()
-                .unwrap()
-                .to_string_lossy()
-                .starts_with("main.db.pre-environment-")
-        })
-        .expect("old database kept");
-    let old = Connection::open(kept.join("main.db")).unwrap();
+    assert!(DbWriter::open(&path, 8).is_err());
+    let old = Connection::open(&path).unwrap();
     assert_eq!(
         old.query_row("SELECT detail FROM host_events", [], |row| row.get::<_, Vec<u8>>(0))
             .unwrap(),
         b"preserved-history"
     );
-    let kept_archive = kept.join("main.bodies");
-    assert_eq!(
-        std::fs::read(kept_archive.join("preserved-cohort-canary")).unwrap(),
-        b"archive must remain exact"
-    );
-    assert!(!canary.exists());
-    let fresh = Connection::open(&path).unwrap();
-    crate::schema::validate_existing_host_schema(&fresh).unwrap();
-    assert_eq!(
-        fresh
-            .query_row("SELECT COUNT(*) FROM host_events", [], |row| row.get::<_, i64>(0))
-            .unwrap(),
-        0
-    );
+    assert_eq!(std::fs::read(canary).unwrap(), b"archive must remain exact");
 }
 
 #[test]
@@ -188,14 +165,12 @@ fn interrupted_preservation_refuses_a_fresh_writer_even_if_database_already_move
 fn preserved_database_reads_committed_history_still_in_its_wal() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("main.db");
-    pre_environment_ledger(&path);
+    pre_archive_ledger(&path);
     let connection = Connection::open(&path).unwrap();
+    connection.pragma_update(None, "journal_mode", "WAL").unwrap();
     connection.pragma_update(None, "wal_autocheckpoint", 0).unwrap();
     connection
-        .execute(
-            "INSERT INTO host_events(timestamp_unix_ms,kind,actor,detail) VALUES(2,'service_stopped','operator',?1)",
-            [b"wal-only-history".as_slice()],
-        )
+        .execute("INSERT INTO net_events(domain) VALUES ('wal-only-history')", [])
         .unwrap();
     assert!(super::with_suffix(&path, "-wal").is_file());
     let _lock = crate::writer::writer_lock::acquire(&path).unwrap();
@@ -207,11 +182,10 @@ fn preserved_database_reads_committed_history_still_in_its_wal() {
     let reader = Connection::open(&kept).unwrap();
     assert_eq!(
         reader
-            .query_row("SELECT detail FROM host_events WHERE timestamp_unix_ms=2", [], |row| {
-                row.get::<_, Vec<u8>>(0)
-            })
+            .query_row("SELECT domain FROM net_events WHERE id=2", [], |row| row
+                .get::<_, String>(0))
             .unwrap(),
-        b"wal-only-history"
+        "wal-only-history"
     );
     // Keep the original connection alive until after recovery was proved: its
     // last close would otherwise checkpoint and hide a broken companion name.

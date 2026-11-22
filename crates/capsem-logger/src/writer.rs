@@ -612,7 +612,12 @@ impl DbWriter {
                 bodies
             }
             schema::ArchiveSchemaStatus::Current(_) => {
-                schema::create_tables(&conn)?;
+                if schema::v072::is_supported_predecessor(&conn)? {
+                    let _archive_lock = BodyArchive::hold_verified_generation(path, &conn)?;
+                    schema::v072::upgrade(&conn)?;
+                } else {
+                    schema::create_tables(&conn)?;
+                }
                 BodyArchive::open_existing(path, now, &conn, codecs)?
             }
             // Moved aside above, under this same writer lock.

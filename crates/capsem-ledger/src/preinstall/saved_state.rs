@@ -8,7 +8,7 @@ use anyhow::{ensure, Context, Result};
 use capsem_foundation::unix::{contained::ContainedDir, process};
 use capsem_logger::host_admission::HostSchemaAdmission;
 
-/// Only an already admitted current HOST ledger can use an in-service update.
+/// An in-service update requires an admitted current or supported HOST ledger.
 /// An absent HOST ledger permits no retained default session namespace. This
 /// observes names without reading legacy registry/session data or creating any
 /// state. Installers must repeat admission after draining the old producers:
@@ -17,7 +17,7 @@ use capsem_logger::host_admission::HostSchemaAdmission;
 /// compatibility guarantee of this fixed installed-home admission.
 pub(super) fn admit(home: &Path, host: HostSchemaAdmission, require_current: bool, deadline: Instant) -> Result<()> {
     ensure!(Instant::now() < deadline, "preinstall admission deadline exceeded");
-    if host == HostSchemaAdmission::Current {
+    if matches!(host, HostSchemaAdmission::Current | HostSchemaAdmission::ReleasedV072) {
         return Ok(());
     }
     ensure!(

@@ -19,8 +19,10 @@ Copy, fork or delete them as a pair; either one alone is useless. The host
 ledger `~/.capsem/sessions/host.db` records what happened to every session
 (created, stopped, with its final counters) as a hash-chained event log.
 
-The session ledger has no migrations. A `session.db` written by an older build
-fails to open, loudly and by name, rather than being upgraded in place.
+When upgrading from 0.7.2, the ledger writer checks for the published schema
+and updates it in one transaction under the writer lock. Existing archive
+bytes and recorded history stay available through the normal ledger routes.
+Other unsupported format versions fail to open.
 
 ## Session identity invariant
 

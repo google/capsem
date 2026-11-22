@@ -1,4 +1,4 @@
-//! Preserve incompatible ledger cohorts before applying any writer pragmas.
+//! Preserve pre-v4 ledgers before applying any writer pragmas.
 //! The directory keeps SQLite's database/WAL/SHM names and archive resolution
 //! intact. An interrupted move stays explicit and blocks a fresh writer.
 
@@ -28,31 +28,22 @@ pub(super) fn set_aside_pre_archive_ledger(path: &Path) -> rusqlite::Result<Opti
     if !path.is_file() {
         return Ok(None);
     }
-    let cohort = {
+    let pre_archive = {
         let conn = Connection::open_with_flags(
             path,
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_URI,
         )?;
-        match schema::archive_schema_status(&conn)? {
-            ArchiveSchemaStatus::PreArchive => Some("pre-v4"),
-            ArchiveSchemaStatus::Current(_) if schema::is_pre_environment_ledger(&conn)? => Some("pre-environment"),
-            _ => None,
-        }
+        schema::archive_schema_status(&conn)? == ArchiveSchemaStatus::PreArchive
     };
-    let Some(cohort) = cohort else {
+    if !pre_archive {
         return Ok(None);
-    };
-    if cohort == "pre-environment" && !archive_path_for_db(path).is_dir() {
-        return Err(failure(
-            "pre-environment ledger archive is missing; refusing to reset history",
-        ));
     }
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_secs());
     let mut attempt = 0usize;
     let aside = loop {
-        let candidate = with_suffix(path, &format!(".{cohort}-{seconds}-{attempt}"));
+        let candidate = with_suffix(path, &format!(".pre-v4-{seconds}-{attempt}"));
         if !candidate.exists() {
             break candidate;
         }
@@ -88,8 +79,7 @@ pub(super) fn set_aside_pre_archive_ledger(path: &Path) -> rusqlite::Result<Opti
     std::fs::rename(&pending, &aside).map_err(|error| failure(format!("publish preserved ledger: {error}")))?;
     durable_sync_directory(parent).map_err(|error| failure(format!("sync preserved ledger publication: {error}")))?;
     let kept = aside.join(path.file_name().ok_or_else(|| failure("ledger has no file name"))?);
-    tracing::warn!(ledger = %path.display(), kept_as = %kept.display(), cohort,
-        "incompatible ledger cohort preserved; starting a fresh ledger");
+    tracing::warn!(ledger = %path.display(), kept_as = %kept.display(), "pre-v4 ledger preserved; starting a fresh ledger");
     Ok(Some(kept))
 }
 

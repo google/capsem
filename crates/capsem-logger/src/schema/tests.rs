@@ -6,6 +6,7 @@ mod archive;
 mod decision_lookup;
 mod environment;
 mod integrity;
+mod v072;
 
 fn columns_for_schema(conn: &Connection, schema: &str, table: &str) -> BTreeSet<String> {
     let pragma = if schema == "main" {

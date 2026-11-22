@@ -19,11 +19,12 @@ pub const PREINSTALL_ADMISSION_TIMEOUT: Duration = crate::schema::READER_BUSY_TI
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HostSchemaAdmission {
     Absent,
+    ReleasedV072,
     Current,
 }
 
-/// Admit only host schema and archive-state metadata, not physical archives or
-/// retained session schemas. The caller supplies an authoritative resolved
+/// Admit the host schema and archive-state metadata for current and supported
+/// releases. The caller supplies an authoritative resolved
 /// account home, not ambient HOME. This never creates or repairs state.
 ///
 /// SQLite may create an empty WAL and create/update its SHM coordination index;
@@ -111,7 +112,11 @@ fn admit(home: &Path, timeout: Duration, physical_archive: bool) -> anyhow::Resu
     conn.busy_timeout(remaining(deadline)?)?;
     conn.progress_handler(1_000, Some(move || Instant::now() >= deadline))?;
     let transaction = conn.unchecked_transaction()?;
-    crate::schema::validate_existing_host_schema(&transaction)?;
+    let admission = match crate::schema::validate_existing_host_schema(&transaction) {
+        Ok(()) => HostSchemaAdmission::Current,
+        Err(_) if crate::schema::v072::is_supported_predecessor(&transaction)? => HostSchemaAdmission::ReleasedV072,
+        Err(error) => return Err(error.into()),
+    };
     let archive_reader = if physical_archive {
         let state = crate::schema::archive_state(&transaction)?;
         let directory = sessions.descend(OsStr::new("host.bodies"))?;
@@ -137,7 +142,7 @@ fn admit(home: &Path, timeout: Duration, physical_archive: bool) -> anyhow::Resu
     drop(archive_lock);
     drop(held_files);
     drop(main);
-    Ok(HostSchemaAdmission::Current)
+    Ok(admission)
 }
 
 fn remaining(deadline: Instant) -> anyhow::Result<Duration> {

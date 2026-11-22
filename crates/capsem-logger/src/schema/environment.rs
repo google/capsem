@@ -97,24 +97,3 @@ pub(super) fn staging_declaration(declaration: &str) -> Option<String> {
         .collect();
     Some(format!("({})", fields.join(",")))
 }
-
-/// An absent entire format identifies the released cohort; any partial format
-/// remains a current-ledger failure, never permission to discard history.
-pub(crate) fn is_pre_environment_ledger(conn: &Connection) -> rusqlite::Result<bool> {
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name GLOB 'environment_*'",
-        [],
-        |row| row.get(0),
-    )?;
-    if count != 0 {
-        return Ok(false);
-    }
-    for (table, columns) in super::columns::READY_SCHEMA_COLUMNS {
-        if !table.starts_with("environment_") {
-            validate_table_columns(conn, "main", table, columns).map_err(|error| contract_error(&error))?;
-        }
-    }
-    super::transport::assert_current(conn)?;
-    super::security_event_types::assert_current(conn)?;
-    Ok(true)
-}

@@ -336,6 +336,25 @@ impl BodyArchive {
     /// Recover and reopen the exact generation selected by SQLite. The
     /// archive lock stays exclusive through the real revision durability
     /// fence; no path scan can elect another file.
+    /// Verify the physical archive and hold rotation out until the schema
+    /// transition has committed. This does not recover or rewrite the archive.
+    pub(super) fn hold_verified_generation(db_path: &Path, conn: &Connection) -> rusqlite::Result<FileLock> {
+        let path = archive_path_for_db(db_path);
+        let directory = ContainedDir::open_root_no_follow(&path)
+            .and_then(|directory| {
+                directory.validate_private()?;
+                Ok(directory)
+            })
+            .map_err(|error| archive_contract_error(format!("open {}: {error}", path.display())))?;
+        let lock_path = archive_lock_path_for_db(db_path);
+        let held = lock::acquire_existing_until(&lock_path, LockMode::Shared, Instant::now() + Duration::from_secs(5))
+            .map_err(|error| archive_contract_error(format!("lock {}: {error}", lock_path.display())))?;
+        let state = crate::schema::archive_state(conn)?;
+        capsem_archive::BodyLogReader::open_generation(&directory, state.header, state.committed_end)
+            .map_err(|error| archive_contract_error(format!("verify active generation: {error}")))?;
+        Ok(held)
+    }
+
     pub(super) fn open_existing(
         db_path: &Path,
         now: LedgerClock,

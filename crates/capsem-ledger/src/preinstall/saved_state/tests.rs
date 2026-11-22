@@ -89,6 +89,7 @@ fn current_host_uses_existing_host_validation_and_legacy_in_service_is_refused()
     let home = private_home();
     private_directories(home.path().join(".capsem/run/persistent/named")).unwrap();
     assert!(check(home.path(), HostSchemaAdmission::Current, true).is_ok());
+    assert!(check(home.path(), HostSchemaAdmission::ReleasedV072, true).is_ok());
     assert!(check(home.path(), HostSchemaAdmission::Absent, true).is_err());
     assert!(admit(home.path(), HostSchemaAdmission::Absent, false, Instant::now()).is_err());
 }
