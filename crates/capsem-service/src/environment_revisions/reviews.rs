@@ -102,6 +102,7 @@ impl EnvironmentRevisions {
             base,
             proposed,
             targets,
+            restart_required: None,
         })
     }
 

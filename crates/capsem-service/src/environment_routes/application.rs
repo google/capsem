@@ -7,6 +7,8 @@ use crate::{
     policy_mutation::{unix_timestamp_ms, PolicyMutation},
     vm_lifecycle::{persistent_entry_vm_id, persistent_registry_key_for_route_id},
 };
+use capsem_api::environments::{EnvironmentRevisionReference, EnvironmentSandboxTarget};
+use capsem_config::environment::EnvironmentSpecification;
 use capsem_core::{
     environment::{EnvironmentChangeImpact, EnvironmentPolicyInputs},
     net::policy_config::{load_corp_policy_files, ActivePolicyFile},
@@ -44,18 +46,47 @@ pub(super) struct UnconfirmedPolicy {
     pub recorded: Result<(), Error>,
 }
 
+fn reviewed_binding<'a>(
+    instance: &'a crate::InstanceInfo,
+    generation: &str,
+    base: &EnvironmentRevisionParent,
+) -> Option<&'a EnvironmentBinding> {
+    instance.environment.as_ref().filter(|binding| {
+        instance.generation.to_string() == generation && binding.acknowledged && &binding.desired == base
+    })
+}
+
+pub(super) async fn preview_restart(
+    state: &ServiceState,
+    target: &EnvironmentSandboxTarget,
+    base: &EnvironmentRevisionReference,
+    proposed: &EnvironmentSpecification,
+) -> Option<bool> {
+    let base = EnvironmentRevisionParent {
+        environment_id: base.environment_id.clone(),
+        revision_id: base.revision_id.clone(),
+    };
+    let current_boot = || {
+        let instances = state.instances.lock().unwrap();
+        let instance = instances.get(&target.session_id)?;
+        let binding = reviewed_binding(instance, &target.generation, &base)?;
+        (!instance.authority.grant().is_revoked()).then(|| binding.boot.clone())
+    };
+    let boot = current_boot()?;
+    let original = state
+        .environments
+        .load_revision(&boot.environment_id, &boot.revision_id)
+        .await
+        .ok()?;
+    (current_boot().as_ref() == Some(&boot))
+        .then(|| EnvironmentChangeImpact::classify(&original.specification, proposed).has_deferred_changes())
+}
+
 pub(super) async fn validate(state: &Arc<ServiceState>, review: ReviewedEnvironmentChange) -> Result<Plan, Error> {
     let (owner, binding, session_dir, persistent) = {
         let instances = state.instances.lock().unwrap();
-        let instance = instances
-            .get(&review.target.session_id)
-            .filter(|instance| instance.generation.to_string() == review.target.generation)
-            .ok_or(Error::Conflict)?;
-        let binding = instance
-            .environment
-            .as_ref()
-            .filter(|binding| binding.acknowledged && binding.desired == review.base)
-            .ok_or(Error::Conflict)?;
+        let instance = instances.get(&review.target.session_id).ok_or(Error::Conflict)?;
+        let binding = reviewed_binding(instance, &review.target.generation, &review.base).ok_or(Error::Conflict)?;
         let owner = OwnerConnection::capture(instance).map_err(|_| Error::Conflict)?;
         (
             owner,

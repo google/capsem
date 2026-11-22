@@ -104,4 +104,8 @@ pub struct RequestDetailResponse {
     pub base: Option<EnvironmentReviewContent>,
     pub proposed: EnvironmentReviewContent,
     pub targets: Vec<EnvironmentSandboxTarget>,
+    /// Whether the reviewed change would need a restart on the requesting
+    /// VM's current boot revision. Absent when the live preview is unavailable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restart_required: Option<bool>,
 }

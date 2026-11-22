@@ -176,7 +176,14 @@
         </dl>
       </div>
       {#if pending}
-        <p>Approval creates a fork for this VM. Access controls update live. Workload settings take effect on its next start.</p>
+        <p>Approval creates a fork for this VM.</p>
+        {#if detail.restart_required === true}
+          <p>Approved access changes apply live. Workload changes take effect on the VM’s next start.</p>
+        {:else if detail.restart_required === false}
+          <p>The VM can stay running while the change takes effect.</p>
+        {:else}
+          <p>Restart requirements are unavailable for this VM generation.</p>
+        {/if}
       {:else if detail.summary.decision === RequestState.PENDING}
         <p role="status">This request is no longer in the pending queue.</p>
       {:else}

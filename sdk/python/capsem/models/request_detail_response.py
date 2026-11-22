@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import ConfigDict, StrictStr
+from pydantic import ConfigDict, StrictBool, StrictStr
 
 from .environment_review_content import EnvironmentReviewContent
 from .environment_sandbox_target import EnvironmentSandboxTarget
@@ -17,5 +17,6 @@ class RequestDetailResponse(Model):
     disposition: RequestDecisionDetails | None = None
     observed_revision: StrictStr
     proposed: EnvironmentReviewContent
+    restart_required: StrictBool | None = None
     summary: RequestSummary
     targets: list[EnvironmentSandboxTarget]

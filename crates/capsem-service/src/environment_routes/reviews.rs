@@ -1,7 +1,9 @@
 //! Operator review endpoints own access to full archived request content.
 use super::*;
 use axum::extract::Query;
-use capsem_api::requests::{RequestDetailResponse, RequestListQuery, RequestListResponse};
+use capsem_api::requests::{
+    RequestDetailResponse, RequestKind, RequestListQuery, RequestListResponse, RequestReviewAvailability, RequestState,
+};
 
 pub(crate) async fn list(
     actor: AuthenticatedActor,
@@ -25,10 +27,25 @@ pub(crate) async fn info(
     actor.require_operator()?;
     capsem_api::validate_managed_request_id(&id)
         .map_err(|error| AppError::new(StatusCode::BAD_REQUEST, error.into()))?;
-    match state.environments.review_request(&id).await {
-        Err(EnvironmentMutationError::NotFound) => {
-            Err(AppError::new(StatusCode::NOT_FOUND, "request not found".into()))
+    let mut detail = state
+        .environments
+        .review_request(&id)
+        .await
+        .map_err(|error| match error {
+            EnvironmentMutationError::NotFound => AppError::new(StatusCode::NOT_FOUND, "request not found".into()),
+            error => mutation_error(error),
+        })?;
+    if detail.summary.kind == RequestKind::EnvironmentChange
+        && detail.summary.decision == RequestState::Pending
+        && detail.proposed.availability == RequestReviewAvailability::Complete
+    {
+        if let (Some(target), Some(base), Some(proposed)) = (
+            detail.summary.requester.as_ref(),
+            detail.summary.base.as_ref(),
+            detail.proposed.specification.as_deref(),
+        ) {
+            detail.restart_required = super::application::preview_restart(&state, target, base, proposed).await;
         }
-        result => result.map(Json).map_err(mutation_error),
     }
+    Ok(Json(detail))
 }

@@ -12910,6 +12910,13 @@
           "proposed": {
             "$ref": "#/components/schemas/EnvironmentReviewContent"
           },
+          "restart_required": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether the reviewed change would need a restart on the requesting\nVM's current boot revision. Absent when the live preview is unavailable."
+          },
           "summary": {
             "$ref": "#/components/schemas/RequestSummary"
           },

@@ -12,6 +12,7 @@ export const RequestDetailResponseSchema: z.ZodType<RequestDetailResponse> = z.s
   "disposition": z.union([z.null(), z.lazy(() => RequestDecisionDetailsSchema)]).exactOptional(),
   "observed_revision": z.string(),
   "proposed": z.lazy(() => EnvironmentReviewContentSchema),
+  "restart_required": z.boolean().nullable().exactOptional(),
   "summary": z.lazy(() => RequestSummarySchema),
   "targets": z.array(z.lazy(() => EnvironmentSandboxTargetSchema)),
 });

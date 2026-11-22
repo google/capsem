@@ -116,6 +116,7 @@ async fn delegated_proposal_freezes_its_original_generation_and_historical_base_
     assert_eq!(detail["base"]["specification"]["variables"]["EDITOR"], "vim");
     assert_eq!(detail["proposed"]["specification"]["variables"]["EDITOR"], "emacs");
     assert_eq!(detail["proposed"]["availability"], "complete");
+    assert_eq!(detail["restart_required"], true);
     let unauthorized = axum::http::Request::get(&review_path)
         .header("authorization", &bearer)
         .body(axum::body::Body::empty())
@@ -134,7 +135,7 @@ async fn delegated_proposal_freezes_its_original_generation_and_historical_base_
     let mut forged = intent(104);
     forged["requesting_sandbox"] = json!({"session_id": id(8), "generation": id(9)});
     assert_eq!(
-        app.operator_request(send(forged)).await.unwrap().status(),
+        app.clone().operator_request(send(forged)).await.unwrap().status(),
         StatusCode::BAD_REQUEST
     );
     assert!(state
@@ -143,6 +144,50 @@ async fn delegated_proposal_freezes_its_original_generation_and_historical_base_
         .await
         .unwrap()
         .is_none());
+
+    let mut metadata_only = intent(105);
+    metadata_only["specification"]["variables"]["EDITOR"] = "vim".into();
+    metadata_only["specification"]["description"] = "new description".into();
+    assert_eq!(
+        app.clone()
+            .operator_request(send(metadata_only))
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+    let (_, metadata_review) =
+        route_request(app.clone(), Method::GET, &format!("/requests/{}/info", id(105)), None).await;
+    assert_eq!(metadata_review["restart_required"], false);
+
+    // A previous approval can have saved changes that the running VM has yet
+    // to boot with. A second metadata edit must still report that restart.
+    let desired_revision = committed_head.identity.revision_id;
+    state
+        .instances
+        .lock()
+        .unwrap()
+        .get_mut(&session_id)
+        .unwrap()
+        .environment
+        .as_mut()
+        .unwrap()
+        .desired
+        .revision_id = desired_revision.clone();
+    let mut carried = intent(106);
+    carried["base_revision_id"] = desired_revision.into();
+    carried["specification"]["variables"]["EDITOR"] = "nano".into();
+    carried["specification"]["description"] = "new description".into();
+    assert_eq!(
+        app.clone().operator_request(send(carried)).await.unwrap().status(),
+        StatusCode::OK
+    );
+    let (_, carried_review) =
+        route_request(app.clone(), Method::GET, &format!("/requests/{}/info", id(106)), None).await;
+    assert_eq!(carried_review["restart_required"], true);
+    let (status, stale_review) = route_request(app, Method::GET, &review_path, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(stale_review.get("restart_required").is_none());
 }
 
 #[tokio::test]

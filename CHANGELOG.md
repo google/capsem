@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Environment approval reviews indicate whether the target VM must restart to apply the reviewed configuration.
 - Added: Environment approvals show the exact VM and base revision under review and the resulting environment revision after approval.
 - Fixed: The new guest runtime requires Capsem 0.7.3, so older installations keep their compatible runtime until the package and guest can update together.
 - Fixed: Upgrading from 0.7.2 retains the existing host and session ledger history, including archived payloads.

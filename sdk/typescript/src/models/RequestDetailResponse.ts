@@ -10,6 +10,7 @@ export interface RequestDetailResponse {
   "disposition"?: null | RequestDecisionDetails;
   "observed_revision": string;
   "proposed": EnvironmentReviewContent;
+  "restart_required"?: boolean | null;
   "summary": RequestSummary;
   "targets": Array<EnvironmentSandboxTarget>;
 }

@@ -128,6 +128,7 @@ def test_approval_applies_live_policy_and_saves_deferred_configuration(service, 
             info_path = f"/requests/{request_id}/info"
             detail = operator.get(info_path)
             assert result["observed_revision"] == detail["observed_revision"]
+            assert detail["restart_required"] is deferred
             return f"/requests/{request_id}/resolve", info_path, result["observed_revision"]
 
         for decision, expected in (("deny", "denied"), ("cancel", "cancelled")):
