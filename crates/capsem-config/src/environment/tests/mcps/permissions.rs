@@ -78,6 +78,35 @@ fn environment_mcp_permissions_disabled_servers_keep_no_allowing_tool_override()
 }
 
 #[test]
+fn environment_mcp_permissions_use_the_server_default_for_resource_reads_and_prompt_gets() {
+    for (default, action) in [
+        (EnvironmentCapabilityDecision::Allow, SecurityRuleAction::Allow),
+        (EnvironmentCapabilityDecision::Ask, SecurityRuleAction::Ask),
+        (EnvironmentCapabilityDecision::Block, SecurityRuleAction::Block),
+    ] {
+        let permissions = EnvironmentMcpPermissions {
+            default,
+            tools: [("fixture".into(), EnvironmentCapabilityDecision::Allow)].into(),
+            ..Default::default()
+        };
+        let rules = compile_environment_mcp_permissions("remote", &permissions).unwrap();
+        for (method, response, expected) in [
+            ("resources/read", false, Some(action)),
+            ("prompts/get", false, Some(action)),
+            ("resources/list", false, None),
+            ("prompts/list", false, None),
+            ("resources/read", true, None),
+        ] {
+            let event =
+                serde_json::json!({"mcp":{"method":method,"server":{"name":"remote"},"response":{"valid":response}}});
+            let evaluation = rules.evaluate(&event).unwrap();
+            let actions: Vec<_> = evaluation.matched_rules().iter().map(|rule| rule.action).collect();
+            assert_eq!(actions, expected.into_iter().collect::<Vec<_>>(), "{method}");
+        }
+    }
+}
+
+#[test]
 fn environment_mcp_permissions_escape_tool_names_and_refuse_oversize_without_partial_rules() {
     let tricky = "read\" || mcp.server.name == \"other";
     let mut permissions = EnvironmentMcpPermissions {

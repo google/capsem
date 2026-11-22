@@ -116,6 +116,7 @@ with subprocess.Popen(['/run/capsem-mcp-server'], stdin=subprocess.PIPE,
             'call': send('tools/call', {
                 'name': 'scoped__fixture_lookup', 'arguments': {'query': sys.argv[1]},
             }),
+            'resource': send('resources/read', {'uri': 'capsem://scoped/doc://fixture'}),
         }))
 """
     try:
@@ -141,8 +142,14 @@ with subprocess.Popen(['/run/capsem-mcp-server'], stdin=subprocess.PIPE,
         blocked_spec["name"] = "scoped-mcp-blocked"
         blocked_spec["mcps"]["permissions"]["scoped"]["tools"].clear()
         blocked = save(service, blocked_spec)
+        resource_spec = copy.deepcopy(spec)
+        resource_spec["name"] = "scoped-mcp-resource"
+        resource_spec["mcps"]["permissions"]["scoped"] = {
+            "default": "allow", "tools": {"fixture_lookup": "block"},
+        }
+        resource_only = save(service, resource_spec)
         replies = {}
-        for decision, reference in [("blocked", blocked), ("allowed", allowed)]:
+        for decision, reference in [("blocked", blocked), ("allowed", allowed), ("resource", resource_only)]:
             vm = create(service, reference, vm_name(f"mcp-{decision}"))
             assert wait_exec_ready(service.client(), vm)
             response = request(service, "POST", f"/vms/{vm}/exec", {
@@ -158,6 +165,10 @@ with subprocess.Popen(['/run/capsem-mcp-server'], stdin=subprocess.PIPE,
         for reply in replies.values():
             assert "scoped__fixture_lookup" in {tool["name"] for tool in reply["tools"]}
         assert "environment.mcps.scoped.default" in replies["blocked"]["call"]["error"]["message"]
+        for decision in ("blocked", "allowed"):
+            assert "environment.mcps.scoped.default" in replies[decision]["resource"]["error"]["message"]
+        assert "environment.mcps.scoped.tool_0" in replies["resource"]["call"]["error"]["message"]
+        assert replies["resource"]["resource"]["result"]["contents"][0]["text"] == "capsem-mock-server:mcp:resource"
         posts = [
             row
             for line in log.read_text().splitlines()
@@ -168,6 +179,9 @@ with subprocess.Popen(['/run/capsem-mcp-server'], stdin=subprocess.PIPE,
         calls = [message["params"] for message in messages if message["method"] == "tools/call"]
         assert [(call["name"], call["arguments"]) for call in calls] == [
             ("fixture_lookup", {"query": "allowed"}),
+        ]
+        assert [message["params"]["uri"] for message in messages if message["method"] == "resources/read"] == [
+            "doc://fixture",
         ]
     finally:
         stop_process(upstream)

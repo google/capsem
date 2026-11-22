@@ -46,16 +46,23 @@ pub fn compile_environment_mcp_permissions(
         "mcp.response.valid == \"false\" && mcp.server.name == {}",
         condition_string(server)
     );
-    let mut fallback = format!("{base} && has(mcp.tool_call.name)");
+    let mut tools = "has(mcp.tool_call.name)".to_string();
     if permissions.enabled {
         for tool in permissions.tools.keys() {
             let name = capsem_proto::mcp_contracts::namespace_name(server, tool);
-            let exclusion = format!(" && mcp.tool_call.name != {}", condition_string(&name));
-            if fallback.len().saturating_add(exclusion.len()) > capsem_proto::ENVIRONMENT_MAX_RULE_BYTES {
+            tools.push_str(&format!(" && mcp.tool_call.name != {}", condition_string(&name)));
+            if tools.len() > capsem_proto::ENVIRONMENT_MAX_RULE_BYTES {
                 return Err("environment MCP fallback condition exceeds its byte limit".into());
             }
-            fallback.push_str(&exclusion);
         }
+    }
+    // Reads and prompt retrieval have no tool name. They use the server's
+    // default, while discovery and response evaluation keep their own rules.
+    let fallback = format!(
+        "{base} && (({tools}) || (has(mcp.method) && (mcp.method == \"resources/read\" || mcp.method == \"prompts/get\")))"
+    );
+    if fallback.len() > capsem_proto::ENVIRONMENT_MAX_RULE_BYTES {
+        return Err("environment MCP fallback condition exceeds its byte limit".into());
     }
     let mut compiled = Vec::with_capacity(if permissions.enabled {
         permissions.tools.len() + 1

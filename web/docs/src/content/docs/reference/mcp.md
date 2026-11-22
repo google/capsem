@@ -44,6 +44,7 @@ Saved revisions and request reviews show the exact resolved definition.
 Remote servers without a credential binding run through the session MCP broker.
 The boot revision fixes the endpoint. The broker checks the method and resolved
 addresses against the active HTTP policy before connecting.
+The server's default permission also governs resource reads and prompt retrieval.
 
 In the desktop environment editor, open **Browse MCP catalog** to inspect a
 version, fill its configuration fields, and add it to the draft.
