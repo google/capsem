@@ -150,6 +150,10 @@ export function applySavedEnvironment(id: string, request: import('@capsem/sdk')
   return _sdk.call(transport => new Environments(transport).apply(id, request), false);
 }
 
+export function previewSavedEnvironmentApplication(id: string, request: import('@capsem/sdk').EnvironmentApplyPreviewRequest, signal: AbortSignal) {
+  return _sdk.call(transport => new Environments(transport).previewApplication(id, request, { signal }));
+}
+
 // -- Public getters --
 
 export function isConnected(): boolean {

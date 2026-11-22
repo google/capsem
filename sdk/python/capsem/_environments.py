@@ -10,6 +10,18 @@ class Environments:
     def __init__(self, transport: Transport) -> None:
         self._transport = transport
 
+    async def preview_application(
+        self, id: str, request: models.EnvironmentApplyPreviewRequest, *, request_timeout: float | None = None,
+    ) -> models.EnvironmentApplyPreviewResponse:
+        """Review live and next-start changes for the exact selected generations."""
+        selection = list(request.targets)
+        result = await api.preview_environment_application(
+            self._transport, id=id, body=request, request_timeout=request_timeout,
+        )
+        if [target.target for target in result.targets] != selection:
+            raise ValueError("environment application review selection changed")
+        return result
+
     async def apply(
         self, id: str, request: models.EnvironmentApplyRequest, *, request_timeout: float | None = None,
     ) -> models.EnvironmentMutationResponse:

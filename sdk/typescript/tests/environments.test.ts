@@ -8,6 +8,25 @@ const input: EnvironmentCreateRequest = {request_id: requestId, specification: {
 const pending = {request_id: requestId, environment_id: environmentId, decision: 'approved', application: 'pending', result: null, application_error: null};
 const current = {document: {identity: {schema_version: 1, id: environmentId, revision_id: requestId}, specification: {name: 'development'}}, archived: false, timestamp_unix_ms: 1, actor: 'operator', reason: 'approved', request_id: requestId};
 
+it('binds the application preview to the selected sandbox generation', async () => {
+  const reference = {environment_id: environmentId, revision_id: requestId};
+  const target = {session_id: environmentId, generation: requestId, base: reference};
+  const body = {base_revision_id: requestId, revision_id: requestId, targets: [target]};
+  const preview = {target, boot: reference, live_policy: reference,
+    live_changes: ['access_rules'], next_start_changes: ['variables']};
+  const response = {targets: [preview]};
+  await gateway((_request, reply) => reply.end(JSON.stringify(response)), async (url, received) => {
+    const hv = new Hypervisor(url, 'token');
+    try {
+      expect(await hv.environments.previewApplication(environmentId, body)).toEqual(response);
+      expect(received[0]?.url).toBe(`/environments/${environmentId}/apply/preview`);
+      expect(received[0]?.method).toBe('POST');
+      preview.target = {...target, generation: environmentId};
+      await expect(hv.environments.previewApplication(environmentId, body)).rejects.toThrow('review selection changed');
+    } finally { hv.close(); }
+  });
+});
+
 it('lists selected skill pins and rejects detail with substituted metadata', async () => {
   const revision = {environment_id: environmentId, revision_id: requestId};
   const selection = {id: 'review', version: '1.0.0', catalog_reference: 'registry.example/skills:stable', resolved_digest: `sha256:${'0'.repeat(64)}`};

@@ -152,6 +152,16 @@ pub fn openapi() -> OpenApi {
             .content("application/json", Content::new(Some(request))).build()))
         .extensions(Some([("x-capsem-request-timeout-ms", IMAGE_PULL_REQUEST_TIMEOUT_MS)].into_iter().collect()));
     doc.add("/environments/{id}/apply", HttpMethod::Post, apply);
+    let request = doc.schema::<environments::EnvironmentApplyPreviewRequest>();
+    let preview = doc
+        .operation::<environments::EnvironmentApplyPreviewResponse>(
+            "/environments/{id}/apply/preview",
+            "previewEnvironmentApplication",
+        )
+        .description(Some("Review an exact saved revision against each selected sandbox generation. Live changes are compared with the acknowledged policy, and next-start changes are compared with the booted workload. This operator review records no request and changes no sandbox."))
+        .request_body(Some(RequestBodyBuilder::new().required(Some(Required::True))
+            .content("application/json", Content::new(Some(request))).build()));
+    doc.add("/environments/{id}/apply/preview", HttpMethod::Post, preview);
     let requests = doc
         .operation::<requests::RequestListResponse>("/requests/list", "listRequests")
         .description(Some("List durable environment requests visible to the operator."))

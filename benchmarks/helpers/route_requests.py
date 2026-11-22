@@ -30,6 +30,7 @@ ENV_CREATE = "/environments/create"
 ENV_LIST = "/environments/list"
 ENV_CHANGE = "/environments/{id}/changes"
 ENV_APPLY = "/environments/{id}/apply"
+ENV_APPLY_PREVIEW = f"{ENV_APPLY}/preview"
 ENV_PROMOTE = "/environments/{id}/promote"
 ENV_INFO = "/environments/{id}/info"
 ENV_REVISION = "/environments/{id}/revisions/{revision_id}"
@@ -48,7 +49,7 @@ ENV_POLICY_ROUTES = {
 }
 ENV_CURRENT_ROUTES = {ENV_INFO, ENV_IMAGE_UPDATE, ENV_VALIDATE, *ENV_POLICY_ROUTES}
 ENV_ROUTES = {
-    ENV_CREATE, ENV_LIST, ENV_APPLY, ENV_CHANGE, ENV_PROMOTE, ENV_READINESS, ENV_REVISION_INFO, REQUEST_LIST,
+    ENV_CREATE, ENV_LIST, ENV_APPLY, ENV_APPLY_PREVIEW, ENV_CHANGE, ENV_PROMOTE, ENV_READINESS, ENV_REVISION_INFO, REQUEST_LIST,
     "/environments/{id}/revisions/list", *REQUEST_ROUTES, *ENV_CURRENT_ROUTES,
 }
 
@@ -120,26 +121,39 @@ def seed_environment(client: TcpHttpClient, gateway_url: str, routes: set[str]) 
     if ENV_APPLY in routes:
         path = ENV_APPLY.format(id=revised["environment_id"])
         replays[path] = seed_application(client, path, original, revised)
+    if ENV_APPLY_PREVIEW in routes:
+        path = ENV_APPLY_PREVIEW.format(id=revised["environment_id"])
+        replays[path] = seed_application(client, path, original, revised, preview=True)
     return EnvironmentFixture(original, revised["revision_id"], replays, request_id)
 
 
 def seed_application(
-    client: TcpHttpClient, path: str, original: dict[str, str], reviewed: dict[str, str],
+    client: TcpHttpClient, path: str, original: dict[str, str], reviewed: dict[str, str], *, preview: bool = False,
 ) -> tuple[bytes, dict]:
     session_id = client.post("/vms/create", {"name": "application-benchmark", "environment": original})["id"]
+    retained = False
     try:
         observed = client.get(f"/vms/{session_id}/info")["environment"]
         body = {
-            "request_id": str(uuid.uuid4()), "base_revision_id": reviewed["revision_id"],
-            "revision_id": reviewed["revision_id"], "reason": "apply a reviewed route benchmark revision",
+            "base_revision_id": reviewed["revision_id"],
+            "revision_id": reviewed["revision_id"],
             "targets": [{"session_id": session_id, "generation": observed["owner_generation"], "base": observed["desired"]}],
         }
+        if preview:
+            review = client.post(path, body)
+            if [target["target"] for target in review["targets"]] != body["targets"]:
+                raise RuntimeError("benchmark preview used a different target")
+            # The benchmark's owning service terminates this live comparison fixture.
+            retained = True
+            return json.dumps(body).encode(), review
+        body.update(request_id=str(uuid.uuid4()), reason="apply a reviewed route benchmark revision")
         receipt = client.post(path, body)
         if receipt["application"] != "applied" or receipt["result"] != reviewed:
             raise RuntimeError("benchmark application did not acknowledge the reviewed revision")
         return json.dumps(body).encode(), receipt
     finally:
-        client.delete(f"/vms/{session_id}/delete")
+        if not retained:
+            client.delete(f"/vms/{session_id}/delete")
 
 
 def seed_reviewed_fork(

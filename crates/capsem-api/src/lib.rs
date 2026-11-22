@@ -5,8 +5,8 @@ mod agent_access;
 mod approvals;
 pub mod environments;
 pub use environments::{
-    CatalogSnapshot, EnvironmentApplyRequest, RuleCatalogDetailResponse, RuleCatalogListResponse,
-    SkillCatalogDetailResponse, SkillCatalogListResponse,
+    CatalogSnapshot, EnvironmentApplyPreviewRequest, EnvironmentApplyPreviewResponse, EnvironmentApplyRequest,
+    RuleCatalogDetailResponse, RuleCatalogListResponse, SkillCatalogDetailResponse, SkillCatalogListResponse,
 };
 pub use environments::{
     EnvironmentChangeIntent, EnvironmentChangeRequest, EnvironmentCreateRequest, EnvironmentCurrentResponse,

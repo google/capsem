@@ -1,5 +1,8 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+export type { VmActionResponse } from "./VmActionResponse.js";
+export type { VmAiInfo } from "./VmAiInfo.js";
+export type { VmFilesInfo } from "./VmFilesInfo.js";
 export { VmLifecycleIntent } from "./VmLifecycleIntent.js";
 export type { VmLifecycleSelection } from "./VmLifecycleSelection.js";
 export { VmLifecycleState } from "./VmLifecycleState.js";

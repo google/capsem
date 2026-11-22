@@ -618,6 +618,59 @@
         "x-capsem-request-timeout-ms": 1020000
       }
     },
+    "/environments/{id}/apply/preview": {
+      "post": {
+        "description": "Review an exact saved revision against each selected sandbox generation. Live changes are compared with the acknowledged policy, and next-start changes are compared with the booted workload. This operator review records no request and changes no sandbox.",
+        "operationId": "previewEnvironmentApplication",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnvironmentApplyPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentApplyPreviewResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/environments/{id}/changes": {
       "post": {
         "description": "An operator publishes a blueprint revision, approves an exact verified image update, or archives the exact current revision. Archival prevents new sandbox creation while preserving pinned work. A scoped agent queues an edit proposal at the exact base revision of its running sandbox. Reconcile the same request ID after interruption.",
@@ -7251,6 +7304,47 @@
         },
         "additionalProperties": false
       },
+      "EnvironmentApplyPreviewRequest": {
+        "type": "object",
+        "required": [
+          "base_revision_id",
+          "revision_id",
+          "targets"
+        ],
+        "properties": {
+          "base_revision_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The current revision of the environment being applied."
+          },
+          "revision_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The exact saved revision to review."
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentApplyTarget"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentApplyPreviewResponse": {
+        "type": "object",
+        "required": [
+          "targets"
+        ],
+        "properties": {
+          "targets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentApplyTargetPreview"
+            }
+          }
+        }
+      },
       "EnvironmentApplyRequest": {
         "type": "object",
         "required": [
@@ -7309,6 +7403,41 @@
           }
         },
         "additionalProperties": false
+      },
+      "EnvironmentApplyTargetPreview": {
+        "type": "object",
+        "required": [
+          "target",
+          "boot",
+          "live_policy",
+          "live_changes",
+          "next_start_changes"
+        ],
+        "properties": {
+          "boot": {
+            "$ref": "#/components/schemas/EnvironmentRevisionReference"
+          },
+          "live_changes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Changed settings compared with the currently acknowledged live policy."
+          },
+          "live_policy": {
+            "$ref": "#/components/schemas/EnvironmentRevisionReference"
+          },
+          "next_start_changes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Changed settings compared with the booted workload."
+          },
+          "target": {
+            "$ref": "#/components/schemas/EnvironmentApplyTarget"
+          }
+        }
       },
       "EnvironmentArchiveAction": {
         "type": "string",

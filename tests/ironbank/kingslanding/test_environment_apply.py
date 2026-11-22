@@ -44,7 +44,13 @@ def test_apply_keeps_unselected_sandboxes_pinned_and_reports_each_acknowledgemen
             root = f"/environments/{original['environment_id']}"
             revised = operator.post(root + "/changes", {
                 "request_id": str(uuid.uuid4()), "base_revision_id": original["revision_id"],
-                "specification": {**specification, "variables": {"WORKBENCH_MODE": "approved"}},
+                "specification": {
+                    **specification,
+                    "variables": {"WORKBENCH_MODE": "approved"},
+                    "access": {"custom": {"preview_fixture": {
+                        "name": "Preview fixture", "action": "block", "match": 'http.host == "preview.example"',
+                    }}},
+                },
                 "reason": "prepare an exact saved revision",
             })["result"]
             stale = observed(second)
@@ -63,8 +69,23 @@ def test_apply_keeps_unselected_sandboxes_pinned_and_reports_each_acknowledgemen
             status, response = operator.call_json("POST", path, stale_body)
             assert status == 409, response
             assert binding(first) == first_binding
+            preview_body = {key: body[key] for key in ("base_revision_id", "revision_id", "targets")}
+            preview_path = path + "/preview"
+            status, response = operator.call_json("POST", preview_path, {**preview_body, "targets": [stale]})
+            assert status == 409, response
             with closing(delegate(operator, gateway, first, targets[0]["generation"])) as agent:
                 assert agent.call_json("POST", path, body)[0] == 403
+                assert agent.call_json("POST", preview_path, preview_body)[0] == 403
+
+            preview = operator.post(preview_path, preview_body)
+            assert preview["targets"] == [
+                {"target": target, "boot": original, "live_policy": original,
+                 "live_changes": ["access_rules"], "next_start_changes": ["variables"]}
+                for target in targets
+            ]
+            assert binding(first) == first_binding
+            assert binding(sibling) == sibling_binding
+            assert operator.call_json("GET", f"/requests/{body['request_id']}/info")[0] == 404
 
             status, receipt = operator.call_json("POST", path, body)
             assert status == 200, receipt
@@ -90,6 +111,14 @@ def test_apply_keeps_unselected_sandboxes_pinned_and_reports_each_acknowledgemen
             assert partial["summary"]["application"] == "pending"
             statuses = {row["target"]["session_id"]: row["state"] for row in partial["applications"]}
             assert statuses == {first: "applied", second: "pending"}
+            rollback_preview = operator.post(preview_path, {
+                **preview_body, "revision_id": original["revision_id"], "targets": [observed(first), observed(second)],
+            })["targets"]
+            assert [(item["boot"], item["live_policy"], item["live_changes"], item["next_start_changes"])
+                    for item in rollback_preview] == [
+                (revised, revised, ["access_rules"], ["variables"]),
+                (original, revised, ["access_rules"], []),
+            ]
             restart(second)
             complete = operator.get(request_path)
             assert complete["summary"]["application"] == "applied"

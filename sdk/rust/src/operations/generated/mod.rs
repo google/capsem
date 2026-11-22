@@ -173,6 +173,8 @@ mod pause_vm;
 pub use pause_vm::{pause_vm, PauseVmParams};
 mod persist_vm;
 pub use persist_vm::{persist_vm, PersistVmParams};
+mod preview_environment_application;
+pub use preview_environment_application::{preview_environment_application, PreviewEnvironmentApplicationParams};
 mod promote_environment;
 pub use promote_environment::{promote_environment, PromoteEnvironmentParams};
 mod pull_image;

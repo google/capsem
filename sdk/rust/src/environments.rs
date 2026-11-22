@@ -5,6 +5,33 @@ use models::environments::{EnvironmentRevisionListQuery, EnvironmentRevisionRefe
 
 pub struct Environments<'a>(pub(crate) &'a Client);
 impl Environments<'_> {
+    /// Review the live and next-start changes for the exact selected generations.
+    pub async fn preview_application(
+        &self,
+        id: &str,
+        request: models::EnvironmentApplyPreviewRequest,
+    ) -> Result<models::EnvironmentApplyPreviewResponse> {
+        request
+            .validate()
+            .map_err(|_| Error::InvalidInput("invalid environment application selection"))?;
+        let input = api::PreviewEnvironmentApplicationParams {
+            id: id.into(),
+            body: request,
+        };
+        let result = api::preview_environment_application(&self.0.transport, &input, self.0.options).await?;
+        if !result
+            .targets
+            .iter()
+            .map(|target| &target.target)
+            .eq(&input.body.targets)
+        {
+            return Err(Error::InvalidResponse(
+                "environment application review selection changed",
+            ));
+        }
+        Ok(result)
+    }
+
     /// Apply the exact reviewed revision to the selected sandbox generations.
     pub async fn apply(
         &self,

@@ -1,5 +1,8 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .restart_authentication import RestartAuthentication
+from .restart_response import RestartResponse
+from .restart_status import RestartStatus
 from .revoke_session_grant_response import RevokeSessionGrantResponse
 from .revoked_credential_authority import RevokedCredentialAuthority
 from .rule_catalog_definition import RuleCatalogDefinition
@@ -77,11 +80,11 @@ from .upload_response import UploadResponse
 from .validation_status import ValidationStatus
 from .value import Value
 from .vm_action import VmAction
-from .vm_action_response import VmActionResponse
-from .vm_ai_info import VmAiInfo
-from .vm_files_info import VmFilesInfo
 
 __all__ = [
+    'RestartAuthentication',
+    'RestartResponse',
+    'RestartStatus',
     'RevokeSessionGrantResponse',
     'RevokedCredentialAuthority',
     'RuleCatalogDefinition',
@@ -159,7 +162,4 @@ __all__ = [
     'ValidationStatus',
     'Value',
     'VmAction',
-    'VmActionResponse',
-    'VmAiInfo',
-    'VmFilesInfo',
 ]

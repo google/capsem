@@ -47,7 +47,7 @@ pub(super) struct UnconfirmedPolicy {
     pub recorded: Result<(), Error>,
 }
 
-fn reviewed_binding<'a>(
+pub(super) fn reviewed_binding<'a>(
     instance: &'a crate::InstanceInfo,
     generation: &str,
     base: &EnvironmentRevisionParent,

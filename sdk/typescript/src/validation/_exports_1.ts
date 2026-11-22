@@ -1,5 +1,8 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+export {ImagePullResponseSchema} from "./ImagePullResponse.js";
+export {ImageSurfaceSchema} from "./ImageSurface.js";
+export {ImageToolSchema} from "./ImageTool.js";
 export {InteractionSchema} from "./Interaction.js";
 export {InteractionBlockSchema} from "./InteractionBlock.js";
 export {InteractionBlockKindSchema} from "./InteractionBlockKind.js";
@@ -197,6 +200,3 @@ export {UploadResponseSchema} from "./UploadResponse.js";
 export {ValidationStatusSchema} from "./ValidationStatus.js";
 export {ValueSchema} from "./Value.js";
 export {VmActionSchema} from "./VmAction.js";
-export {VmActionResponseSchema} from "./VmActionResponse.js";
-export {VmAiInfoSchema} from "./VmAiInfo.js";
-export {VmFilesInfoSchema} from "./VmFilesInfo.js";

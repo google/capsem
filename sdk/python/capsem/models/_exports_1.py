@@ -1,5 +1,10 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .environment_catalog_selections__environment_catalog_selection_selected_item import (
+    EnvironmentCatalogSelections_EnvironmentCatalogSelectionSelectedItem,
+)
+from .environment_change_intent import EnvironmentChangeIntent
+from .environment_change_request import EnvironmentChangeRequest
 from .environment_create_request import EnvironmentCreateRequest
 from .environment_current_response import EnvironmentCurrentResponse
 from .environment_detection_rule import EnvironmentDetectionRule
@@ -115,11 +120,11 @@ from .exec_history_details import ExecHistoryDetails
 from .exec_output import ExecOutput
 from .exec_output_encoding import ExecOutputEncoding
 from .exec_request import ExecRequest
-from .exec_response import ExecResponse
-from .exec_source import ExecSource
-from .exec_target import ExecTarget
 
 __all__ = [
+    'EnvironmentCatalogSelections_EnvironmentCatalogSelectionSelectedItem',
+    'EnvironmentChangeIntent',
+    'EnvironmentChangeRequest',
     'EnvironmentCreateRequest',
     'EnvironmentCurrentResponse',
     'EnvironmentDetectionRule',
@@ -197,7 +202,4 @@ __all__ = [
     'ExecOutput',
     'ExecOutputEncoding',
     'ExecRequest',
-    'ExecResponse',
-    'ExecSource',
-    'ExecTarget',
 ]

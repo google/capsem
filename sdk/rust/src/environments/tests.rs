@@ -17,6 +17,48 @@ fn pending() -> String {
 }
 
 #[tokio::test]
+async fn application_preview_binds_each_requested_target() {
+    let base = EnvironmentRevisionReference {
+        environment_id: ENVIRONMENT.into(),
+        revision_id: REQUEST.into(),
+    };
+    let target = models::environments::EnvironmentApplyTarget {
+        session_id: ENVIRONMENT.into(),
+        generation: REQUEST.into(),
+        base: base.clone(),
+    };
+    let mut body = models::EnvironmentApplyPreviewRequest {
+        base_revision_id: REQUEST.into(),
+        revision_id: REQUEST.into(),
+        targets: vec![target.clone()],
+    };
+    let payload = json!({"targets":[{
+        "target":target, "boot":base, "live_policy":base,
+        "live_changes":["access_rules"], "next_start_changes":["variables"]
+    }]})
+    .to_string();
+    let mut server = Server::reply(200, payload.as_bytes(), None).await;
+    let hv = Hypervisor::new(&server.url, "private-token").unwrap();
+    let preview = hv
+        .environments()
+        .preview_application(ENVIRONMENT, body.clone())
+        .await
+        .unwrap();
+    assert_eq!(preview.targets[0].next_start_changes, ["variables"]);
+    let (request, payload) = server.received.recv().await.unwrap();
+    assert_eq!(request.uri.path(), format!("/environments/{ENVIRONMENT}/apply/preview"));
+    assert_eq!(
+        serde_json::from_slice::<models::EnvironmentApplyPreviewRequest>(&payload).unwrap(),
+        body
+    );
+    body.targets[0].generation = ENVIRONMENT.into();
+    assert!(matches!(
+        hv.environments().preview_application(ENVIRONMENT, body).await,
+        Err(Error::InvalidResponse(_))
+    ));
+}
+
+#[tokio::test]
 async fn promotion_submits_the_reviewed_fork_and_matches_the_receipt() {
     let body = models::EnvironmentPromotionRequest {
         request_id: REQUEST.into(),

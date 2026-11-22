@@ -41,6 +41,25 @@ def test_promotion_submits_the_reviewed_fork_and_matches_the_receipt():
                 await hv.environments.promote(body.source.environment_id, body)
     asyncio.run(run())
 
+def test_application_preview_preserves_the_reviewed_generation():
+    async def run():
+        reference = {"environment_id": ENVIRONMENT, "revision_id": REQUEST}
+        target = {"session_id": ENVIRONMENT, "generation": REQUEST, "base": reference}
+        request = {"base_revision_id": REQUEST, "revision_id": REQUEST, "targets": [target]}
+        preview = {"target": target, "boot": reference, "live_policy": reference,
+                   "live_changes": ["access_rules"], "next_start_changes": ["variables"]}
+        response = {"targets": [preview]}
+        async with gateway(response=response) as (url, received), Hypervisor(url, "gateway-token") as hv:
+            body = models.EnvironmentApplyPreviewRequest.model_validate(request)
+            assert (await hv.environments.preview_application(ENVIRONMENT, body)).targets[0].next_start_changes == [
+                "variables",
+            ]
+            assert received[-1] == ("POST", f"/environments/{ENVIRONMENT}/apply/preview", request)
+            preview["target"] = {**target, "generation": ENVIRONMENT}
+            with pytest.raises(ValueError, match="review selection changed"):
+                await hv.environments.preview_application(ENVIRONMENT, body)
+    asyncio.run(run())
+
 
 def test_run_uses_an_exact_saved_revision_and_rejects_inline_variables():
     async def run():

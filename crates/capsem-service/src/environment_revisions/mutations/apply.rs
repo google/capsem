@@ -10,6 +10,19 @@ pub enum OperatorEnvironmentApplication<T> {
 }
 
 impl EnvironmentMutationCoordinator {
+    pub async fn check_application_base(&self, base: &EnvironmentRevisionReference) -> Result<(), Error> {
+        self.load_base(base).await?;
+        if self
+            .revisions
+            .is_archived(&base.environment_id)
+            .await
+            .map_err(Error::Publication)?
+        {
+            return Err(Error::Archived);
+        }
+        Ok(())
+    }
+
     pub async fn approve_application<T, F>(
         &self,
         environment_id: String,
@@ -80,7 +93,7 @@ impl EnvironmentMutationCoordinator {
                 .map(OperatorEnvironmentApplication::Observed);
         }
 
-        self.load_base(&base).await?;
+        self.check_application_base(&base).await?;
         let source = self
             .revisions
             .load_revision(&revision.environment_id, &revision.revision_id)

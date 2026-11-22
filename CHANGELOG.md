@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Before applying a saved environment revision, operators can see which settings take effect live and which wait for each selected sandbox's next start.
 - Added: Operators can review and apply an exact saved environment revision to selected running sandboxes, with a separate acknowledgement and restart status for each target.
 - Added: Operators can promote an exact reviewed fork revision into its parent for future sandboxes. Running sandboxes keep their pinned revisions.
 - Fixed: Operators can revise a saved environment fork while preserving its original parent and the revisions of running VMs.

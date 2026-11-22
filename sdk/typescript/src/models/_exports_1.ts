@@ -1,5 +1,8 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+export type { ImagePullResponse } from "./ImagePullResponse.js";
+export { ImageSurface } from "./ImageSurface.js";
+export type { ImageTool } from "./ImageTool.js";
 export type { Interaction } from "./Interaction.js";
 export type { InteractionBlock } from "./InteractionBlock.js";
 export { InteractionBlockKind } from "./InteractionBlockKind.js";
@@ -197,6 +200,3 @@ export type { UploadResponse } from "./UploadResponse.js";
 export { ValidationStatus } from "./ValidationStatus.js";
 export type { Value } from "./Value.js";
 export { VmAction } from "./VmAction.js";
-export type { VmActionResponse } from "./VmActionResponse.js";
-export type { VmAiInfo } from "./VmAiInfo.js";
-export type { VmFilesInfo } from "./VmFilesInfo.js";

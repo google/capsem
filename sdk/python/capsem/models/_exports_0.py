@@ -67,8 +67,11 @@ from .disconnect_response import DisconnectResponse
 from .dns_event import DnsEvent
 from .enrollment_kind import EnrollmentKind
 from .environment_access_rule import EnvironmentAccessRule
+from .environment_apply_preview_request import EnvironmentApplyPreviewRequest
+from .environment_apply_preview_response import EnvironmentApplyPreviewResponse
 from .environment_apply_request import EnvironmentApplyRequest
 from .environment_apply_target import EnvironmentApplyTarget
+from .environment_apply_target_preview import EnvironmentApplyTargetPreview
 from .environment_archive_action import EnvironmentArchiveAction
 from .environment_archive_request import EnvironmentArchiveRequest
 from .environment_capability_decision import EnvironmentCapabilityDecision
@@ -83,11 +86,6 @@ from .environment_catalog_selections__environment_catalog_pin_selected_item impo
 from .environment_catalog_selections__environment_catalog_selection import (
     EnvironmentCatalogSelections_EnvironmentCatalogSelection,
 )
-from .environment_catalog_selections__environment_catalog_selection_selected_item import (
-    EnvironmentCatalogSelections_EnvironmentCatalogSelectionSelectedItem,
-)
-from .environment_change_intent import EnvironmentChangeIntent
-from .environment_change_request import EnvironmentChangeRequest
 
 __all__ = [
     'AgentAccessScope',
@@ -157,8 +155,11 @@ __all__ = [
     'DnsEvent',
     'EnrollmentKind',
     'EnvironmentAccessRule',
+    'EnvironmentApplyPreviewRequest',
+    'EnvironmentApplyPreviewResponse',
     'EnvironmentApplyRequest',
     'EnvironmentApplyTarget',
+    'EnvironmentApplyTargetPreview',
     'EnvironmentArchiveAction',
     'EnvironmentArchiveRequest',
     'EnvironmentCapabilityDecision',
@@ -167,7 +168,4 @@ __all__ = [
     'EnvironmentCatalogSelections_EnvironmentCatalogPin',
     'EnvironmentCatalogSelections_EnvironmentCatalogPinSelectedItem',
     'EnvironmentCatalogSelections_EnvironmentCatalogSelection',
-    'EnvironmentCatalogSelections_EnvironmentCatalogSelectionSelectedItem',
-    'EnvironmentChangeIntent',
-    'EnvironmentChangeRequest',
 ]

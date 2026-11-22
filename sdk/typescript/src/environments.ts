@@ -17,6 +17,20 @@ export interface EnvironmentRevisionListOptions extends CallOptions {
 export class Environments {
   constructor(private readonly transport: Transport) {}
 
+  /** Review live and next-start changes for the exact selected generations. */
+  async previewApplication(id: string, request: models.EnvironmentApplyPreviewRequest, options: CallOptions = {}): Promise<models.EnvironmentApplyPreviewResponse> {
+    const selection = request.targets.map(target => [
+      target.session_id, target.generation, target.base.environment_id, target.base.revision_id,
+    ]);
+    const result = await api.previewEnvironmentApplication(this.transport, {id, body: request}, options);
+    if (result.targets.length !== selection.length || result.targets.some(({target}, index) => {
+      const [session, generation, environment, revision] = selection[index] ?? [];
+      return target.session_id !== session || target.generation !== generation
+        || target.base.environment_id !== environment || target.base.revision_id !== revision;
+    })) throw new Error('Environment application review selection changed');
+    return result;
+  }
+
   /** Apply the exact reviewed revision to the selected sandbox generations. */
   async apply(id: string, request: models.EnvironmentApplyRequest, options: CallOptions = {}): Promise<models.EnvironmentMutationResponse> {
     const requestId = request.request_id;

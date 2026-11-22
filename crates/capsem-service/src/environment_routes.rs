@@ -30,7 +30,7 @@ pub(crate) mod reviews;
 pub(crate) mod rules;
 pub(crate) mod skills;
 mod sources;
-pub(crate) use apply::apply;
+pub(crate) use apply::{apply, preview as preview_apply};
 use capsem_core::managed_sessions::LeaseClock;
 use capsem_logger::db::EnvironmentReferenceQuery;
 use capsem_service::environment_files::EnvironmentFileError;

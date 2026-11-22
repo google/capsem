@@ -295,25 +295,67 @@ pub struct EnvironmentApplyRequest {
 impl EnvironmentApplyRequest {
     pub fn validate(&self) -> Result<(), String> {
         validate_submission(&self.request_id, &self.reason, None)?;
-        if !crate::identity::canonical_uuid(&self.base_revision_id)
-            || !crate::identity::canonical_uuid(&self.revision_id)
-            || self.targets.is_empty()
-            || self.targets.len() > capsem_proto::APPROVAL_PENDING_TOTAL
-        {
-            return Err("environment application requires exact revisions and a bounded target selection".into());
-        }
-        let mut sessions = std::collections::BTreeSet::new();
-        for target in &self.targets {
-            if !crate::identity::canonical_uuid(&target.session_id)
-                || !crate::identity::canonical_uuid(&target.generation)
-                || !sessions.insert(&target.session_id)
-            {
-                return Err("environment application requires distinct targets and exact generations".into());
-            }
-            target.base.validate().map_err(str::to_owned)?;
-        }
-        Ok(())
+        validate_apply_selection(&self.base_revision_id, &self.revision_id, &self.targets)
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentApplyPreviewRequest {
+    /// The current revision of the environment being applied.
+    #[schema(format = "uuid")]
+    pub base_revision_id: String,
+    /// The exact saved revision to review.
+    #[schema(format = "uuid")]
+    pub revision_id: String,
+    pub targets: Vec<EnvironmentApplyTarget>,
+}
+
+impl EnvironmentApplyPreviewRequest {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_apply_selection(&self.base_revision_id, &self.revision_id, &self.targets)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct EnvironmentApplyTargetPreview {
+    pub target: EnvironmentApplyTarget,
+    pub boot: EnvironmentRevisionReference,
+    pub live_policy: EnvironmentRevisionReference,
+    /// Changed settings compared with the currently acknowledged live policy.
+    pub live_changes: Vec<String>,
+    /// Changed settings compared with the booted workload.
+    pub next_start_changes: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub struct EnvironmentApplyPreviewResponse {
+    pub targets: Vec<EnvironmentApplyTargetPreview>,
+}
+
+fn validate_apply_selection(
+    base_revision_id: &str,
+    revision_id: &str,
+    targets: &[EnvironmentApplyTarget],
+) -> Result<(), String> {
+    if !crate::identity::canonical_uuid(base_revision_id)
+        || !crate::identity::canonical_uuid(revision_id)
+        || targets.is_empty()
+        || targets.len() > capsem_proto::APPROVAL_PENDING_TOTAL
+    {
+        return Err("environment application requires exact revisions and a bounded target selection".into());
+    }
+    let mut sessions = std::collections::BTreeSet::new();
+    for target in targets {
+        if !crate::identity::canonical_uuid(&target.session_id)
+            || !crate::identity::canonical_uuid(&target.generation)
+            || !sessions.insert(&target.session_id)
+        {
+            return Err("environment application requires distinct targets and exact generations".into());
+        }
+        target.base.validate().map_err(str::to_owned)?;
+    }
+    Ok(())
 }
 
 impl std::fmt::Debug for EnvironmentChangeRequest {

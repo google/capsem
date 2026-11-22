@@ -87,6 +87,7 @@ export {listVmSkills} from "./listVmSkills.js";
 export {listVms} from "./listVms.js";
 export {pauseVm} from "./pauseVm.js";
 export {persistVm} from "./persistVm.js";
+export {previewEnvironmentApplication} from "./previewEnvironmentApplication.js";
 export {promoteEnvironment} from "./promoteEnvironment.js";
 export {pullImage} from "./pullImage.js";
 export {purgeVms} from "./purgeVms.js";

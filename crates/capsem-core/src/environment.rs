@@ -51,6 +51,27 @@ pub enum EnvironmentChangeKind {
     McpPermissions,
     Skills,
 }
+impl EnvironmentChangeKind {
+    pub fn setting(self) -> &'static str {
+        match self {
+            Self::Name => "name",
+            Self::Description => "description",
+            Self::Image => "image",
+            Self::Startup => "startup",
+            Self::Variables => "variables",
+            Self::SecretAccess => "secret_access",
+            Self::Repositories => "repositories",
+            Self::PackageAccess => "package_access",
+            Self::AccessRules => "access_rules",
+            Self::DetectionRules => "detection_rules",
+            Self::Plugins => "plugins",
+            Self::McpDefinitions => "mcp_definitions",
+            Self::McpPermissions => "mcp_permissions",
+            Self::Skills => "skills",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EnvironmentChangeTiming {
     Metadata,

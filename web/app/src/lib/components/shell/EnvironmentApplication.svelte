@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { RequestApplicationState, VmLifecycleState, type EnvironmentApplyRequest, type EnvironmentRevisionReference,
+  import { RequestApplicationState, VmLifecycleState, type EnvironmentApplyPreviewRequest,
+    type EnvironmentApplyPreviewResponse, type EnvironmentApplyRequest, type EnvironmentRevisionReference,
     type RequestDetailResponse } from '@capsem/sdk';
   import { applySavedEnvironment, getEnvironmentRequest, getSavedEnvironment, getVmInfo,
-    onEnvironmentRequestsChanged } from '../../api';
+    onEnvironmentRequestsChanged, previewSavedEnvironmentApplication } from '../../api';
   import { ApiError } from '../../gateway-sdk';
   import { sessionActionError } from '../../models/session-action-error';
   import { vmStore } from '../../stores/vms.svelte.ts';
@@ -11,7 +12,10 @@
   let { revision }: { revision: EnvironmentRevisionReference } = $props();
   let phase = $state<'closed' | 'select' | 'review' | 'receipt'>('closed');
   let selected = $state<string[]>([]);
-  let reviewed = $state<Pick<EnvironmentApplyRequest, 'base_revision_id' | 'targets'> | null>(null);
+  let reviewed = $state<{
+    selection: EnvironmentApplyPreviewRequest;
+    impact: EnvironmentApplyPreviewResponse;
+  } | null>(null);
   let attempt = $state<EnvironmentApplyRequest | null>(null);
   let detail = $state<RequestDetailResponse | null>(null);
   let reason = $state('');
@@ -25,6 +29,13 @@
   let retryable = $derived((detail?.applications ?? [])
     .filter(item => item.state === RequestApplicationState.FAILED && running.some(vm => vm.id === item.target.session_id))
     .map(item => item.target.session_id));
+  const fieldLabels: Record<string, string> = {
+    image: 'Image', startup: 'Startup settings', variables: 'Environment variables', secret_access: 'Secret access',
+    repositories: 'Git repositories', package_access: 'Package registry access', access_rules: 'Access rules',
+    detection_rules: 'Detection rules', plugins: 'Plugins', mcp_definitions: 'MCP server definitions',
+    mcp_permissions: 'MCP permissions', skills: 'Skills',
+  };
+  const settings = (fields: string[]) => fields.map(field => fieldLabels[field] ?? field.replaceAll('_', ' ')).join(', ');
 
   onMount(() => {
     const stop = onEnvironmentRequestsChanged(id => {
@@ -47,8 +58,11 @@
         }
         return { session_id: id, generation: vm.environment.owner_generation, base: vm.environment.desired };
       }));
+      const selection = { base_revision_id: environment.document.identity.revision_id,
+        revision_id: revision.revision_id, targets };
+      const impact = await previewSavedEnvironmentApplication(revision.environment_id, selection, reader.signal);
       if (active) {
-        reviewed = { base_revision_id: environment.document.identity.revision_id, targets };
+        reviewed = { selection, impact };
         phase = 'review';
       }
     } catch (cause: unknown) {
@@ -71,7 +85,7 @@
 
   async function submit() {
     if (!reviewed || !reason.trim()) return;
-    attempt ??= { ...reviewed, request_id: crypto.randomUUID(), revision_id: revision.revision_id, reason: reason.trim() };
+    attempt ??= { ...reviewed.selection, request_id: crypto.randomUUID(), reason: reason.trim() };
     busy = true;
     error = '';
     try {
@@ -122,13 +136,24 @@
       onclick={review}>{busy ? 'Loading generations…' : 'Review selected sandboxes'}</button>
   {:else if phase === 'review' && reviewed}
     <p class="break-all">Apply saved revision {revision.revision_id}.</p>
-    <p>Access changes take effect while the sandbox runs and may close pending security requests. Workload changes take effect on the next start.</p>
+    <p>Publishing live policy may close pending security requests in the selected sandboxes.</p>
     <ul class="space-y-2 rounded-lg border border-line-2 p-3">
-      {#each reviewed.targets as target (target.session_id)}
+      {#each reviewed.impact.targets as { target, boot, live_policy, live_changes, next_start_changes } (target.session_id)}
         <li class="break-all">
           <p class="font-medium">{running.find(vm => vm.id === target.session_id)?.name ?? target.session_id}</p>
           <p>Generation {target.generation}</p>
           <p>Current desired revision {target.base.environment_id}@{target.base.revision_id}</p>
+          {#if live_changes.length}<p><strong>Applies live</strong> · {settings(live_changes)}</p>{/if}
+          {#if next_start_changes.length}
+            <p><strong>Requires restart</strong> · {settings(next_start_changes)}</p>
+          {:else}
+            <p>No restart required.</p>
+          {/if}
+          <details>
+            <summary class="cursor-pointer text-primary">Running revisions</summary>
+            <p>Boot {boot.environment_id}@{boot.revision_id}</p>
+            <p>Live policy {live_policy.environment_id}@{live_policy.revision_id}</p>
+          </details>
         </li>
       {/each}
     </ul>
