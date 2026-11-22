@@ -267,3 +267,38 @@ async fn archive_environment_submits_an_exact_base_on_the_changes_route() {
         "action": "archive", "request_id": REQUEST, "base_revision_id": base, "reason": "retire blueprint",
     }));
 }
+
+#[tokio::test]
+async fn catalog_skills_use_the_exact_listed_version_and_source() {
+    let mut server = Server::respond(|parts| {
+        let reference = "registry.example/skills:stable";
+        let digest = format!("sha256:{}", "0".repeat(64));
+        let metadata = json!({"id":"review","version":"1.0.0+preview","name":"Review","status":"active",
+            "publisher":"fixture","provenance":"fixture","license":"Apache-2.0","compatibility":{"min_runtime_contract":1}});
+        let body = if parts.uri.path() == "/skills/list" {
+            json!({"catalog":{"reference":reference,"digest":digest,"snapshot":"listed-snapshot"},
+                "skills":[metadata],"next_cursor":"next"})
+        } else {
+            json!({"selection":{"id":"review","version":"1.0.0+preview","catalog_reference":reference,"resolved_digest":digest},
+                "metadata":metadata,"files":{"SKILL.md":"review fixture\n","references/notes.md":"notes\n"}})
+        };
+        Response::new(Body::from(body.to_string()))
+    }).await;
+    let hv = Hypervisor::new(&server.url, "private-token").unwrap();
+    let skills = hv.skills();
+    let page = skills.list(models::environments::SkillCatalogListQuery {
+        search: Some("review".into()), after: Some("page".into()), limit: Some(1),
+    }).await.unwrap();
+    assert_eq!(page.next_cursor.as_deref(), Some("next"));
+    let (request, _) = server.received.recv().await.unwrap();
+    assert_eq!(request.uri.path(), "/skills/list");
+    assert_eq!(request.uri.query().unwrap(), "search=review&after=page&limit=1");
+    let detail = skills.get("review", &page.skills[0].version, &page.catalog).await.unwrap();
+    assert_eq!(detail.files["references/notes.md"], "notes\n");
+    let (request, _) = server.received.recv().await.unwrap();
+    assert_eq!(request.uri.path(), "/skills/review/info");
+    assert_eq!(request.uri.query().unwrap(), "version=1.0.0%2Bpreview&snapshot=listed-snapshot");
+    let mut wrong = page.catalog;
+    wrong.digest = format!("sha256:{}", "1".repeat(64));
+    assert!(matches!(skills.get("review", "1.0.0+preview", &wrong).await, Err(Error::InvalidResponse(_))));
+}

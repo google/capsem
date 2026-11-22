@@ -77,6 +77,8 @@ pub const ROUTES: &[&str] = &[
     "/service-logs",
     "/settings/edit",
     "/settings/info",
+    "/skills/list",
+    "/skills/{skill_id}/info",
     "/stats",
     "/status",
     "/system/status",

@@ -43,6 +43,8 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/requests/list", get(environment_routes::reviews::list))
         .route("/requests/{id}/info", get(environment_routes::reviews::info))
         .route("/requests/{id}/resolve", post(environment_routes::decisions::resolve))
+        .route("/skills/list", get(environment_routes::skills::catalog::list))
+        .route("/skills/{skill_id}/info", get(environment_routes::skills::catalog::info))
         .route("/status", get(handle_service_status))
         .route("/restart", post(restart::handle_restart))
         .route("/update/status", get(handle_update_status))

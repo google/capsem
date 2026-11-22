@@ -85,6 +85,9 @@ from .service_manager import ServiceManager
 from .session_db_status import SessionDbStatus
 from .session_grant_list_response import SessionGrantListResponse
 from .session_grant_summary import SessionGrantSummary
+from .skill_catalog_detail_response import SkillCatalogDetailResponse
+from .skill_catalog_list_response import SkillCatalogListResponse
+from .skill_catalog_snapshot import SkillCatalogSnapshot
 from .slow_op_event import SlowOpEvent
 from .stop_proxy_response import StopProxyResponse
 from .stop_response import StopResponse
@@ -99,9 +102,6 @@ from .stream_status import StreamStatus
 from .stream_status_error import StreamStatusError
 from .stream_status_exit import StreamStatusExit
 from .stream_status_started import StreamStatusStarted
-from .stream_status_terminal import StreamStatusTerminal
-from .supply_chain_channel_evidence import SupplyChainChannelEvidence
-from .supply_chain_evidence import SupplyChainEvidence
 
 __all__ = [
     'PluginConfiguration_LogSanitizerOptions',
@@ -167,6 +167,9 @@ __all__ = [
     'SessionDbStatus',
     'SessionGrantListResponse',
     'SessionGrantSummary',
+    'SkillCatalogDetailResponse',
+    'SkillCatalogListResponse',
+    'SkillCatalogSnapshot',
     'SlowOpEvent',
     'StopProxyResponse',
     'StopResponse',
@@ -181,7 +184,4 @@ __all__ = [
     'StreamStatusError',
     'StreamStatusExit',
     'StreamStatusStarted',
-    'StreamStatusTerminal',
-    'SupplyChainChannelEvidence',
-    'SupplyChainEvidence',
 ]

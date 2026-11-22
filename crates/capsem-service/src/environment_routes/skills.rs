@@ -7,6 +7,7 @@ use capsem_api::environments::{
 };
 use sources::catalogs::skills::PinnedSkills;
 mod applied;
+pub(crate) mod catalog;
 pub(crate) use applied::{vm_info, vm_list};
 
 pub(crate) async fn admit_boot_skills(
@@ -54,11 +55,7 @@ struct SkillPage<'a> {
 
 impl<'a> SkillPage<'a> {
     fn parse(query: &'a EnvironmentSkillListQuery) -> Result<Self, AppError> {
-        let search = query.search.as_deref().unwrap_or_default();
-        let limit = usize::from(query.limit.unwrap_or(24));
-        if search.len() > 64 || search.chars().any(char::is_control) || !(1..=64).contains(&limit) {
-            return Err(invalid());
-        }
+        let (search, limit) = page_options(query.search.as_deref(), query.limit)?;
         let cursor = query.after.as_deref().map(parse_cursor).transpose()?;
         let revision_id = match (query.revision_id.as_deref(), cursor) {
             (Some(expected), Some((revision, _))) if expected != revision => return Err(stale_cursor()),
@@ -68,7 +65,7 @@ impl<'a> SkillPage<'a> {
         Ok(Self {
             revision_id,
             after: cursor.map_or("", |(_, id)| id),
-            search: search.trim().to_lowercase(),
+            search,
             limit,
         })
     }
@@ -166,15 +163,7 @@ async fn read_info(
     let mut catalog = PinnedSkills::open(state, &[&selection]).await.map_err(read_error)?;
     let discovery_fresh = catalog.discovery_fresh();
     let entry = catalog.entry(state, &selection).await.map_err(read_error)?;
-    let payload = entry
-        .payload
-        .as_ref()
-        .ok_or_else(|| read_error(EnvironmentResolutionError::InvalidPin))?;
-    let files = payload
-        .files
-        .iter()
-        .map(|(path, file)| (path.clone(), file.content.clone()))
-        .collect();
+    let files = skill_files(entry)?;
     Ok(EnvironmentSkillDetailResponse {
         revision,
         selection,
@@ -182,6 +171,20 @@ async fn read_info(
         discovery_fresh,
         files,
     })
+}
+
+fn skill_files(
+    entry: &capsem_config::catalogs::SkillCatalogEntry,
+) -> Result<std::collections::BTreeMap<String, String>, AppError> {
+    let payload = entry
+        .payload
+        .as_ref()
+        .ok_or_else(|| read_error(EnvironmentResolutionError::InvalidPin))?;
+    Ok(payload
+        .files
+        .iter()
+        .map(|(path, file)| (path.clone(), file.content.clone()))
+        .collect())
 }
 
 fn not_selected() -> AppError {
@@ -219,15 +222,35 @@ fn stale_cursor() -> AppError {
     )
 }
 
+fn page_options(search: Option<&str>, limit: Option<u16>) -> Result<(String, usize), AppError> {
+    let search = search.unwrap_or_default();
+    let limit = usize::from(limit.unwrap_or(24));
+    if search.len() > 64 || search.chars().any(char::is_control) || !(1..=64).contains(&limit) {
+        return Err(invalid());
+    }
+    Ok((search.trim().to_lowercase(), limit))
+}
+
 fn matches_search(summary: &EnvironmentSkillSummary, search: &str) -> bool {
-    let matches = |text: &str| text.to_lowercase().contains(search);
     search.is_empty()
-        || matches(&summary.selection.id)
-        || matches(&summary.selection.version)
-        || summary.metadata.as_ref().is_some_and(|metadata| {
-            matches(&metadata.name)
-                || matches(&metadata.description)
-                || matches(&metadata.publisher)
-                || metadata.tags.iter().any(|tag| matches(tag))
-        })
+        || summary.selection.id.to_lowercase().contains(search)
+        || summary.selection.version.to_lowercase().contains(search)
+        || summary
+            .metadata
+            .as_ref()
+            .is_some_and(|metadata| metadata_matches(metadata, search))
+}
+
+fn metadata_matches(metadata: &capsem_config::catalogs::CatalogEntryMetadata, search: &str) -> bool {
+    search.is_empty()
+        || [
+            &metadata.id,
+            &metadata.version,
+            &metadata.name,
+            &metadata.description,
+            &metadata.publisher,
+        ]
+        .into_iter()
+        .chain(&metadata.tags)
+        .any(|value| value.to_lowercase().contains(search))
 }

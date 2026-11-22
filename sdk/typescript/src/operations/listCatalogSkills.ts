@@ -1,0 +1,27 @@
+// Generated from Capsem OpenAPI. Do not edit.
+
+import {z} from "zod";
+import {Transport, Method, MediaType, type CallOptions} from "../transport.js";
+import type {SkillCatalogListResponse} from "../models/SkillCatalogListResponse.js";
+import {SkillCatalogListResponseSchema} from "../validation/SkillCatalogListResponse.js";
+
+export async function listCatalogSkills(
+  transport: Transport,
+  parameters: {
+    "search"?: string;
+    "after"?: string;
+    "limit"?: number;
+  } = {},
+  options: CallOptions = {},
+): Promise<SkillCatalogListResponse> {
+  const input = z.object({
+  "search": z.string().exactOptional(),
+  "after": z.string().exactOptional(),
+  "limit": z.int().min(0).exactOptional(),
+}).parse(parameters);
+  const payload = await transport.request(Method.GET, "/skills/list", {
+    signal: options.signal, timeoutMs: options.timeoutMs, accept: MediaType.JSON,
+    query: {"search": input["search"], "after": input["after"], "limit": input["limit"]},
+  });
+  return z.lazy(() => SkillCatalogListResponseSchema).parse(JSON.parse(new TextDecoder().decode(payload)));
+}

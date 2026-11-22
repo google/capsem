@@ -93,6 +93,12 @@ Open **Change history** to inspect older revisions. Complete revisions show
 canonical TOML. When values have been purged, the view identifies the removed
 variables and shows the remaining content when it is available.
 
+Use the SDK's `skills.list` method to search the configured OCI catalog before
+selecting a skill. Pass the returned `next_cursor` as `after` to continue the
+same search. To read an entry, pass its ID and version and the page's `catalog`
+to `skills.get`. The response contains every UTF-8 file. If the catalog moves,
+list it again before continuing the search or reading files.
+
 Use the SDK's `environments.skills` method to list selected skill pins for the
 exact saved revision. `environments.skill` returns the selected skill's complete
 UTF-8 file dictionary. A moved catalog tag leaves the pinned files intact. When

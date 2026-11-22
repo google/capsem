@@ -251,3 +251,35 @@ it.each([
     } finally { hv.close(); }
   });
 });
+
+it('reads global catalog skills for the exact selected source, version, and digest', async () => {
+  const catalog = {reference: 'registry.example/skills:stable', digest: `sha256:${'0'.repeat(64)}`, snapshot: 'listed-snapshot'};
+  const selection = {id: 'review', version: '1.0.0+preview', catalog_reference: catalog.reference, resolved_digest: catalog.digest};
+  const metadata = {id: selection.id, version: selection.version, name: 'Review', publisher: 'Fixture', provenance: 'Fixture catalog',
+    license: 'Apache-2.0', compatibility: {min_runtime_contract: 1}, status: 'active'};
+  const files = {'SKILL.md': 'review fixture\n', 'references/notes.md': 'notes\n'};
+  const detail = {selection, metadata, files};
+  let payload: unknown = {catalog, skills: [metadata], next_cursor: 'next'};
+  await gateway((_request, reply) => reply.end(JSON.stringify(payload)), async (url, received) => {
+    const hv = new Hypervisor(url, 'token');
+    try {
+      const page = await hv.skills.list({search: 'review', after: 'page', limit: 1});
+      expect(page.next_cursor).toBe('next');
+      expect(received[0]?.url).toBe('/skills/list?search=review&after=page&limit=1');
+      payload = detail;
+      expect((await hv.skills.get('review', page.skills[0]!.version, page.catalog)).files).toEqual(files);
+      expect(received[1]?.url).toBe('/skills/review/info?version=1.0.0%2Bpreview&snapshot=listed-snapshot');
+      for (const invalid of [
+        {...detail, selection: {...selection, id: 'other'}},
+        {...detail, selection: {...selection, version: '1'}},
+        {...detail, metadata: {...metadata, id: 'other'}},
+        {...detail, metadata: {...metadata, version: '1'}},
+        {...detail, selection: {...selection, catalog_reference: 'registry.example/other:stable'}},
+        {...detail, selection: {...selection, resolved_digest: `sha256:${'1'.repeat(64)}`}},
+      ]) {
+        payload = invalid;
+        await expect(hv.skills.get('review', selection.version, page.catalog)).rejects.toThrow('Catalog skill identity changed');
+      }
+    } finally { hv.close(); }
+  });
+});

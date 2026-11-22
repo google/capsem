@@ -954,6 +954,12 @@ json = { count = 1, reason = "http" }
 [sources."sdk/rust/src/operations/generated/list_environment_skills.rs"]
 json = { count = 1, reason = "http" }
 
+[sources."sdk/rust/src/operations/generated/get_catalog_skill.rs"]
+json = { count = 1, reason = "http" }
+
+[sources."sdk/rust/src/operations/generated/list_catalog_skills.rs"]
+json = { count = 1, reason = "http" }
+
 [sources."sdk/rust/src/operations/generated/get_vm_skill.rs"]
 json = { count = 1, reason = "http" }
 

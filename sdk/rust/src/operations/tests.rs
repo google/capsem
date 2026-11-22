@@ -46,6 +46,8 @@ operation!(list_new_environment_plugins, "listNewEnvironmentPlugins");
 operation!(list_environment_rules, "listEnvironmentRules", ListEnvironmentRulesParams);
 operation!(list_environment_skills, "listEnvironmentSkills", ListEnvironmentSkillsParams);
 operation!(get_environment_skill, "getEnvironmentSkill", GetEnvironmentSkillParams);
+operation!(list_catalog_skills, "listCatalogSkills", ListCatalogSkillsParams);
+operation!(get_catalog_skill, "getCatalogSkill", GetCatalogSkillParams);
 operation!(list_vm_skills, "listVmSkills", ListVmSkillsParams);
 operation!(get_vm_skill, "getVmSkill", GetVmSkillParams);
 operation!(

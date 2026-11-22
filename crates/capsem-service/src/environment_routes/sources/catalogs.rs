@@ -15,7 +15,10 @@ mod runtime;
 pub(in crate::environment_routes) mod skills;
 pub(crate) use runtime::launch_policy;
 
-async fn source(state: &ServiceState, kind: CatalogKind) -> Result<ValidatedCatalogSource, Error> {
+pub(in crate::environment_routes) async fn source(
+    state: &ServiceState,
+    kind: CatalogKind,
+) -> Result<ValidatedCatalogSource, Error> {
     let corporate = state
         .containers
         .environment_catalog_policy()
@@ -51,6 +54,16 @@ async fn resolve_typed<E: CatalogContentEntry>(
     kind: CatalogKind,
     selection: &EnvironmentCatalogSelection,
 ) -> Result<EnvironmentCatalogPin, Error> {
+    let contents = fetch_current::<E>(state, kind).await?;
+    let pin = contents.pin(&selection.id, &selection.version).map_err(content_error)?;
+    require_current(state, kind, &pin).await?;
+    Ok(pin)
+}
+
+pub(in crate::environment_routes) async fn fetch_current<E: CatalogContentEntry>(
+    state: &ServiceState,
+    kind: CatalogKind,
+) -> Result<CatalogContents<E>, Error> {
     let selected = source(state, kind).await?;
     let puller = state
         .containers
@@ -61,9 +74,7 @@ async fn resolve_typed<E: CatalogContentEntry>(
         .await
         .map_err(content_error)?;
     observe(state, &contents).await?;
-    let pin = contents.pin(&selection.id, &selection.version).map_err(content_error)?;
-    require_current(state, kind, &pin).await?;
-    Ok(pin)
+    Ok(contents)
 }
 
 pub(super) async fn admit(state: &ServiceState, kind: CatalogKind, pin: &EnvironmentCatalogPin) -> Result<(), Error> {
@@ -93,7 +104,7 @@ async fn admit_typed<E: CatalogContentEntry>(
     Ok(())
 }
 
-async fn require_current(
+pub(in crate::environment_routes) async fn require_current(
     state: &ServiceState,
     kind: CatalogKind,
     pin: &EnvironmentCatalogPin,
@@ -102,22 +113,30 @@ async fn require_current(
     if selected.reference().to_string() != pin.catalog_reference {
         return Err(Error::Refused);
     }
-    let key = CatalogRevocationKey {
-        kind,
-        source_repository: selected.identity().repository().to_string(),
-        entry_id: pin.id.clone(),
-        version: pin.version.clone(),
-    };
-    if state
-        .host_ledger
-        .catalog_revocation(key)
-        .await
-        .map_err(|_| Error::Unavailable)?
-        .is_some()
-    {
+    if known_revoked(state, &selected, &pin.id, &pin.version).await? {
         return Err(Error::UnusableCatalogEntry);
     }
     Ok(selected)
+}
+
+pub(in crate::environment_routes) async fn known_revoked(
+    state: &ServiceState,
+    source: &ValidatedCatalogSource,
+    id: &str,
+    version: &str,
+) -> Result<bool, Error> {
+    let key = CatalogRevocationKey {
+        kind: source.kind(),
+        source_repository: source.identity().repository().to_string(),
+        entry_id: id.to_owned(),
+        version: version.to_owned(),
+    };
+    state
+        .host_ledger
+        .catalog_revocation(key)
+        .await
+        .map(|revocation| revocation.is_some())
+        .map_err(|_| Error::Unavailable)
 }
 
 async fn observe<E: CatalogContentEntry>(state: &ServiceState, contents: &CatalogContents<E>) -> Result<(), Error> {
@@ -166,7 +185,7 @@ async fn staging(state: &ServiceState) -> Result<std::path::PathBuf, Error> {
     Ok(parent)
 }
 
-fn content_error(error: CatalogContentError) -> Error {
+pub(in crate::environment_routes) fn content_error(error: CatalogContentError) -> Error {
     match error {
         CatalogContentError::Unavailable | CatalogContentError::WorkerFailed => Error::Unavailable,
         CatalogContentError::UnusableEntry => Error::UnusableCatalogEntry,

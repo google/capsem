@@ -2472,6 +2472,131 @@
         }
       }
     },
+    "/skills/list": {
+      "get": {
+        "description": "Discover available skill versions in the currently configured OCI catalog. Continue with next_cursor against the same source and digest.",
+        "operationId": "listCatalogSkills",
+        "parameters": [
+          {
+            "name": "search",
+            "in": "query",
+            "description": "Case-insensitive match on catalog entry metadata.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "Continue with the cursor for the same source and catalog digest.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Number of matches per page, from 1 to 64. Defaults to 24.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillCatalogListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/skills/{skill_id}/info": {
+      "get": {
+        "description": "Read every UTF-8 file for an exact skill version from the listed OCI catalog snapshot. A moved snapshot returns a conflict.",
+        "operationId": "getCatalogSkill",
+        "parameters": [
+          {
+            "name": "skill_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "Exact published entry version.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "snapshot",
+            "in": "query",
+            "description": "Source and digest token returned by the catalog list.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillCatalogDetailResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/status": {
       "get": {
         "operationId": "getHypervisorInfo",
@@ -12649,6 +12774,79 @@
           },
           "state": {
             "$ref": "#/components/schemas/GrantState"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SkillCatalogDetailResponse": {
+        "type": "object",
+        "required": [
+          "selection",
+          "metadata",
+          "files"
+        ],
+        "properties": {
+          "files": {
+            "type": "object",
+            "description": "Complete UTF-8 content keyed by normalized relative path.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/CatalogEntryMetadata"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/EnvironmentCatalogPin"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SkillCatalogListResponse": {
+        "type": "object",
+        "required": [
+          "catalog",
+          "skills"
+        ],
+        "properties": {
+          "catalog": {
+            "$ref": "#/components/schemas/SkillCatalogSnapshot"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogEntryMetadata"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "SkillCatalogSnapshot": {
+        "type": "object",
+        "required": [
+          "reference",
+          "digest",
+          "snapshot"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string"
+          },
+          "reference": {
+            "type": "string"
+          },
+          "snapshot": {
+            "type": "string",
+            "description": "Supply this token when reading a skill from the snapshot."
           }
         },
         "additionalProperties": false

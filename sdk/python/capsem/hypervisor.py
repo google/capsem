@@ -13,6 +13,7 @@ from ._connections import Connections
 from ._credentials import Credentials
 from ._debug import Debug
 from ._environments import Environments
+from ._skills import Skills
 from ._images import Images
 from ._mcp import Mcp
 from ._networks import Networks
@@ -100,6 +101,7 @@ class Hypervisor(Client):
         self.debug = Debug(self._transport)
         self.images = Images(self._transport)
         self.environments = Environments(self._transport)
+        self.skills = Skills(self._transport)
         self.requests = Requests(self._transport)
         self.credentials = Credentials(self._transport)
         self.connections = Connections(self._transport)

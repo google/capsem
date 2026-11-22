@@ -96,3 +96,27 @@ def test_native_vm_skill_routes_follow_the_boot_pin_and_delegate_exact_generatio
                 assert agent.call_json("GET", f"{route}/skills/unselected/info")[0] == 403
     finally:
         gateway.stop()
+
+
+def test_native_global_skill_routes_require_discover_scope(service):
+    gateway = ServiceGateway(service)
+    gateway.start()
+    try:
+        with closing(TcpHttpClient(gateway.base_url, gateway.token)) as operator:
+            paths = ("/skills/list?limit=0", "/skills/review/info?version=1.0.0&snapshot=invalid")
+            for path in paths:
+                assert operator.call_json("GET", path)[0] == 400
+
+            for operation, expected in (("inspect", 403), ("discover", 400)):
+                secret = secrets.token_hex(32)
+                status, grant = operator.call_json("POST", "/agent-access", {
+                    "request_id": str(uuid.uuid4()), "ownership_token": secret, "lease_seconds": 300,
+                    "scope": {"operations": [operation]},
+                })
+                assert status == 200, grant
+                token = f"{grant['access']['id']}.{secret}"
+                with closing(TcpHttpClient(gateway.base_url, token)) as agent:
+                    for path in paths:
+                        assert agent.call_json("GET", path)[0] == expected
+    finally:
+        gateway.stop()

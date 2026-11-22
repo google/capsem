@@ -49,6 +49,16 @@ pub fn openapi() -> OpenApi {
         .description(Some("Read the complete UTF-8 file dictionary for an admitted skill from the selected revision."))
         .parameters(Some(environments::EnvironmentPolicyListQuery::into_params(|| Some(ParameterIn::Query))));
     doc.add("/environments/{id}/skills/{skill_id}/info", HttpMethod::Get, skill);
+    let catalog_skills = doc
+        .operation::<environments::SkillCatalogListResponse>("/skills/list", "listCatalogSkills")
+        .description(Some("Discover available skill versions in the currently configured OCI catalog. Continue with next_cursor against the same source and digest."))
+        .parameters(Some(environments::SkillCatalogListQuery::into_params(|| Some(ParameterIn::Query))));
+    doc.add("/skills/list", HttpMethod::Get, catalog_skills);
+    let catalog_skill = doc
+        .operation::<environments::SkillCatalogDetailResponse>("/skills/{skill_id}/info", "getCatalogSkill")
+        .description(Some("Read every UTF-8 file for an exact skill version from the listed OCI catalog snapshot. A moved snapshot returns a conflict."))
+        .parameters(Some(environments::SkillCatalogDetailQuery::into_params(|| Some(ParameterIn::Query))));
+    doc.add("/skills/{skill_id}/info", HttpMethod::Get, catalog_skill);
     let revisions = doc
         .operation::<EnvironmentRevisionListResponse>("/environments/{id}/revisions/list", "listEnvironmentRevisions")
         .description(Some("List committed revisions newest first for the operator."))

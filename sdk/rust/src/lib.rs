@@ -20,6 +20,8 @@ pub use tokio_util::sync::CancellationToken;
 pub mod operations;
 mod options;
 mod requests;
+mod skills;
+pub use skills::Skills;
 pub use requests::Requests;
 pub mod resources;
 pub mod transport;
