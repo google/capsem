@@ -1,5 +1,6 @@
 //! Combined gateway overview; SDK consumers call this Hypervisor.info.
 
+use crate::environments::CatalogStatus;
 use crate::{AssetStatus, UpdateStatusResponse, VmAction, VmLifecycleState};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -22,6 +23,8 @@ pub struct HypervisorInfo {
     pub assets: Option<AssetStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updates: Option<UpdateStatusResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub catalogs: Option<Vec<CatalogStatus>>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]

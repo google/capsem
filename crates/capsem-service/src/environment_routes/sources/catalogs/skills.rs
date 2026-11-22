@@ -18,11 +18,7 @@ impl PinnedSkills {
     ) -> Result<Self, Error> {
         let kind = CatalogKind::Skills;
         let selected = source(state, kind).await?;
-        let puller = state
-            .containers
-            .environment_catalog_puller()
-            .map_err(|_| Error::Unavailable)?;
-        let parent = staging(state).await?;
+        let workspace = workspace_for_refresh(state, &selected).await?;
         let mut current = None;
         for pin in pins {
             if selected.reference().to_string() != pin.catalog_reference {
@@ -35,22 +31,15 @@ impl PinnedSkills {
             }
             // Refresh is explicit. A failed refresh can still serve an exact
             // verified retained digest under current source and known revocations.
-            current = match SkillCatalogContents::fetch(&puller, &selected, &parent).await {
-                Ok(contents) => {
-                    observe(state, &contents).await?;
-                    Some(contents)
-                }
-                Err(CatalogContentError::Unavailable) => None,
-                Err(error) => return Err(content_error(error)),
-            };
+            current = refresh(state, &selected, &workspace).await?;
             break;
         }
         Ok(Self {
             source: selected,
             current,
             retained: None,
-            puller,
-            parent,
+            puller: workspace.puller,
+            parent: workspace.parent,
         })
     }
 

@@ -296,11 +296,12 @@ struct GatewayStatusResponse {
     list: api::ListResponse,
     assets: api::AssetStatus,
     updates: api::UpdateStatusResponse,
+    catalogs: Vec<api::environments::CatalogStatus>,
 }
 
-/// One service snapshot for the gateway's polled overview. Keeping the three
-/// sections in one HTTP exchange avoids tripling broker and parser work while
-/// preserving a fresh `/vms/list` read for every gateway status refresh.
+/// One service snapshot for the gateway's polled overview. Share a single
+/// exchange while preserving a fresh VM list and copying catalog observations
+/// from memory without waiting for registry or policy I/O.
 async fn handle_gateway_status(
     _channel: gateway_channel::GatewayChannel,
     State(state): State<Arc<ServiceState>>,
@@ -314,7 +315,7 @@ async fn handle_gateway_status(
             ))
         })
         .await??;
-    Ok(Json(GatewayStatusResponse { list, assets, updates }))
+    Ok(Json(GatewayStatusResponse { list, assets, updates, catalogs: state.catalog_status.read() }))
 }
 
 pub(super) fn read_installed_status_document(path: &StdPath) -> Result<serde_json::Value, AppError> {

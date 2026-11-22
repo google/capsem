@@ -1,6 +1,7 @@
 """Saved skill routes enforce scope and exact revisions at the native gateway."""
 
 import secrets
+import socket
 import uuid
 from contextlib import closing
 
@@ -118,5 +119,45 @@ def test_native_global_skill_routes_require_discover_scope(service):
                 with closing(TcpHttpClient(gateway.base_url, token)) as agent:
                     for path in paths:
                         assert agent.call_json("GET", path)[0] == expected
+    finally:
+        gateway.stop()
+
+
+def test_native_overview_reports_the_state_of_each_catalog(service):
+    gateway = ServiceGateway(service)
+    gateway.start()
+    try:
+        with closing(TcpHttpClient(gateway.base_url, gateway.token)) as operator:
+            first = operator.get("/status")["catalogs"]
+            assert [item["kind"] for item in first] == ["skills", "rules", "mcp"]
+            assert all(item["digest"] is None and item["last_successful_refresh"] is None for item in first)
+            assert operator.get("/status")["catalogs"] == first
+            with socket.socket() as registry:
+                registry.bind(("127.0.0.1", 0))
+                registry.listen()
+                reference = f"localhost:{registry.getsockname()[1]}/team/skills:stable"
+                status, body = operator.call_json("PUT", "/corp/edit", {
+                    "toml": f"[catalogs.skills]\nschema_version = 1\nreference = '{reference}'\n",
+                })
+                assert status == 200, body
+                for _ in range(3):
+                    current = operator.get("/status")["catalogs"]
+                    assert current[0] == {
+                        "kind": "skills", "availability": "unverified",
+                        "reference": reference, "origin": "corporate", "digest": None,
+                        "last_successful_refresh": None, "error": None,
+                    }
+                registry.settimeout(0.1)
+                with pytest.raises(TimeoutError):
+                    registry.accept()
+
+            secret = secrets.token_hex(32)
+            status, grant = operator.call_json("POST", "/agent-access", {
+                "request_id": str(uuid.uuid4()), "ownership_token": secret, "lease_seconds": 300,
+                "scope": {"operations": ["discover"]},
+            })
+            assert status == 200, grant
+            with closing(TcpHttpClient(gateway.base_url, f"{grant['access']['id']}.{secret}")) as agent:
+                assert agent.call_json("GET", "/status")[0] == 403
     finally:
         gateway.stop()

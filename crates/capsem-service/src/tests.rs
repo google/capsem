@@ -160,6 +160,7 @@ pub(crate) fn test_state(
         switches: switches::Switches::in_process(),
         job_counter: AtomicU64::new(1),
         manifest: RwLock::new(manifest),
+        catalog_status: Default::default(),
         current_version: "0.0.0".into(),
         asset_reconcile: Mutex::new(AssetReconcileState::default()),
         asset_reconcile_inflight: AtomicBool::new(false),

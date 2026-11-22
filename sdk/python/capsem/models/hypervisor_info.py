@@ -7,6 +7,7 @@ from typing import Annotated
 from pydantic import Field, StrictInt, StrictStr
 
 from .asset_status import AssetStatus
+from .catalog_status import CatalogStatus
 from .model_base import Model
 from .resource_summary import ResourceSummary
 from .service_availability import ServiceAvailability
@@ -16,6 +17,7 @@ from .vm_summary import VmSummary
 
 class HypervisorInfo(Model):
     assets: AssetStatus | None = None
+    catalogs: list[CatalogStatus] | None = None
     gateway_version: StrictStr
     resource_summary: ResourceSummary | None = None
     service: ServiceAvailability

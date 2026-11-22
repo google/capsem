@@ -22,10 +22,13 @@ from .capability_summary import CapabilitySummary
 from .capture_status import CaptureStatus
 from .captured_content import CapturedContent
 from .captured_payload import CapturedPayload
+from .catalog_availability import CatalogAvailability
 from .catalog_compatibility import CatalogCompatibility
 from .catalog_entry_metadata import CatalogEntryMetadata
 from .catalog_entry_status import CatalogEntryStatus
 from .catalog_info import CatalogInfo
+from .catalog_kind import CatalogKind
+from .catalog_refresh_error import CatalogRefreshError
 from .catalog_rule_kind import CatalogRuleKind
 from .catalog_rule_parameter import CatalogRuleParameter
 from .catalog_rule_parameter_boolean import CatalogRuleParameterBoolean
@@ -33,6 +36,8 @@ from .catalog_rule_parameter_choice import CatalogRuleParameterChoice
 from .catalog_rule_parameter_integer import CatalogRuleParameterInteger
 from .catalog_rule_parameter_text import CatalogRuleParameterText
 from .catalog_snapshot import CatalogSnapshot
+from .catalog_source_origin import CatalogSourceOrigin
+from .catalog_status import CatalogStatus
 from .connection_list_response import ConnectionListResponse
 from .connection_provider import ConnectionProvider
 from .connection_state import ConnectionState
@@ -83,11 +88,6 @@ from .environment_change_request import EnvironmentChangeRequest
 from .environment_create_request import EnvironmentCreateRequest
 from .environment_current_response import EnvironmentCurrentResponse
 from .environment_detection_rule import EnvironmentDetectionRule
-from .environment_document import EnvironmentDocument
-from .environment_effective_access_rule import EnvironmentEffectiveAccessRule
-from .environment_effective_detection_rule import EnvironmentEffectiveDetectionRule
-from .environment_identity import EnvironmentIdentity
-from .environment_image import EnvironmentImage
 
 __all__ = [
     'AgentAccessScope',
@@ -112,10 +112,13 @@ __all__ = [
     'CaptureStatus',
     'CapturedContent',
     'CapturedPayload',
+    'CatalogAvailability',
     'CatalogCompatibility',
     'CatalogEntryMetadata',
     'CatalogEntryStatus',
     'CatalogInfo',
+    'CatalogKind',
+    'CatalogRefreshError',
     'CatalogRuleKind',
     'CatalogRuleParameter',
     'CatalogRuleParameterBoolean',
@@ -123,6 +126,8 @@ __all__ = [
     'CatalogRuleParameterInteger',
     'CatalogRuleParameterText',
     'CatalogSnapshot',
+    'CatalogSourceOrigin',
+    'CatalogStatus',
     'ConnectionListResponse',
     'ConnectionProvider',
     'ConnectionState',
@@ -165,9 +170,4 @@ __all__ = [
     'EnvironmentCreateRequest',
     'EnvironmentCurrentResponse',
     'EnvironmentDetectionRule',
-    'EnvironmentDocument',
-    'EnvironmentEffectiveAccessRule',
-    'EnvironmentEffectiveDetectionRule',
-    'EnvironmentIdentity',
-    'EnvironmentImage',
 ]

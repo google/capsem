@@ -20,11 +20,13 @@ pub(super) async fn settle(
         let result: Result<(api::UpdateActionResponse, Option<UpdateRuntimeDisposition>), AppError> = async {
             let completed = update_command::execute(plan, kind, cancelled).await?;
             let disposition = if matches!(kind, UpdateCommandKind::Apply) && completed.succeeded {
-                Some(
-                    state
-                        .off_worker(|state| reload_activated_update_runtime(&state))
-                        .await??,
-                )
+                let disposition = state
+                    .off_worker(|state| reload_activated_update_runtime(&state))
+                    .await??;
+                if disposition == UpdateRuntimeDisposition::Reloaded {
+                    environment_routes::refresh_catalog_sources(&state).await;
+                }
+                Some(disposition)
             } else {
                 None
             };

@@ -249,6 +249,8 @@ pub struct ServiceState {
     /// v2 manifest (None in dev mode where assets use logical names)
     manifest: RwLock<Option<Arc<capsem_assets::asset_manager::ManifestV2>>>,
     current_version: String,
+    /// Last verified and effective catalog status for the operator overview.
+    catalog_status: environment_routes::CatalogStatusCache,
     /// In-memory asset reconciliation progress. Service startup and explicit
     /// /assets/ensure share this single rail with status so status can
     /// explain both.

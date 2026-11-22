@@ -1,5 +1,10 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .environment_document import EnvironmentDocument
+from .environment_effective_access_rule import EnvironmentEffectiveAccessRule
+from .environment_effective_detection_rule import EnvironmentEffectiveDetectionRule
+from .environment_identity import EnvironmentIdentity
+from .environment_image import EnvironmentImage
 from .environment_image_update_policy import EnvironmentImageUpdatePolicy
 from .environment_list_item import EnvironmentListItem
 from .environment_list_response import EnvironmentListResponse
@@ -107,13 +112,13 @@ from .file_entry_type import FileEntryType
 from .file_event import FileEvent
 from .file_event_action import FileEventAction
 from .file_list_entry import FileListEntry
-from .file_list_response import FileListResponse
-from .fork_request import ForkRequest
-from .fork_response import ForkResponse
-from .grant_state import GrantState
-from .history_details import HistoryDetails
 
 __all__ = [
+    'EnvironmentDocument',
+    'EnvironmentEffectiveAccessRule',
+    'EnvironmentEffectiveDetectionRule',
+    'EnvironmentIdentity',
+    'EnvironmentImage',
     'EnvironmentImageUpdatePolicy',
     'EnvironmentListItem',
     'EnvironmentListResponse',
@@ -189,9 +194,4 @@ __all__ = [
     'FileEvent',
     'FileEventAction',
     'FileListEntry',
-    'FileListResponse',
-    'ForkRequest',
-    'ForkResponse',
-    'GrantState',
-    'HistoryDetails',
 ]

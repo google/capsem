@@ -79,6 +79,7 @@ fn status_response_serializes() {
         }),
         assets: None,
         updates: None,
+        catalogs: None,
     };
 
     let json = serde_json::to_value(&resp).unwrap();
@@ -99,6 +100,7 @@ fn unavailable_response_shape() {
         resource_summary: None,
         assets: None,
         updates: None,
+        catalogs: None,
     };
 
     let json = serde_json::to_value(&resp).unwrap();
@@ -127,6 +129,7 @@ fn status_response_multiple_vms_resource_aggregation() {
         }),
         assets: None,
         updates: None,
+        catalogs: None,
     };
 
     let json = serde_json::to_value(&resp).unwrap();
@@ -467,7 +470,15 @@ async fn fetch_status_reads_one_combined_service_snapshot() {
             let counted = Arc::clone(&counted);
             async move {
                 counted.fetch_add(1, Ordering::SeqCst);
-                axum::Json(serde_json::json!({"sandboxes": []}))
+                axum::Json(serde_json::json!({
+                    "sandboxes": [],
+                    "catalogs": [{
+                        "kind": "skills", "availability": "stale", "origin": "corporate",
+                        "reference": "registry.example/skills:stable",
+                        "digest": format!("sha256:{}", "1".repeat(64)),
+                        "last_successful_refresh": 1100, "error": "registry_unavailable"
+                    }]
+                }))
             }
         }),
     );
@@ -477,6 +488,9 @@ async fn fetch_status_reads_one_combined_service_snapshot() {
 
     assert_eq!(response.service, ServiceAvailability::Running);
     assert_eq!(response.vm_count, 0);
+    let catalog = &response.catalogs.as_ref().unwrap()[0];
+    assert_eq!(catalog.last_successful_refresh, Some(1100));
+    assert_eq!(catalog.availability, capsem_api::environments::CatalogAvailability::Stale);
     assert_eq!(requests.load(Ordering::SeqCst), 1);
     h.abort();
 }

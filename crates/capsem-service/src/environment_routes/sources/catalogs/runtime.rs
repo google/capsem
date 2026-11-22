@@ -33,15 +33,10 @@ pub(crate) async fn launch_policy(
             return Err(Error::Refused);
         }
     }
-    let puller = state
-        .containers
-        .environment_catalog_puller()
-        .map_err(|_| Error::Unavailable)?;
-    let parent = staging(state).await?;
-    let current = RuleCatalogContents::fetch(&puller, &selected, &parent)
-        .await
-        .map_err(content_error)?;
-    observe(state, &current).await?;
+    let workspace = workspace_for_refresh(state, &selected).await?;
+    let current = refresh::<RuleCatalogEntry>(state, &selected, &workspace)
+        .await?
+        .ok_or(Error::Unavailable)?;
     let mut retained: Vec<RuleCatalogContents> = Vec::new();
     for pin in pins {
         require_current(state, kind, pin).await?;
@@ -56,7 +51,7 @@ pub(crate) async fn launch_policy(
             // The moving current tag establishes admission, never the chosen
             // rule body. Missing retained bytes fail without a network fallback.
             retained.push(
-                RuleCatalogContents::fetch_cached(&puller, &selected, pin, &parent)
+                RuleCatalogContents::fetch_cached(&workspace.puller, &selected, pin, &workspace.parent)
                     .await
                     .map_err(content_error)?,
             );

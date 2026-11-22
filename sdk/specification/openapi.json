@@ -5742,6 +5742,16 @@
           }
         }
       },
+      "CatalogAvailability": {
+        "type": "string",
+        "description": "What the service learned on the last explicit catalog refresh.",
+        "enum": [
+          "unverified",
+          "available",
+          "stale",
+          "unavailable"
+        ]
+      },
       "CatalogCompatibility": {
         "type": "object",
         "required": [
@@ -5849,6 +5859,27 @@
             "description": "The reference the catalog was read from, usually a moving channel tag."
           }
         }
+      },
+      "CatalogKind": {
+        "type": "string",
+        "enum": [
+          "skills",
+          "rules",
+          "mcp"
+        ]
+      },
+      "CatalogRefreshError": {
+        "type": "string",
+        "description": "Bounded diagnostic code. Registry responses and local configuration errors\nmay contain credentials or private details and are never exposed here.",
+        "enum": [
+          "missing_source",
+          "invalid_source",
+          "policy_unavailable",
+          "registry_unavailable",
+          "verification_failed",
+          "local_unavailable",
+          "unsupported"
+        ]
       },
       "CatalogRuleKind": {
         "type": "string",
@@ -5977,6 +6008,76 @@
           "snapshot": {
             "type": "string",
             "description": "Supply this token when reading an entry from the snapshot."
+          }
+        },
+        "additionalProperties": false
+      },
+      "CatalogSourceOrigin": {
+        "type": "string",
+        "enum": [
+          "manifest",
+          "corporate"
+        ]
+      },
+      "CatalogStatus": {
+        "type": "object",
+        "description": "Cached operator view for one effective catalog. Last success belongs to\nthe shown source only and remains informational when availability is stale.",
+        "required": [
+          "kind",
+          "availability",
+          "reference",
+          "origin",
+          "digest",
+          "last_successful_refresh",
+          "error"
+        ],
+        "properties": {
+          "availability": {
+            "$ref": "#/components/schemas/CatalogAvailability"
+          },
+          "digest": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Last verified OCI manifest digest."
+          },
+          "error": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CatalogRefreshError"
+              }
+            ]
+          },
+          "kind": {
+            "$ref": "#/components/schemas/CatalogKind"
+          },
+          "last_successful_refresh": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Unix milliseconds of the last successful verified refresh."
+          },
+          "origin": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CatalogSourceOrigin"
+              }
+            ]
+          },
+          "reference": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "additionalProperties": false
@@ -9632,6 +9733,15 @@
                 "$ref": "#/components/schemas/AssetStatus"
               }
             ]
+          },
+          "catalogs": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/CatalogStatus"
+            }
           },
           "gateway_version": {
             "type": "string"

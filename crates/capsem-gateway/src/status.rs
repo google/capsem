@@ -99,6 +99,8 @@ struct ListResponse {
     assets: Option<AssetStatus>,
     #[serde(default)]
     updates: Option<UpdateStatusResponse>,
+    #[serde(default)]
+    catalogs: Option<Vec<capsem_api::environments::CatalogStatus>>,
 }
 
 #[derive(Deserialize)]
@@ -162,6 +164,7 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
         resource_summary: None,
         assets: None,
         updates: None,
+        catalogs: None,
     };
 
     let list = match uds_get(&state.service_client, "/internal/gateway/status", &state.token).await {
@@ -234,6 +237,7 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
         }),
         assets: list.assets,
         updates: list.updates,
+        catalogs: list.catalogs,
     }
 }
 

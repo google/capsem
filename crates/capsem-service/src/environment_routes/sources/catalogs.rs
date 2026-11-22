@@ -1,9 +1,10 @@
 //! Native catalog selection: current source policy, verified OCI bytes and
 //! monotonic Logger observations. Cached content alone grants no authority.
 use super::*;
-use capsem_assets::catalogs::ValidatedCatalogSource;
-use capsem_config::catalogs::{CatalogEntryStatus, RuleCatalogEntry, SkillCatalogEntry};
-use capsem_core::environment::{effective_catalog_source, CatalogContentEntry, CatalogContentError, CatalogContents};
+use capsem_api::environments::{CatalogAvailability, CatalogRefreshError, CatalogStatus};
+use capsem_assets::{catalogs::ValidatedCatalogSource, oci::Puller};
+use capsem_config::catalogs::{CatalogEntryStatus, CatalogSources, RuleCatalogEntry, SkillCatalogEntry};
+use capsem_core::environment::{CatalogContentEntry, CatalogContentError, CatalogContents};
 use capsem_logger::{
     catalog_revocations::{CatalogRevocation, CatalogRevocationKey},
     WriteOp,
@@ -13,27 +14,78 @@ use std::time::{SystemTime, UNIX_EPOCH};
 type Error = EnvironmentResolutionError;
 mod runtime;
 pub(in crate::environment_routes) mod skills;
+mod status;
 pub(crate) use runtime::launch_policy;
+pub(crate) use status::Cache as CatalogStatusCache;
+
+pub(crate) async fn refresh_catalog_sources(state: &ServiceState) {
+    check_sources(state).await;
+}
+
+struct Selection {
+    status: CatalogStatus,
+    validated: Result<ValidatedCatalogSource, Error>,
+}
+
+async fn check_sources(state: &ServiceState) -> [Selection; CatalogKind::ALL.len()] {
+    let ticket = state.catalog_status.begin();
+    let corporate = state.containers.environment_catalog_policy().await;
+    let manifest = state.manifest.read();
+    let selections = match (corporate, manifest) {
+        (Ok(corporate), Ok(manifest)) => {
+            let sources = manifest.as_ref().and_then(|manifest| manifest.catalogs.as_ref());
+            let empty = CatalogSources::default();
+            CatalogKind::ALL.map(|kind| {
+                select_source(
+                    kind,
+                    sources.unwrap_or(&empty),
+                    corporate.catalogs.as_ref().unwrap_or(&empty),
+                )
+            })
+        }
+        _ => CatalogKind::ALL.map(|kind| Selection {
+            status: status::unavailable(kind, CatalogRefreshError::PolicyUnavailable),
+            validated: Err(Error::Unavailable),
+        }),
+    };
+    state
+        .catalog_status
+        .observe_policy(ticket, selections.each_ref().map(|item| item.status.clone()));
+    selections
+}
+
+fn select_source(kind: CatalogKind, manifest: &CatalogSources, corporate: &CatalogSources) -> Selection {
+    let Some(chosen) = manifest.effective_source(corporate, kind) else {
+        return Selection {
+            status: status::unavailable(kind, CatalogRefreshError::MissingSource),
+            validated: Err(Error::Unavailable),
+        };
+    };
+    let mut status = status::unavailable(kind, CatalogRefreshError::InvalidSource);
+    status.origin = Some(chosen.origin);
+    let validated = ValidatedCatalogSource::new(kind, chosen).map_err(|_| Error::Refused);
+    if let Ok(source) = &validated {
+        status.reference = Some(source.reference().to_string());
+        if kind == CatalogKind::Mcp {
+            status.error = Some(CatalogRefreshError::Unsupported);
+        } else {
+            status.availability = CatalogAvailability::Unverified;
+            status.error = None;
+        }
+    }
+    Selection { status, validated }
+}
 
 pub(in crate::environment_routes) async fn source(
     state: &ServiceState,
     kind: CatalogKind,
 ) -> Result<ValidatedCatalogSource, Error> {
-    let corporate = state
-        .containers
-        .environment_catalog_policy()
+    check_sources(state)
         .await
-        .map_err(|_| Error::Unavailable)?;
-    let manifest = state
-        .manifest
-        .read()
-        .map_err(|_| Error::Unavailable)?
-        .as_ref()
-        .and_then(|manifest| manifest.catalogs.clone())
-        .unwrap_or_default();
-    effective_catalog_source(&manifest, &corporate, kind)
-        .map_err(|_| Error::Refused)?
-        .ok_or(Error::Unavailable)
+        .into_iter()
+        .find(|entry| entry.status.kind == kind)
+        .ok_or(Error::Unavailable)?
+        .validated
 }
 
 pub(super) async fn resolve(
@@ -65,16 +117,65 @@ pub(in crate::environment_routes) async fn fetch_current<E: CatalogContentEntry>
     kind: CatalogKind,
 ) -> Result<CatalogContents<E>, Error> {
     let selected = source(state, kind).await?;
-    let puller = state
-        .containers
-        .environment_catalog_puller()
-        .map_err(|_| Error::Unavailable)?;
-    let parent = staging(state).await?;
-    let contents = CatalogContents::<E>::fetch(&puller, &selected, &parent)
-        .await
-        .map_err(content_error)?;
-    observe(state, &contents).await?;
-    Ok(contents)
+    let workspace = workspace_for_refresh(state, &selected).await?;
+    refresh::<E>(state, &selected, &workspace)
+        .await?
+        .ok_or(Error::Unavailable)
+}
+
+struct Workspace {
+    puller: Puller,
+    parent: std::path::PathBuf,
+}
+
+async fn workspace_for_refresh(state: &ServiceState, selected: &ValidatedCatalogSource) -> Result<Workspace, Error> {
+    let ticket = state.catalog_status.begin();
+    let result = async {
+        let puller = state
+            .containers
+            .environment_catalog_puller()
+            .map_err(|_| Error::Unavailable)?;
+        let parent = staging(state).await?;
+        Ok(Workspace { puller, parent })
+    }
+    .await;
+    if result.is_err() {
+        state
+            .catalog_status
+            .observe_refresh(ticket, selected, Err(CatalogRefreshError::LocalUnavailable));
+    }
+    result
+}
+
+/// An unavailable registry permits the existing exact retained-skill path.
+/// Invalid content and failures to record revocations still fail closed.
+async fn refresh<E: CatalogContentEntry>(
+    state: &ServiceState,
+    selected: &ValidatedCatalogSource,
+    workspace: &Workspace,
+) -> Result<Option<CatalogContents<E>>, Error> {
+    let ticket = state.catalog_status.begin();
+    let (result, failure) = match CatalogContents::<E>::fetch(&workspace.puller, selected, &workspace.parent).await {
+        Ok(contents) => match observe(state, &contents).await {
+            Ok(()) => (Ok(Some(contents)), None),
+            Err(error) => (Err(error), Some(CatalogRefreshError::LocalUnavailable)),
+        },
+        Err(CatalogContentError::Unavailable) => (Ok(None), Some(CatalogRefreshError::RegistryUnavailable)),
+        Err(CatalogContentError::WorkerFailed) => {
+            (Err(Error::Unavailable), Some(CatalogRefreshError::LocalUnavailable))
+        }
+        Err(error) => (Err(content_error(error)), Some(CatalogRefreshError::VerificationFailed)),
+    };
+    if let Some(error) = failure {
+        state.catalog_status.observe_refresh(ticket, selected, Err(error));
+    } else if let Ok(Some(contents)) = &result {
+        state.catalog_status.observe_refresh(
+            ticket,
+            selected,
+            Ok((contents.digest().as_str(), crate::policy_mutation::unix_timestamp_ms())),
+        );
+    }
+    result
 }
 
 pub(super) async fn admit(state: &ServiceState, kind: CatalogKind, pin: &EnvironmentCatalogPin) -> Result<(), Error> {

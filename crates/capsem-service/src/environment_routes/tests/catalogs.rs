@@ -18,6 +18,7 @@ mod registry;
 mod applied_skills;
 mod global_skills;
 mod global_rules;
+mod status;
 use registry::Registry;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

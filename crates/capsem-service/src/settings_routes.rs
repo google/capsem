@@ -9,6 +9,7 @@ pub(super) async fn handle_reload_config(
     let mutation = state.policy_mutation.begin().await;
     let reloaded = push_policy_to_running_instances(&state, &mutation).await?;
     state.invalidate_plugin_policy_cache();
+    crate::environment_routes::refresh_catalog_sources(&state).await;
     drop(mutation);
     Ok(Json(serde_json::json!({ "success": true, "reloaded": reloaded })))
 }
@@ -63,6 +64,7 @@ pub(super) async fn handle_corp_config(
     }
 
     state.invalidate_plugin_policy_cache();
+    crate::environment_routes::refresh_catalog_sources(&state).await;
 
     Ok(Json(json!({ "success": true })))
 }

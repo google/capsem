@@ -293,6 +293,7 @@ async fn start_and_serve(args: Args, run_dir: PathBuf, on_ready: impl FnOnce(Arc
         switches: switches::Switches::confined(),
         job_counter: AtomicU64::new(1),
         manifest: RwLock::new(manifest),
+        catalog_status: Default::default(),
         current_version,
         asset_reconcile: Mutex::new(asset_reconcile),
         asset_reconcile_inflight: AtomicBool::new(false),
@@ -322,6 +323,18 @@ async fn start_and_serve(args: Args, run_dir: PathBuf, on_ready: impl FnOnce(Arc
         update_restart: tokio::sync::Notify::new(),
         #[cfg(test)]
         _test_tempdir: None,
+    });
+
+    environment_routes::refresh_catalog_sources(&state).await;
+    // Refresh the local view when the host administrator replaces corporate
+    // files directly. Overview requests copy the last observation from memory.
+    let catalog_state = Arc::downgrade(&state);
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            let Some(state) = catalog_state.upgrade() else { break };
+            environment_routes::refresh_catalog_sources(&state).await;
+        }
     });
 
     let recovery = state

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 pub const ENVIRONMENT_CATALOG_SCHEMA_VERSION: u16 = 1;
 
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CatalogKind {
@@ -63,6 +64,7 @@ pub struct CatalogSources {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mcp: Option<CatalogSourceDescriptor>,
 }
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CatalogSourceOrigin {

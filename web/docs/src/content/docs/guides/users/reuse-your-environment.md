@@ -93,6 +93,14 @@ Open **Change history** to inspect older revisions. Complete revisions show
 canonical TOML. When values have been purged, the view identifies the removed
 variables and shows the remaining content when it is available.
 
+The hypervisor overview reports each catalog's effective registry source, whether
+it came from the release manifest or corporate configuration, and the last
+verified digest and refresh time. An unverified source has yet to pass a
+refresh. A stale catalog keeps its last verified digest alongside the current
+refresh error. A source change clears the previous source's digest. Listing a
+catalog explicitly checks the registry. Polling the overview reads the latest
+cached observation.
+
 Use the SDK's `rules.list` method to browse the configured rule catalog.
 `rules.get` takes an entry's ID, version, and the listing's `catalog`, then
 returns its access or detection template and typed parameter definitions.
