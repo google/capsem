@@ -149,16 +149,6 @@ if actual != expected:
 PY
 }
 
-file_url() {
-    local path="${1:?file_url <path>}"
-    python3 - "$path" <<'PY'
-import pathlib
-import sys
-
-print(pathlib.Path(sys.argv[1]).resolve().as_uri())
-PY
-}
-
 reject_retired_credential_store_markers() {
     local path="${1:?reject_retired_credential_store_markers <path>}"
     local marker
@@ -213,7 +203,10 @@ else
         echo "ERROR: manifest not found: $ASSETS_DIR/manifest.json" >&2
         exit 1
     fi
-    SELECTED_MANIFEST_SOURCE="$(file_url "$ASSETS_DIR/manifest.json")"
+    SELECTED_MANIFEST_SOURCE="$(
+        python3 -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).resolve().as_uri())' \
+            "$ASSETS_DIR/manifest.json"
+    )"
 fi
 write_manifest_metadata "$SELECTED_MANIFEST_SOURCE" "$VERSION" "$SHARE_DIR/assets/manifest-metadata.json"
 
