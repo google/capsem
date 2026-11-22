@@ -142,6 +142,10 @@ export function approveEnvironmentImageUpdate(id: string, request: import('@caps
   return _sdk.call(transport => new Environments(transport).change(id, request), false);
 }
 
+export function promoteEnvironment(id: string, request: import('@capsem/sdk').EnvironmentPromotionRequest) {
+  return _sdk.call(transport => new Environments(transport).promote(id, request), false);
+}
+
 // -- Public getters --
 
 export function isConnected(): boolean {

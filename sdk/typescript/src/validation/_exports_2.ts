@@ -1,5 +1,6 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+export {VmMcpServerKindSchema} from "./VmMcpServerKind.js";
 export {VmMcpServersResponseSchema} from "./VmMcpServersResponse.js";
 export {VmMcpToolSchema} from "./VmMcpTool.js";
 export {VmMcpToolsResponseSchema} from "./VmMcpToolsResponse.js";

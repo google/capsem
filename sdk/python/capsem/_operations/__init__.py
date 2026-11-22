@@ -112,6 +112,7 @@ from .list_vm_skills import list_vm_skills as list_vm_skills
 from .list_vms import list_vms as list_vms
 from .pause_vm import pause_vm as pause_vm
 from .persist_vm import persist_vm as persist_vm
+from .promote_environment import promote_environment as promote_environment
 from .pull_image import pull_image as pull_image
 from .purge_vms import purge_vms as purge_vms
 from .refresh_mcp_server import refresh_mcp_server as refresh_mcp_server

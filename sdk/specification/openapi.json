@@ -716,6 +716,60 @@
         }
       }
     },
+    "/environments/{id}/promote": {
+      "post": {
+        "description": "An operator promotes the exact reviewed fork revision into its parent for future sandboxes. A changed parent requires a new review. Existing sandboxes keep their pinned revisions. Reconcile the same request ID after interruption.",
+        "operationId": "promoteEnvironment",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnvironmentPromotionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentMutationResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "x-capsem-request-timeout-ms": 1020000
+      }
+    },
     "/environments/{id}/revisions/list": {
       "get": {
         "description": "List committed revisions newest first for the operator.",
@@ -8495,6 +8549,34 @@
               }
             ],
             "default": null
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentPromotionRequest": {
+        "type": "object",
+        "required": [
+          "request_id",
+          "base_revision_id",
+          "source",
+          "reason"
+        ],
+        "properties": {
+          "base_revision_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The parent revision observed during review."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "source": {
+            "$ref": "#/components/schemas/EnvironmentRevisionReference",
+            "description": "The exact reviewed, committed fork revision."
           }
         },
         "additionalProperties": false

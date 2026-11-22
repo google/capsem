@@ -1,5 +1,6 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .vm_mcp_server_kind import VmMcpServerKind
 from .vm_mcp_servers_response import VmMcpServersResponse
 from .vm_mcp_tool import VmMcpTool
 from .vm_mcp_tools_response import VmMcpToolsResponse
@@ -15,6 +16,7 @@ from .vm_summary import VmSummary
 from .widget import Widget
 
 __all__ = [
+    'VmMcpServerKind',
     'VmMcpServersResponse',
     'VmMcpTool',
     'VmMcpToolsResponse',

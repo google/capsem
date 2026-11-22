@@ -43,6 +43,7 @@ from .environment_plugin_field_value import EnvironmentPluginFieldValue
 from .environment_plugin_list_response import EnvironmentPluginListResponse
 from .environment_plugin_source import EnvironmentPluginSource
 from .environment_plugins import EnvironmentPlugins
+from .environment_promotion_request import EnvironmentPromotionRequest
 from .environment_readiness_response import EnvironmentReadinessResponse
 from .environment_review_content import EnvironmentReviewContent
 from .environment_revision_detail_response import EnvironmentRevisionDetailResponse
@@ -117,7 +118,6 @@ from .exec_source import ExecSource
 from .exec_target import ExecTarget
 from .exposure_access import ExposureAccess
 from .exposure_info import ExposureInfo
-from .exposure_list_response import ExposureListResponse
 
 __all__ = [
     'EnvironmentDetectionRule',
@@ -153,6 +153,7 @@ __all__ = [
     'EnvironmentPluginListResponse',
     'EnvironmentPluginSource',
     'EnvironmentPlugins',
+    'EnvironmentPromotionRequest',
     'EnvironmentReadinessResponse',
     'EnvironmentReviewContent',
     'EnvironmentRevisionDetailResponse',
@@ -199,5 +200,4 @@ __all__ = [
     'ExecTarget',
     'ExposureAccess',
     'ExposureInfo',
-    'ExposureListResponse',
 ]

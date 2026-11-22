@@ -113,6 +113,7 @@ export {EnvironmentPluginFieldValueSchema} from "./EnvironmentPluginFieldValue.j
 export {EnvironmentPluginListResponseSchema} from "./EnvironmentPluginListResponse.js";
 export {EnvironmentPluginSourceSchema} from "./EnvironmentPluginSource.js";
 export {EnvironmentPluginsSchema} from "./EnvironmentPlugins.js";
+export {EnvironmentPromotionRequestSchema} from "./EnvironmentPromotionRequest.js";
 export {EnvironmentReadinessResponseSchema} from "./EnvironmentReadinessResponse.js";
 export {EnvironmentReviewContentSchema} from "./EnvironmentReviewContent.js";
 export {EnvironmentRevisionDetailResponseSchema} from "./EnvironmentRevisionDetailResponse.js";
@@ -199,4 +200,3 @@ export {ImageSurfaceSchema} from "./ImageSurface.js";
 export {ImageToolSchema} from "./ImageTool.js";
 export {InteractionSchema} from "./Interaction.js";
 export {InteractionBlockSchema} from "./InteractionBlock.js";
-export {InteractionBlockKindSchema} from "./InteractionBlockKind.js";

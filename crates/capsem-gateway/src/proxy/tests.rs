@@ -40,6 +40,7 @@ fn proxy_app(uds_path: &str) -> Router {
         .route("/images/pull", any(handle_proxy))
         .route("/environments/create", any(handle_proxy))
         .route("/environments/{id}/changes", any(handle_proxy))
+        .route("/environments/{id}/promote", any(handle_proxy))
         .route("/item", any(handle_proxy))
         .route("/vms/list", any(handle_proxy))
         .route("/ok", any(handle_proxy))
@@ -770,6 +771,7 @@ async fn image_backed_mutations_wait_for_download_and_verification_without_repla
         "/images/pull",
         "/environments/create",
         "/environments/00000000-0000-4000-8000-000000000001/changes",
+        "/environments/00000000-0000-4000-8000-000000000001/promote",
     ] {
         let received = Arc::new(tokio::sync::Notify::new());
         let calls = Arc::new(AtomicUsize::new(0));

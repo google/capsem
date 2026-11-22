@@ -3290,9 +3290,10 @@ measured = [
     "/vms/managed/{request_id}/claim",
     "/connections",
     # Mutations time replay of an original applied receipt. Seeding creates
-    # both revisions over the authenticated gateway before the timed reads.
+    # revisions and promotes a reviewed fork over the authenticated gateway.
     "/environments/create",
     "/environments/{id}/changes",
+    "/environments/{id}/promote",
     "/environments/{id}/info",
     "/environments/{id}/revisions/{revision_id}/readiness",
     "/vms/{id}/readiness",

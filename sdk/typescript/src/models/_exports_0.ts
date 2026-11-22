@@ -113,6 +113,7 @@ export type { EnvironmentPluginFieldValue } from "./EnvironmentPluginFieldValue.
 export type { EnvironmentPluginListResponse } from "./EnvironmentPluginListResponse.js";
 export { EnvironmentPluginSource } from "./EnvironmentPluginSource.js";
 export type { EnvironmentPlugins } from "./EnvironmentPlugins.js";
+export type { EnvironmentPromotionRequest } from "./EnvironmentPromotionRequest.js";
 export type { EnvironmentReadinessResponse } from "./EnvironmentReadinessResponse.js";
 export type { EnvironmentReviewContent } from "./EnvironmentReviewContent.js";
 export type { EnvironmentRevisionDetailResponse } from "./EnvironmentRevisionDetailResponse.js";
@@ -199,4 +200,3 @@ export { ImageSurface } from "./ImageSurface.js";
 export type { ImageTool } from "./ImageTool.js";
 export type { Interaction } from "./Interaction.js";
 export type { InteractionBlock } from "./InteractionBlock.js";
-export { InteractionBlockKind } from "./InteractionBlockKind.js";

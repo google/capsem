@@ -110,7 +110,10 @@ impl ServiceState {
                     self,
                     &boot.specification.skills.selected,
                 ))
-                .map_err(crate::lifecycle_readiness::SelectionRefusal)?;
+                .map_err(|error| {
+                    let error = capsem_service::environment_revisions::EnvironmentMutationError::Resolution(error);
+                    crate::lifecycle_readiness::SelectionRefusal(crate::environment_routes::mutation_error(error))
+                })?;
         }
         let corporate = capsem_core::net::policy_config::load_corp_policy_files()
             .map_err(anyhow::Error::msg)

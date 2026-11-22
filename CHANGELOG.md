@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Operators can promote an exact reviewed fork revision into its parent for future sandboxes. Running sandboxes keep their pinned revisions.
 - Fixed: Operators can revise a saved environment fork while preserving its original parent and the revisions of running VMs.
 - Added: Environment approval reviews indicate whether the target VM must restart to apply the reviewed configuration.
 - Added: Environment approvals show the exact VM and base revision under review and the resulting environment revision after approval.

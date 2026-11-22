@@ -9,7 +9,8 @@ use axum::{
 use capsem_api::{
     environments::{
         EnvironmentChangeIntent, EnvironmentCreateRequest, EnvironmentCurrentResponse, EnvironmentMutationResponse,
-        EnvironmentPolicyListQuery, EnvironmentRevisionReference, EnvironmentSpecification,
+        EnvironmentPolicyListQuery, EnvironmentPromotionRequest, EnvironmentRevisionReference,
+        EnvironmentSpecification,
     },
     AgentOperation,
 };
@@ -22,6 +23,7 @@ pub(crate) mod history;
 pub(crate) mod library;
 pub(crate) mod mcps;
 pub(crate) mod plugins;
+mod promotion;
 pub(crate) mod proposals;
 pub(crate) mod reviews;
 pub(crate) mod rules;
@@ -30,6 +32,7 @@ mod sources;
 use capsem_core::managed_sessions::LeaseClock;
 use capsem_logger::db::EnvironmentReferenceQuery;
 use capsem_service::environment_files::EnvironmentFileError;
+pub(crate) use promotion::promote;
 pub(crate) use skills::admit_boot_skills;
 pub(crate) use sources::catalogs::{launch_policy, refresh_catalog_sources, CatalogStatusCache};
 use std::sync::Arc;
@@ -206,7 +209,7 @@ pub(crate) async fn change(
     job.wait().await.map(Json).map_err(mutation_error)
 }
 
-fn mutation_error(error: EnvironmentMutationError) -> AppError {
+pub(crate) fn mutation_error(error: EnvironmentMutationError) -> AppError {
     use EnvironmentMutationError as Mutation;
     let status = match error {
         Mutation::InvalidIntent | Mutation::Resolution(EnvironmentResolutionError::InvalidIntent) => {

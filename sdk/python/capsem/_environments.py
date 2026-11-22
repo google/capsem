@@ -54,6 +54,18 @@ class Environments:
             raise ValueError("environment identity changed")
         return result
 
+    async def promote(
+        self, id: str, request: models.EnvironmentPromotionRequest, *, request_timeout: float | None = None,
+    ) -> models.EnvironmentMutationResponse:
+        """Promote an exact fork into its parent for future sandboxes."""
+        request_id = request.request_id
+        result = await api.promote_environment(
+            self._transport, id=id, body=request, request_timeout=request_timeout,
+        )
+        if result.request_id != request_id or result.environment_id != id:
+            raise ValueError("environment promotion identity changed")
+        return result
+
     async def check_image_update(
         self, reference: models.EnvironmentRevisionReference, *, request_timeout: float | None = None,
     ) -> models.EnvironmentImageUpdateResponse:

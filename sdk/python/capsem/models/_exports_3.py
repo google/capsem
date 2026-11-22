@@ -1,5 +1,6 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .mcp_permission_action import McpPermissionAction
 from .mcp_published_tool import McpPublishedTool
 from .mcp_refresh_response import McpRefreshResponse
 from .mcp_server_info_response import McpServerInfoResponse
@@ -117,9 +118,9 @@ from .revoke_session_grant_response import RevokeSessionGrantResponse
 from .revoked_credential_authority import RevokedCredentialAuthority
 from .rule_catalog_definition import RuleCatalogDefinition
 from .rule_catalog_definition_access import RuleCatalogDefinitionAccess
-from .rule_catalog_definition_detection import RuleCatalogDefinitionDetection
 
 __all__ = [
+    'McpPermissionAction',
     'McpPublishedTool',
     'McpRefreshResponse',
     'McpServerInfoResponse',
@@ -199,5 +200,4 @@ __all__ = [
     'RevokedCredentialAuthority',
     'RuleCatalogDefinition',
     'RuleCatalogDefinitionAccess',
-    'RuleCatalogDefinitionDetection',
 ]

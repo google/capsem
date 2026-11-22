@@ -242,6 +242,30 @@ impl EnvironmentChangeRequest {
         self.specification.validate()
     }
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentPromotionRequest {
+    #[schema(format = "uuid")]
+    pub request_id: String,
+    /// The parent revision observed during review.
+    #[schema(format = "uuid")]
+    pub base_revision_id: String,
+    /// The exact reviewed, committed fork revision.
+    pub source: EnvironmentRevisionReference,
+    pub reason: String,
+}
+
+impl EnvironmentPromotionRequest {
+    pub fn validate(&self) -> Result<(), String> {
+        validate_submission(&self.request_id, &self.reason, None)?;
+        if !crate::identity::canonical_uuid(&self.base_revision_id) {
+            return Err("environment promotion requires a canonical base revision identity".into());
+        }
+        self.source.validate().map_err(str::to_owned)
+    }
+}
+
 impl std::fmt::Debug for EnvironmentChangeRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EnvironmentChangeRequest").finish_non_exhaustive()

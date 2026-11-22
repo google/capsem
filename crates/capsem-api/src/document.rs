@@ -138,6 +138,13 @@ pub fn openapi() -> OpenApi {
             .content("application/json", Content::new(Some(request))).build()))
         .extensions(Some([("x-capsem-request-timeout-ms", IMAGE_PULL_REQUEST_TIMEOUT_MS)].into_iter().collect()));
     doc.add("/environments/{id}/changes", HttpMethod::Post, change);
+    let request = doc.schema::<environments::EnvironmentPromotionRequest>();
+    let promote = doc.operation::<EnvironmentMutationResponse>("/environments/{id}/promote", "promoteEnvironment")
+        .description(Some("An operator promotes the exact reviewed fork revision into its parent for future sandboxes. A changed parent requires a new review. Existing sandboxes keep their pinned revisions. Reconcile the same request ID after interruption."))
+        .request_body(Some(RequestBodyBuilder::new().required(Some(Required::True))
+            .content("application/json", Content::new(Some(request))).build()))
+        .extensions(Some([("x-capsem-request-timeout-ms", IMAGE_PULL_REQUEST_TIMEOUT_MS)].into_iter().collect()));
+    doc.add("/environments/{id}/promote", HttpMethod::Post, promote);
     let requests = doc
         .operation::<requests::RequestListResponse>("/requests/list", "listRequests")
         .description(Some("List durable environment requests visible to the operator."))

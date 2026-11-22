@@ -18,6 +18,7 @@ mod proposals;
 pub use proposals::EnvironmentProposalOrigin;
 mod decisions;
 pub use decisions::{ApprovedEnvironmentReview, ResolvedEnvironmentReview, ReviewedEnvironmentChange};
+mod promotion;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EnvironmentMutationError {
@@ -524,6 +525,13 @@ impl EnvironmentMutationCoordinator {
         let specification = match *saved.payload {
             EnvironmentRequestPayload::Change { specification }
             | EnvironmentRequestPayload::ImageUpdate { specification } => specification,
+            EnvironmentRequestPayload::Promotion { source } => {
+                self.revisions
+                    .load_revision(&source.environment_id, &source.revision_id)
+                    .await
+                    .map_err(EnvironmentMutationError::Publication)?
+                    .specification
+            }
             _ => return Err(EnvironmentMutationError::Conflict),
         };
         self.write(WriteOp::EnvironmentRequestDecision(EnvironmentRequestDecision {

@@ -4,6 +4,7 @@ import json
 import secrets
 import time
 import uuid
+from contextlib import closing
 
 import pytest
 from helpers.gateway import TcpHttpClient
@@ -226,6 +227,87 @@ def test_approval_applies_live_policy_and_saves_deferred_configuration(service, 
         if agent is not None:
             agent.close()
         operator.close()
+        gateway.stop()
+
+
+def test_operator_promotes_exact_fork_without_rebinding_running_vms(service):
+    initial = {"name": "promoted-environment", "variables": {"WORKBENCH_MODE": "parent"}}
+    parent = save(service, initial)
+    owner = create(service, parent, vm_name("promote-owner"))
+    sibling = create(service, parent, vm_name("promote-sibling"))
+    owner_path = f"/vms/{owner}/info"
+    sibling_path = f"/vms/{sibling}/info"
+    parent_path = f"/environments/{parent['environment_id']}"
+    generation = request(service, "GET", owner_path)["environment"]["owner_generation"]
+    gateway = ServiceGateway(service)
+    gateway.start()
+    try:
+        with (
+            closing(TcpHttpClient(gateway.base_url, gateway.token)) as operator,
+            closing(delegate(operator, gateway, owner, generation)) as agent,
+        ):
+            proposal_id = str(uuid.uuid4())
+            proposed = {**initial, "variables": {"WORKBENCH_MODE": "fork"}}
+            status, proposal = agent.call_json("POST", parent_path + "/changes", {
+                "request_id": proposal_id, "base_revision_id": parent["revision_id"],
+                "specification": proposed, "reason": "propose a sandbox-local variable",
+            })
+            assert status == 200, proposal
+            status, approved = operator.call_json("POST", f"/requests/{proposal_id}/resolve", {
+                "observed_revision": proposal["observed_revision"], "decision": "approve",
+                "reason": "review and apply the sandbox-local proposal",
+            })
+            assert status == 200, approved
+            fork = approved["result"]
+            fork_path = f"/environments/{fork['environment_id']}"
+            status, edit = operator.call_json("POST", fork_path + "/changes", {
+                "request_id": str(uuid.uuid4()), "base_revision_id": fork["revision_id"],
+                "specification": {**proposed, "description": "reviewed fork revision"},
+                "reason": "make a reviewed revision of the fork",
+            })
+            assert status == 200, edit
+            source = edit["result"]
+            snapshot = operator.get(fork_path + "/info")["document"]["specification"]
+            status, later_edit = operator.call_json("POST", fork_path + "/changes", {
+                "request_id": str(uuid.uuid4()), "base_revision_id": source["revision_id"],
+                "specification": {**proposed, "variables": {"WORKBENCH_MODE": "later"}},
+                "reason": "advance the fork while preserving its reviewed revision",
+            })
+            assert status == 200 and later_edit["result"] != source, later_edit
+            owner_binding = operator.get(owner_path)["environment"]
+            sibling_binding = operator.get(sibling_path)["environment"]
+            promote = {
+                "request_id": str(uuid.uuid4()), "base_revision_id": parent["revision_id"],
+                "source": source, "reason": "adopt this reviewed fork revision for future VMs",
+            }
+            promote_path = parent_path + "/promote"
+            assert agent.call_json("POST", promote_path, promote)[0] == 403
+            status, result = operator.call_json("POST", promote_path, promote)
+            assert status == 200, result
+            assert result["decision"] == "approved" and result["application"] == "applied"
+            promoted = result["result"]
+            assert promoted["environment_id"] == parent["environment_id"]
+            assert promoted["revision_id"] != parent["revision_id"]
+            assert agent.call_json("POST", promote_path, promote)[0] == 403
+            assert operator.call_json("POST", promote_path, promote) == (200, result)
+            assert operator.call_json("POST", promote_path, {**promote, "source": fork})[0] == 409
+            stale = {**promote, "request_id": str(uuid.uuid4())}
+            assert operator.call_json("POST", promote_path, stale)[0] == 409
+            unrelated = {**stale, "base_revision_id": promoted["revision_id"], "source": parent}
+            assert operator.call_json("POST", promote_path, unrelated)[0] == 409
+            detail = operator.get(f"/requests/{promote['request_id']}/info")
+            assert detail["summary"]["source"] == source
+            assert detail["summary"]["kind"] == "environment_promotion"
+            assert detail["proposed"]["specification"] == snapshot
+            assert operator.get(parent_path + "/info")["document"]["specification"] == snapshot
+            assert operator.get(owner_path)["environment"] == owner_binding
+            assert operator.get(sibling_path)["environment"] == sibling_binding
+            future = create(service, promoted, vm_name("promoted-vm"))
+            value = request(service, "POST", f"/vms/{future}/exec", {
+                "command": 'printf "%s" "$WORKBENCH_MODE"',
+            })
+            assert value["exit_code"] == 0 and exec_output_text(value) == "fork"
+    finally:
         gateway.stop()
 
 

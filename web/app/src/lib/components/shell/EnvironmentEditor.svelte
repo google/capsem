@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { EnvironmentArchiveAction, EnvironmentImageUpdateAction, EnvironmentImageUpdatePolicy,
+  import { EnvironmentArchiveAction, EnvironmentImageUpdateAction,
     RequestApplicationState, RequestReviewAvailability, RequestState, type CatalogSnapshot,
     type EnvironmentArchiveRequest, type EnvironmentCreateRequest, type EnvironmentCurrentResponse, type EnvironmentImage,
     type EnvironmentImageUpdateRequest, type EnvironmentMutationResponse, type EnvironmentRevisionReference } from '@capsem/sdk';
@@ -365,7 +365,7 @@
         <button type="button" class="text-primary hover:underline" onclick={loadToml}>Retry canonical TOML</button>
       {/if}
     {:else if phase === 'editing'}
-      {#if base && !current?.archived && current?.document.specification.image && current.document.specification.image.update_policy !== EnvironmentImageUpdatePolicy.PINNED}
+      {#if base && !current?.archived && current?.document.specification.image && current.document.specification.image.update_policy !== 'pinned'}
         <div class="space-y-2">
           <button type="button" class={secondary} onclick={reviewImageUpdate}>Check for image update</button>
           {#if imageStatus}<p role="status">{imageStatus}</p>{/if}

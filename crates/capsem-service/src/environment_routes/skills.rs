@@ -14,14 +14,14 @@ pub(crate) use applied::{vm_info, vm_list};
 pub(crate) async fn admit_boot_skills(
     state: &ServiceState,
     selected: &[EnvironmentCatalogPin],
-) -> Result<(), AppError> {
+) -> Result<(), EnvironmentResolutionError> {
     if selected.is_empty() {
         return Ok(());
     }
     let pins = ordered_pins(selected, "");
-    let mut catalog = PinnedSkills::open(state, &pins).await.map_err(read_error)?;
+    let mut catalog = PinnedSkills::open(state, &pins).await?;
     for pin in pins {
-        catalog.entry(state, pin).await.map_err(read_error)?;
+        catalog.entry(state, pin).await?;
     }
     Ok(())
 }

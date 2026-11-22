@@ -17,6 +17,42 @@ fn pending() -> String {
 }
 
 #[tokio::test]
+async fn promotion_submits_the_reviewed_fork_and_matches_the_receipt() {
+    let body = models::EnvironmentPromotionRequest {
+        request_id: REQUEST.into(),
+        base_revision_id: ENVIRONMENT.into(),
+        source: EnvironmentRevisionReference {
+            environment_id: "00000000-0000-4000-8000-000000000003".into(),
+            revision_id: "00000000-0000-4000-8000-000000000004".into(),
+        },
+        reason: "promote the reviewed fork".into(),
+    };
+    let mut server = Server::reply(200, pending().as_bytes(), None).await;
+    let hv = Hypervisor::new(&server.url, "private-token").unwrap();
+    assert_eq!(
+        hv.environments()
+            .promote(ENVIRONMENT, body.clone())
+            .await
+            .unwrap()
+            .request_id,
+        REQUEST
+    );
+    let (request, payload) = server.received.recv().await.unwrap();
+    assert_eq!(request.method, axum::http::Method::POST);
+    assert_eq!(request.uri.path(), format!("/environments/{ENVIRONMENT}/promote"));
+    assert_eq!(
+        serde_json::from_slice::<models::EnvironmentPromotionRequest>(&payload).unwrap(),
+        body
+    );
+    assert!(matches!(
+        hv.environments()
+            .promote(&body.source.environment_id, body.clone())
+            .await,
+        Err(Error::InvalidResponse(_))
+    ));
+}
+
+#[tokio::test]
 async fn selected_skill_methods_use_the_exact_revision_and_pin() {
     let reference = EnvironmentRevisionReference {
         environment_id: ENVIRONMENT.into(),

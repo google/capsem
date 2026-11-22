@@ -96,25 +96,13 @@ pub(super) async fn validate(state: &Arc<ServiceState>, review: ReviewedEnvironm
         )
     };
     owner.validate(state, false).map_err(|_| Error::Conflict)?;
-    validate_preparation(&review.specification).map_err(|_| Error::Resolution(EnvironmentResolutionError::Refused))?;
     let original = state
         .environments
         .load_revision(&binding.boot.environment_id, &binding.boot.revision_id)
         .await
         .map_err(Error::Publication)?;
     let corporate = corporate_settings(state).await?;
-    if let Some(image) = &review.specification.image {
-        use crate::container_setup::images::{Decision, ImageError};
-        let refused = |error| {
-            Error::Resolution(match error {
-                ImageError::Refused(_) => EnvironmentResolutionError::Refused,
-                _ => EnvironmentResolutionError::Unavailable,
-            })
-        };
-        let mut admission = Decision::new(state).await.map_err(refused)?;
-        let selected = admission.resolve_saved(image).await.map_err(refused)?;
-        admission.admit_saved(&selected).await.map_err(refused)?;
-    }
+    validate_workload(state, &review.specification).await?;
     let pending_restart =
         EnvironmentChangeImpact::classify(&original.specification, &review.specification).has_deferred_changes();
     let desired = EnvironmentPolicyInputs::new(&review.specification, &review.specification, &corporate);
@@ -144,7 +132,27 @@ pub(super) async fn validate(state: &Arc<ServiceState>, review: ReviewedEnvironm
     })
 }
 
-async fn corporate_settings(state: &Arc<ServiceState>) -> Result<capsem_config::SettingsFile, Error> {
+pub(super) async fn validate_workload(
+    state: &Arc<ServiceState>,
+    specification: &EnvironmentSpecification,
+) -> Result<(), Error> {
+    validate_preparation(specification).map_err(|_| Error::Resolution(EnvironmentResolutionError::Refused))?;
+    if let Some(image) = &specification.image {
+        use crate::container_setup::images::{Decision, ImageError};
+        let refused = |error| {
+            Error::Resolution(match error {
+                ImageError::Refused(_) => EnvironmentResolutionError::Refused,
+                _ => EnvironmentResolutionError::Unavailable,
+            })
+        };
+        let mut admission = Decision::new(state).await.map_err(refused)?;
+        let selected = admission.resolve_saved(image).await.map_err(refused)?;
+        admission.admit_saved(&selected).await.map_err(refused)?;
+    }
+    Ok(())
+}
+
+pub(super) async fn corporate_settings(state: &Arc<ServiceState>) -> Result<capsem_config::SettingsFile, Error> {
     state
         .off_worker(|_| load_corp_policy_files())
         .await

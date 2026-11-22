@@ -43,6 +43,14 @@ export class Environments {
     return result;
   }
 
+  /** Promote an exact fork into its parent for future sandboxes. */
+  async promote(id: string, request: models.EnvironmentPromotionRequest, options: CallOptions = {}): Promise<models.EnvironmentMutationResponse> {
+    const requestId = request.request_id;
+    const result = await api.promoteEnvironment(this.transport, {id, body: request}, options);
+    if (result.request_id !== requestId || result.environment_id !== id) throw new Error('Environment promotion identity changed');
+    return result;
+  }
+
   async listRevisions(id: string, {signal, timeoutMs, ...query}: EnvironmentRevisionListOptions = {}): Promise<models.EnvironmentRevisionListResponse> {
     return api.listEnvironmentRevisions(this.transport, {id, ...query}, {signal, timeoutMs});
   }

@@ -11,9 +11,9 @@ pub use environments::{
 pub use environments::{
     EnvironmentChangeIntent, EnvironmentChangeRequest, EnvironmentCreateRequest, EnvironmentCurrentResponse,
     EnvironmentImageUpdateResponse, EnvironmentListResponse, EnvironmentMutationResponse,
-    EnvironmentPluginListResponse, EnvironmentReadinessResponse, EnvironmentRevisionDetailResponse,
-    EnvironmentRevisionListResponse, EnvironmentRuleListResponse, EnvironmentTomlValidationRequest,
-    EnvironmentTomlValidationResponse,
+    EnvironmentPluginListResponse, EnvironmentPromotionRequest, EnvironmentReadinessResponse,
+    EnvironmentRevisionDetailResponse, EnvironmentRevisionListResponse, EnvironmentRuleListResponse,
+    EnvironmentTomlValidationRequest, EnvironmentTomlValidationResponse,
 };
 pub use environments::{
     EnvironmentSkillDetailResponse, EnvironmentSkillListResponse, VmSkillDetailResponse, VmSkillListResponse,

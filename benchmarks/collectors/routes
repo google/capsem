@@ -8,7 +8,7 @@ as an internal control route.
 Warm latency reuses connections like the UI and gateway pool; cold latency
 includes setup. Every response must be successful JSON. Managed lifecycle
 POSTs use an idempotently closed tombstone. Environment POSTs measure replay of
-the original applied receipt for two mutations performed before timing.
+the original applied receipt for mutations performed before timing.
 Prints raw milliseconds plus service
 and gateway CPU deltas; `capsem-bench` computes every statistic. Gateway latency
 includes the authenticated service hop. The retired `service.*` latency series
@@ -46,6 +46,7 @@ from helpers.stopped_workspace import seed_stopped_workspace
 from benchmarks.helpers.route_measurements import route_metrics
 from benchmarks.helpers.route_requests import (
     AGENT_REVOKE_ID,
+    ENV_PROMOTE,
     ENV_ROUTES,
     LIVE_ROUTES,
     Target,
@@ -190,7 +191,7 @@ def main() -> int:
             if ENV_ROUTES.intersection(routes):
                 client = TcpHttpClient(gateway.base_url, gateway.token)
                 try:
-                    environment = seed_environment(client)
+                    environment = seed_environment(client, gateway.base_url, measure_promotion=ENV_PROMOTE in routes)
                 finally:
                     client.close()
         service_proc = psutil.Process(service.proc.pid)

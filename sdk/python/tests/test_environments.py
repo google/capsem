@@ -23,6 +23,25 @@ def request():
     })
 
 
+def test_promotion_submits_the_reviewed_fork_and_matches_the_receipt():
+    async def run():
+        body = models.EnvironmentPromotionRequest(
+            request_id=REQUEST, base_revision_id=ENVIRONMENT, reason="promote the reviewed fork",
+            source=models.EnvironmentRevisionReference(
+                environment_id="00000000-0000-4000-8000-000000000003",
+                revision_id="00000000-0000-4000-8000-000000000004",
+            ),
+        )
+        async with gateway(response=PENDING) as (url, received), Hypervisor(url, "gateway-token") as hv:
+            assert (await hv.environments.promote(ENVIRONMENT, body)).request_id == REQUEST
+            assert received[-1] == (
+                "POST", f"/environments/{ENVIRONMENT}/promote", body.model_dump(mode="json"),
+            )
+            with pytest.raises(ValueError, match="promotion identity changed"):
+                await hv.environments.promote(body.source.environment_id, body)
+    asyncio.run(run())
+
+
 def test_run_uses_an_exact_saved_revision_and_rejects_inline_variables():
     async def run():
         output = {"stdout": {"encoding": "utf8", "data": "pinned"},

@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import json
+import secrets
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from helpers.stopped_workspace import BODY_ROUTE, BODY_URL, VM_ID, assert_event_bodies
+from helpers.gateway import TcpHttpClient
 
 if TYPE_CHECKING:
     import psutil
-    from helpers.gateway import TcpHttpClient
     from helpers.http_transport import Transport
 
 MANAGED_REQUEST_ID = "fc120782-2272-4b3d-a2e6-a26ee2f8ab61"
@@ -24,9 +25,10 @@ VM_READINESS = "/vms/{id}/readiness"
 VM_READINESS_URL = f"/vms/{VM_ID}/readiness?intent=start"
 ENV_CREATE = "/environments/create"
 ENV_CHANGE = "/environments/{id}/changes"
+ENV_PROMOTE = "/environments/{id}/promote"
 ENV_INFO = "/environments/{id}/info"
 ENV_READINESS = "/environments/{id}/revisions/{revision_id}/readiness"
-ENV_ROUTES = {ENV_CREATE, ENV_CHANGE, ENV_INFO, ENV_READINESS}
+ENV_ROUTES = {ENV_CREATE, ENV_CHANGE, ENV_PROMOTE, ENV_INFO, ENV_READINESS}
 
 
 @dataclass(frozen=True)
@@ -36,7 +38,7 @@ class EnvironmentFixture:
     replays: dict[str, tuple[bytes, dict]]
 
 
-def seed_environment(client: TcpHttpClient) -> EnvironmentFixture:
+def seed_environment(client: TcpHttpClient, gateway_url: str, *, measure_promotion: bool) -> EnvironmentFixture:
     """Use the operator gateway to commit an environment and then advance it."""
     create = {
         "request_id": str(uuid.uuid4()),
@@ -60,10 +62,58 @@ def seed_environment(client: TcpHttpClient) -> EnvironmentFixture:
     revised = changed["result"]
     if revised["environment_id"] != original["environment_id"] or revised["revision_id"] == original["revision_id"]:
         raise RuntimeError("benchmark environment did not advance to a new revision")
-    return EnvironmentFixture(original, revised["revision_id"], {
+    replays = {
         ENV_CREATE: (json.dumps(create).encode(), created),
         change_path: (json.dumps(change).encode(), changed),
-    })
+    }
+    if measure_promotion:
+        path = ENV_PROMOTE.format(id=revised["environment_id"])
+        body, receipt = seed_promotion(client, gateway_url, revised, change_path)
+        replays[path] = (json.dumps(body).encode(), receipt)
+        revised = receipt["result"]
+    return EnvironmentFixture(original, revised["revision_id"], replays)
+
+
+def seed_promotion(
+    client: TcpHttpClient, gateway_url: str, parent: dict[str, str], change_path: str,
+) -> tuple[dict, dict]:
+    """Use a live sandbox to obtain an approved fork, then promote it before timing."""
+    session_id = client.post("/vms/create", {"name": "promotion-benchmark", "environment": parent})["id"]
+    try:
+        generation = client.get(f"/vms/{session_id}/info")["environment"]["owner_generation"]
+        secret = secrets.token_hex(32)
+        access = client.post("/agent-access", {
+            "request_id": str(uuid.uuid4()), "ownership_token": secret, "lease_seconds": 300,
+            "scope": {"operations": ["propose"], "sessions": [
+                {"session_id": session_id, "owner_generation": generation},
+            ]},
+        })["access"]["id"]
+        proposal_id = str(uuid.uuid4())
+        agent = TcpHttpClient(gateway_url, f"{access}.{secret}")
+        try:
+            proposed = agent.post(change_path, {
+                "request_id": proposal_id, "base_revision_id": parent["revision_id"],
+                "specification": {"name": "route-benchmark", "description": "reviewed benchmark fork"},
+                "reason": "prepare a fork to benchmark receipt replay",
+            })
+        finally:
+            agent.close()
+        approved = client.post(f"/requests/{proposal_id}/resolve", {
+            "observed_revision": proposed["observed_revision"], "decision": "approve",
+            "reason": "approve the route benchmark fork",
+        })
+        body = {
+            "request_id": str(uuid.uuid4()), "base_revision_id": parent["revision_id"],
+            "source": approved["result"], "reason": "promote the route benchmark fork",
+        }
+        receipt = client.post(ENV_PROMOTE.format(id=parent["environment_id"]), body)
+        if (receipt["application"] != "applied" or receipt["request_id"] != body["request_id"]
+                or receipt["result"]["environment_id"] != parent["environment_id"]
+                or receipt["result"]["revision_id"] == parent["revision_id"]):
+            raise RuntimeError("benchmark fork promotion did not advance the parent")
+        return body, receipt
+    finally:
+        client.delete(f"/vms/{session_id}/delete")
 
 
 def request_path(

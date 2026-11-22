@@ -37,6 +37,7 @@ fn upstream_deadline(path: &str) -> Duration {
         ["images", "pull"]
             | ["environments", "create"]
             | ["environments", _, "changes"]
+            | ["environments", _, "promote"]
             | ["environments", _, "revisions", _, "image-update"]
     ) {
         return Duration::from_millis(capsem_api::IMAGE_PULL_REQUEST_TIMEOUT_MS);

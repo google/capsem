@@ -375,6 +375,7 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         )
         .route("/environments/create", post(proxy::handle_proxy))
         .route("/environments/{id}/changes", post(proxy::handle_proxy))
+        .route("/environments/{id}/promote", post(proxy::handle_proxy))
         .route("/requests/list", get(proxy::handle_proxy))
         .route("/requests/{id}/info", get(proxy::handle_proxy))
         .route("/requests/{id}/resolve", post(proxy::handle_proxy))

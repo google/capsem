@@ -52,6 +52,26 @@ impl Environments<'_> {
             .await
     }
 
+    /// Promote an exact fork into its parent for future sandboxes.
+    pub async fn promote(
+        &self,
+        id: &str,
+        request: models::environments::EnvironmentPromotionRequest,
+    ) -> Result<models::EnvironmentMutationResponse> {
+        request
+            .validate()
+            .map_err(|_| Error::InvalidInput("invalid environment promotion"))?;
+        let input = api::PromoteEnvironmentParams {
+            id: id.into(),
+            body: request,
+        };
+        let result = api::promote_environment(&self.0.transport, &input, self.0.options).await?;
+        if result.request_id != input.body.request_id || result.environment_id != id {
+            return Err(Error::InvalidResponse("environment promotion identity changed"));
+        }
+        Ok(result)
+    }
+
     /// Approve a verified digest against the observed blueprint revision.
     pub async fn update_image(
         &self,

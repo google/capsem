@@ -171,6 +171,8 @@ mod pause_vm;
 pub use pause_vm::{pause_vm, PauseVmParams};
 mod persist_vm;
 pub use persist_vm::{persist_vm, PersistVmParams};
+mod promote_environment;
+pub use promote_environment::{promote_environment, PromoteEnvironmentParams};
 mod pull_image;
 pub use pull_image::{pull_image, PullImageParams};
 mod purge_vms;
