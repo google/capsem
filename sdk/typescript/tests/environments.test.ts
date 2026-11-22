@@ -39,6 +39,49 @@ it('lists selected skill pins and rejects detail with substituted metadata', asy
   });
 });
 
+it('correlates applied VM skills with the requested owner and revision', async () => {
+  const revision = {environment_id: environmentId, revision_id: requestId};
+  const selection = {id: 'review', version: '1.0.0', catalog_reference: 'registry.example/skills:stable', resolved_digest: `sha256:${'0'.repeat(64)}`};
+  const metadata = {id: 'review', version: '1.0.0', name: 'Review', publisher: 'Fixture', provenance: 'Fixture catalog',
+    license: 'Apache-2.0', compatibility: {min_runtime_contract: 1}, status: 'active'};
+  const files = {'SKILL.md': 'applied fixture\n'};
+  const scope = {vm_id: 'vm-1', owner_generation: requestId};
+  const page = {...scope, revision, skills: [], discovery_fresh: true};
+  const detail = {revision, selection, metadata, files, discovery_fresh: true};
+  let payload: unknown = page;
+  await gateway((_request, reply) => reply.end(JSON.stringify(payload)), async (url, received) => {
+    const hv = new Hypervisor(url, 'token');
+    try {
+      const vm = hv.vm({id: 'vm-1'});
+      expect(await vm.skills({revisionId: requestId, limit: 1})).toEqual(page);
+      const query = new URL(received[0]!.url!, url);
+      expect(query.pathname).toBe('/vms/vm-1/skills/list');
+      expect(query.searchParams.get('revision_id')).toBe(requestId);
+      expect(query.searchParams.get('limit')).toBe('1');
+      payload = {...page, revision: null};
+      await expect(vm.skills({revisionId: requestId})).rejects.toThrow('revision identity changed');
+      expect((await vm.skills()).revision).toBeNull();
+      payload = {...page, vm_id: 'vm-2'};
+      await expect(vm.skills()).rejects.toThrow('revision identity changed');
+
+      payload = {...scope, skill: detail};
+      expect((await vm.skill('review', {revisionId: requestId})).skill.files).toEqual(files);
+      expect(received.at(-1)?.url).toBe(`/vms/vm-1/skills/review/info?revision_id=${requestId}`);
+      expect((await vm.skill('review')).owner_generation).toBe(requestId);
+      await expect(vm.skill('review', {revisionId: environmentId})).rejects.toThrow('skill identity changed');
+      for (const invalid of [
+        {...scope, vm_id: 'vm-2', skill: detail},
+        {...scope, skill: {...detail, selection: {...selection, id: 'other'}}},
+        {...scope, skill: {...detail, metadata: {...metadata, id: 'other'}}},
+        {...scope, skill: {...detail, metadata: {...metadata, version: '2.0.0'}}},
+      ]) {
+        payload = invalid;
+        await expect(vm.skill('review')).rejects.toThrow('skill identity changed');
+      }
+    } finally { hv.close(); }
+  });
+});
+
 it('runs a command from an exact saved revision and refuses inline variables', async () => {
   const reference = {environment_id: environmentId, revision_id: requestId};
   const output = {stdout: {encoding: 'utf8', data: 'pinned'}, stderr: {encoding: 'utf8', data: ''}, exit_code: 0};

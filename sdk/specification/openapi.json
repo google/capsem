@@ -4289,6 +4289,152 @@
         }
       }
     },
+    "/vms/{id}/skills/list": {
+      "get": {
+        "description": "List selected skills from the acknowledged boot revision of a live sandbox.",
+        "operationId": "listVmSkills",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "revision_id",
+            "in": "query",
+            "description": "Require this exact current saved revision.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "description": "Case-insensitive match on protected selection metadata.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "Continue with the cursor for the same saved revision.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Number of matches per page, from 1 to 64. Defaults to 24.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VmSkillListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/vms/{id}/skills/{skill_id}/info": {
+      "get": {
+        "description": "Read the complete pinned skill files allowed for the acknowledged sandbox generation.",
+        "operationId": "getVmSkill",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "skill_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "revision_id",
+            "in": "query",
+            "description": "Require the current environment to match this saved revision.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VmSkillDetailResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/vms/{id}/start": {
       "post": {
         "operationId": "startVm",
@@ -13892,6 +14038,72 @@
             "type": "integer",
             "format": "int32",
             "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "VmSkillDetailResponse": {
+        "type": "object",
+        "required": [
+          "vm_id",
+          "owner_generation",
+          "skill"
+        ],
+        "properties": {
+          "owner_generation": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "skill": {
+            "$ref": "#/components/schemas/EnvironmentSkillDetailResponse"
+          },
+          "vm_id": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "VmSkillListResponse": {
+        "type": "object",
+        "description": "Applied selections for the exact acknowledged sandbox generation.",
+        "required": [
+          "vm_id",
+          "owner_generation",
+          "skills",
+          "discovery_fresh"
+        ],
+        "properties": {
+          "discovery_fresh": {
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "owner_generation": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "revision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EnvironmentRevisionReference"
+              }
+            ]
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentSkillSummary"
+            }
+          },
+          "vm_id": {
+            "type": "string"
           }
         },
         "additionalProperties": false

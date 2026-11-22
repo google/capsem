@@ -106,6 +106,35 @@ class VM(Client):
         vm_id = await self._resolve()
         return await self._call(vm_id, api.get_vm_info(self._transport, id=vm_id))
 
+    async def skills(self, *, revision_id: str | None = None, search: str | None = None,
+                     after: str | None = None, limit: int | None = None,
+                     request_timeout: float | None = None) -> models.VmSkillListResponse:
+        """List skills from the acknowledged boot revision of the running VM."""
+        vm_id = await self._resolve(request_timeout=request_timeout)
+        result = await self._call(vm_id, api.list_vm_skills(
+            self._transport, id=vm_id, revision_id=revision_id, search=search,
+            after=after, limit=limit, request_timeout=request_timeout,
+        ))
+        if result.vm_id != vm_id or (revision_id is not None and
+                (result.revision is None or result.revision.revision_id != revision_id)):
+            raise ValueError("sandbox skill revision identity changed")
+        return result
+
+    async def skill(self, skill_id: str, *, revision_id: str | None = None,
+                    request_timeout: float | None = None) -> models.VmSkillDetailResponse:
+        """Read the complete pinned skill dictionary from the running VM's boot revision."""
+        vm_id = await self._resolve(request_timeout=request_timeout)
+        result = await self._call(vm_id, api.get_vm_skill(
+            self._transport, id=vm_id, skill_id=skill_id, revision_id=revision_id,
+            request_timeout=request_timeout,
+        ))
+        skill = result.skill
+        if (result.vm_id != vm_id or (revision_id is not None and skill.revision.revision_id != revision_id)
+                or skill.selection.id != skill_id or skill.metadata.id != skill_id
+                or skill.selection.version != skill.metadata.version):
+            raise ValueError("sandbox skill identity changed")
+        return result
+
     async def exec(self, command: str, *, timeout_secs: int | None = None,
                    target: models.ExecTarget | None = None) -> ExecResult:
         body = models.ExecRequest.model_validate({

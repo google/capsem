@@ -100,6 +100,14 @@ current catalog discovery is unavailable, Capsem can serve a verified retained
 copy and reports `discovery_fresh` as false. A recorded revocation blocks access
 to the content.
 
+For a running sandbox, `vm.skills` and `vm.skill` report the acknowledged boot
+revision and its owner generation. Editing the shared environment leaves the
+sandbox's pinned skills in place. Stopping and starting the sandbox keeps the
+saved revision and creates a new owner generation, so a delegated grant to the
+previous generation no longer applies. Skill reads return text for inspection.
+A recorded revocation blocks new boots that select the skill. A running
+sandbox reports the revoked selection by ID and withholds its files.
+
 ## Archive a saved environment
 
 Open the environment with **Edit**, choose **Archive environment**, enter a

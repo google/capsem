@@ -75,3 +75,37 @@ impl std::fmt::Debug for EnvironmentSkillDetailResponse {
             .finish_non_exhaustive()
     }
 }
+
+/// Applied selections for the exact acknowledged sandbox generation.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct VmSkillListResponse {
+    pub vm_id: String,
+    #[schema(format = "uuid")]
+    pub owner_generation: String,
+    pub revision: Option<EnvironmentRevisionReference>,
+    pub skills: Vec<EnvironmentSkillSummary>,
+    pub discovery_fresh: bool,
+    pub next_cursor: Option<String>,
+}
+
+impl std::fmt::Debug for VmSkillListResponse {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("VmSkillListResponse")
+            .field("vm_id", &self.vm_id)
+            .field("owner_generation", &self.owner_generation)
+            .field("revision", &self.revision)
+            .field("skill_count", &self.skills.len())
+            .finish_non_exhaustive()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct VmSkillDetailResponse {
+    pub vm_id: String,
+    #[schema(format = "uuid")]
+    pub owner_generation: String,
+    pub skill: EnvironmentSkillDetailResponse,
+}

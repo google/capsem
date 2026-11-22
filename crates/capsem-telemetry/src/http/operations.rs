@@ -124,6 +124,8 @@ pub const ROUTES: &[&str] = &[
     "/vms/{id}/security/asks/{ask_id}/resolve",
     "/vms/{id}/security/latest",
     "/vms/{id}/security/status",
+    "/vms/{id}/skills/list",
+    "/vms/{id}/skills/{skill_id}/info",
     "/vms/{id}/start",
     "/vms/{id}/stats/detail",
     "/vms/{id}/stats/summary",

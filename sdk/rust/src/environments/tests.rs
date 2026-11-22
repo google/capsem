@@ -50,6 +50,39 @@ async fn selected_skill_methods_use_the_exact_revision_and_pin() {
 }
 
 #[tokio::test]
+async fn vm_skill_reads_bind_the_sandbox_and_expected_boot_revision() {
+    let mut server = Server::respond(|parts| {
+        let revision = json!({"environment_id":ENVIRONMENT,"revision_id":REQUEST});
+        let body = if parts.uri.path().ends_with("/list") {
+            json!({"vm_id":"vm-1","owner_generation":REQUEST,"revision":revision,"skills":[],"discovery_fresh":false})
+        } else {
+            json!({"vm_id":"vm-1","owner_generation":REQUEST,"skill":{
+                "revision":revision,"discovery_fresh":false,"files":{"SKILL.md":"review fixture\n"},
+                "selection":{"id":"review","version":"1.0.0","catalog_reference":"registry.example/skills:stable",
+                    "resolved_digest":format!("sha256:{}", "0".repeat(64))},
+                "metadata":{"id":"review","version":"1.0.0","name":"Review","status":"active",
+                    "publisher":"fixture","provenance":"fixture","license":"Apache-2.0","compatibility":{"min_runtime_contract":1}},
+            }})
+        };
+        Response::new(Body::from(body.to_string()))
+    }).await;
+    let hv = Hypervisor::new(&server.url, "private-token").unwrap();
+    let vm = hv.vm(crate::VmSelector::Id("vm-1".into())).unwrap();
+    let query = models::environments::EnvironmentSkillListQuery {
+        revision_id: Some(REQUEST.into()), search: None, after: None, limit: Some(1),
+    };
+    assert_eq!(vm.skills(query).await.unwrap().owner_generation, REQUEST);
+    let (listing, _) = server.received.recv().await.unwrap();
+    assert_eq!(listing.uri.path(), "/vms/vm-1/skills/list");
+    assert_eq!(listing.uri.query().unwrap(), format!("revision_id={REQUEST}&limit=1"));
+    let detail = vm.skill("review", Some(REQUEST)).await.unwrap();
+    assert_eq!(detail.skill.files["SKILL.md"], "review fixture\n");
+    let (request, _) = server.received.recv().await.unwrap();
+    assert_eq!(request.uri.path(), "/vms/vm-1/skills/review/info");
+    assert!(matches!(vm.skill("review", Some(ENVIRONMENT)).await, Err(Error::InvalidResponse(_))));
+}
+
+#[tokio::test]
 async fn plugin_defaults_and_saved_results_require_their_exact_revision_context() {
     let mut server = Server::respond(|parts| {
         let revision = if parts.uri.path() == "/environments/plugins/list" {

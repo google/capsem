@@ -154,6 +154,44 @@ impl VM {
         .await
     }
 
+    /// List skills from the acknowledged boot revision of the running VM.
+    pub async fn skills(&self, query: models::environments::EnvironmentSkillListQuery) -> Result<models::VmSkillListResponse> {
+        let input = api::ListVmSkillsParams {
+            id: self.resolve().await?,
+            revision_id: query.revision_id,
+            search: query.search,
+            after: query.after,
+            limit: query.limit.map(u32::from),
+        };
+        let result = api::list_vm_skills(&self.client.transport, &input, self.client.options).await?;
+        if result.vm_id != input.id || input.revision_id.as_ref().is_some_and(|expected| {
+            result.revision.as_ref().is_none_or(|revision| revision.revision_id != *expected)
+        }) {
+            return Err(Error::InvalidResponse("sandbox skill revision identity changed"));
+        }
+        Ok(result)
+    }
+
+    /// Read the complete pinned file dictionary for a skill in the running VM.
+    pub async fn skill(&self, skill_id: &str, revision_id: Option<&str>) -> Result<models::VmSkillDetailResponse> {
+        let input = api::GetVmSkillParams {
+            id: self.resolve().await?,
+            skill_id: skill_id.into(),
+            revision_id: revision_id.map(str::to_owned),
+        };
+        let result = api::get_vm_skill(&self.client.transport, &input, self.client.options).await?;
+        let skill = &result.skill;
+        if result.vm_id != input.id
+            || revision_id.is_some_and(|expected| skill.revision.revision_id != expected)
+            || skill.selection.id != skill_id
+            || skill.metadata.id != skill_id
+            || skill.selection.version != skill.metadata.version
+        {
+            return Err(Error::InvalidResponse("sandbox skill identity changed"));
+        }
+        Ok(result)
+    }
+
     pub async fn exec(&self, command: &str, timeout_secs: Option<u64>) -> Result<models::ExecResponse> {
         let params = api::ExecVmParams {
             id: self.resolve().await?,

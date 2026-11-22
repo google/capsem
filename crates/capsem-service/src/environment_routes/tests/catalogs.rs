@@ -15,6 +15,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 mod registry;
+mod applied_skills;
 use registry::Registry;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

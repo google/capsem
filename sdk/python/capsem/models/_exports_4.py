@@ -42,6 +42,8 @@ from .vm_lifecycle_selection import VmLifecycleSelection
 from .vm_lifecycle_state import VmLifecycleState
 from .vm_network_info import VmNetworkInfo
 from .vm_readiness_response import VmReadinessResponse
+from .vm_skill_detail_response import VmSkillDetailResponse
+from .vm_skill_list_response import VmSkillListResponse
 from .vm_start_request import VmStartRequest
 from .vm_stats_detail_response import VmStatsDetailResponse
 from .vm_stats_summary_response import VmStatsSummaryResponse
@@ -92,6 +94,8 @@ __all__ = [
     'VmLifecycleState',
     'VmNetworkInfo',
     'VmReadinessResponse',
+    'VmSkillDetailResponse',
+    'VmSkillListResponse',
     'VmStartRequest',
     'VmStatsDetailResponse',
     'VmStatsSummaryResponse',

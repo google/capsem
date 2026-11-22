@@ -90,7 +90,7 @@ approved = [
 ]
 
 [http]
-count = 134
+count = 136
 approved = [
   # Exact revision and generation-qualified wait planning for approved 0.7.3 scope.
   "GET /environments/{id}/revisions/{revision_id}/readiness",
@@ -169,6 +169,8 @@ approved = [
   "GET /vms/{id}/history/processes",
   "GET /vms/{id}/history/transcript",
   "GET /vms/{id}/info",
+  "GET /vms/{id}/skills/list",
+  "GET /vms/{id}/skills/{skill_id}/info",
   "GET /vms/{id}/logs",
   "GET /vms/{id}/save/status",
   "GET /vms/{id}/security/latest",

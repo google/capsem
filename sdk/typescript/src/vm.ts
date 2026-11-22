@@ -1,6 +1,7 @@
 import {Client} from './client.js';
 import {CredentialGrants} from './connections.js';
 import {commandDeadlineMs} from './execution.js';
+import type {EnvironmentListOptions} from './environments.js';
 import * as api from './operations/index.js';
 import * as models from './models/index.js';
 import type {HistoryOptions, LogOptions, TimelineOptions, VmSelector} from './options.js';
@@ -80,6 +81,31 @@ export class VM extends Client {
   async info(options: CallOptions = {}): Promise<models.SandboxInfo> {
     const {transport, id} = await this.context(options);
     return api.getVmInfo(transport, {id}, options);
+  }
+  /** List selections applied to the running VM's boot revision. */
+  async skills({revisionId, signal, timeoutMs, ...query}: EnvironmentListOptions & {revisionId?: string} = {}): Promise<models.VmSkillListResponse> {
+    const options = {signal, timeoutMs};
+    const {transport, id} = await this.context(options);
+    const result = await api.listVmSkills(transport, {...query, id,
+      ...(revisionId === undefined ? {} : {revision_id: revisionId}),
+    }, options);
+    if (result.vm_id !== id || (revisionId !== undefined && result.revision?.revision_id !== revisionId)) {
+      throw new Error('Sandbox skill revision identity changed');
+    }
+    return result;
+  }
+  /** Read the complete pinned skill dictionary for the running VM. */
+  async skill(skillId: string, {revisionId, ...options}: CallOptions & {revisionId?: string} = {}): Promise<models.VmSkillDetailResponse> {
+    const {transport, id} = await this.context(options);
+    const result = await api.getVmSkill(transport, {id, skill_id: skillId,
+      ...(revisionId === undefined ? {} : {revision_id: revisionId}),
+    }, options);
+    const {skill} = result;
+    if (result.vm_id !== id || (revisionId !== undefined && skill.revision.revision_id !== revisionId)
+      || skill.selection.id !== skillId || skill.metadata.id !== skillId || skill.selection.version !== skill.metadata.version) {
+      throw new Error('Sandbox skill identity changed');
+    }
+    return result;
   }
   async exec(command: string, options: CallOptions & {timeout_secs?: number; target?: models.ExecTarget | null} = {}): Promise<models.ExecResponse> {
     const body = ExecRequestSchema.parse({command, timeout_secs: options.timeout_secs ?? null,

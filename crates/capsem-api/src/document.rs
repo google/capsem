@@ -108,6 +108,16 @@ pub fn openapi() -> OpenApi {
     doc.post::<ProxyLeaseRequest, StopProxyResponse>("/proxies/{id}/stop", "stopProxy");
     doc.post::<PersistRequest, PersistResponse>("/vms/{id}/save", "persistVm");
     doc.get::<SandboxInfo>("/vms/{id}/info", "getVmInfo");
+    let vm_skills = doc
+        .operation::<VmSkillListResponse>("/vms/{id}/skills/list", "listVmSkills")
+        .description(Some("List selected skills from the acknowledged boot revision of a live sandbox."))
+        .parameters(Some(environments::EnvironmentSkillListQuery::into_params(|| Some(ParameterIn::Query))));
+    doc.add("/vms/{id}/skills/list", HttpMethod::Get, vm_skills);
+    let vm_skill = doc
+        .operation::<VmSkillDetailResponse>("/vms/{id}/skills/{skill_id}/info", "getVmSkill")
+        .description(Some("Read the complete pinned skill files allowed for the acknowledged sandbox generation."))
+        .parameters(Some(environments::EnvironmentPolicyListQuery::into_params(|| Some(ParameterIn::Query))));
+    doc.add("/vms/{id}/skills/{skill_id}/info", HttpMethod::Get, vm_skill);
     let intent = doc.schema::<VmLifecycleIntent>();
     let readiness = doc
         .operation::<VmReadinessResponse>("/vms/{id}/readiness", "getVmReadiness")

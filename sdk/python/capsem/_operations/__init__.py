@@ -66,6 +66,7 @@ from .get_vm_history import get_vm_history as get_vm_history
 from .get_vm_info import get_vm_info as get_vm_info
 from .get_vm_logs import get_vm_logs as get_vm_logs
 from .get_vm_readiness import get_vm_readiness as get_vm_readiness
+from .get_vm_skill import get_vm_skill as get_vm_skill
 from .get_vm_stats_detail import get_vm_stats_detail as get_vm_stats_detail
 from .get_vm_stats_summary import get_vm_stats_summary as get_vm_stats_summary
 from .get_vm_status import get_vm_status as get_vm_status
@@ -96,6 +97,7 @@ from .list_session_credential_grants import (
 )
 from .list_vm_exposures import list_vm_exposures as list_vm_exposures
 from .list_vm_files import list_vm_files as list_vm_files
+from .list_vm_skills import list_vm_skills as list_vm_skills
 from .list_vms import list_vms as list_vms
 from .pause_vm import pause_vm as pause_vm
 from .persist_vm import persist_vm as persist_vm

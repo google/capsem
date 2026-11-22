@@ -66,6 +66,36 @@ def test_selected_skill_methods_correlate_revision_and_pin():
     asyncio.run(run())
 
 
+def test_vm_skill_reads_bind_sandbox_id_and_applied_revision():
+    async def run():
+        revision = {"environment_id": ENVIRONMENT, "revision_id": REQUEST}
+        selection = {"id": "review", "version": "1.0.0", "catalog_reference": "registry.example/skills:stable",
+                     "resolved_digest": "sha256:" + "0" * 64}
+        metadata = {"id": "review", "version": "1.0.0", "name": "Review", "publisher": "Fixture",
+                    "provenance": "Fixture catalog", "license": "Apache-2.0",
+                    "compatibility": {"min_runtime_contract": 1}, "status": "active"}
+        scope = {"vm_id": "vm-1", "owner_generation": REQUEST}
+        detail = {"revision": revision, "selection": selection, "metadata": metadata,
+                  "files": {"SKILL.md": "review fixture\n"}, "discovery_fresh": True}
+        response: dict[str, object] = {**scope, "revision": revision, "skills": [], "discovery_fresh": True}
+        async with gateway(response=response) as (url, received), Hypervisor(url, "gateway-token") as hv:
+            vm = hv.vm(id="vm-1")
+            assert (await vm.skills(revision_id=REQUEST, limit=1)).owner_generation == REQUEST
+            assert received[-1][1].startswith("/vms/vm-1/skills/list?")
+            response["revision"] = None
+            with pytest.raises(ValueError, match="revision identity changed"):
+                await vm.skills(revision_id=REQUEST)
+            assert (await vm.skills()).revision is None
+            response.clear()
+            response.update(**scope, skill=detail)
+            assert (await vm.skill("review", revision_id=REQUEST)).skill.files == detail["files"]
+            assert received[-1][1] == f"/vms/vm-1/skills/review/info?revision_id={REQUEST}"
+            response["vm_id"] = "vm-2"
+            with pytest.raises(ValueError, match="skill identity changed"):
+                await vm.skill("review")
+    asyncio.run(run())
+
+
 def test_environment_creation_inspection_and_explicit_reconciliation():
     async def run():
         response = dict(PENDING)

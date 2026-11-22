@@ -373,6 +373,8 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/vms/managed/{request_id}/close", post(proxy::handle_proxy))
         .route("/vms/list", get(proxy::handle_proxy))
         .route("/vms/{id}/info", get(proxy::handle_proxy))
+        .route("/vms/{id}/skills/list", get(proxy::handle_proxy))
+        .route("/vms/{id}/skills/{skill_id}/info", get(proxy::handle_proxy))
         .route("/vms/{id}/readiness", get(proxy::handle_proxy))
         .route("/vms/{id}/status", get(proxy::handle_proxy))
         .route("/vms/{id}/container", get(proxy::handle_proxy))

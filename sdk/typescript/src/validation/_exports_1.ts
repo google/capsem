@@ -162,6 +162,8 @@ export {VmLifecycleSelectionSchema} from "./VmLifecycleSelection.js";
 export {VmLifecycleStateSchema} from "./VmLifecycleState.js";
 export {VmNetworkInfoSchema} from "./VmNetworkInfo.js";
 export {VmReadinessResponseSchema} from "./VmReadinessResponse.js";
+export {VmSkillDetailResponseSchema} from "./VmSkillDetailResponse.js";
+export {VmSkillListResponseSchema} from "./VmSkillListResponse.js";
 export {VmStartRequestSchema} from "./VmStartRequest.js";
 export {VmStatsDetailResponseSchema} from "./VmStatsDetailResponse.js";
 export {VmStatsSummaryResponseSchema} from "./VmStatsSummaryResponse.js";

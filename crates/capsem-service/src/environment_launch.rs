@@ -50,10 +50,6 @@ pub(crate) fn validate_preparation(specification: &EnvironmentSpecification) -> 
         "environment packages require registry policy resolution"
     );
     ensure!(
-        specification.skills.selected.is_empty(),
-        "environment skills require pinned runtime retrieval"
-    );
-    ensure!(
         specification.mcps.servers.is_empty() && specification.mcps.catalog.selected.is_empty(),
         "environment MCP definitions require scoped launch preparation"
     );
@@ -69,7 +65,7 @@ impl ServiceState {
         boot: Option<&EnvironmentRevisionParent>,
         live: Option<&EnvironmentRevisionParent>,
     ) -> Result<PublishedActivePolicy> {
-        Ok(self.prepare_environment_policy(session_dir, boot, live)?.0)
+        Ok(self.compile_environment_policy(session_dir, boot, live, false)?.0)
     }
 
     pub(crate) fn prepare_environment_policy(
@@ -77,6 +73,16 @@ impl ServiceState {
         session_dir: &Path,
         boot: Option<&EnvironmentRevisionParent>,
         live: Option<&EnvironmentRevisionParent>,
+    ) -> Result<(PublishedActivePolicy, Option<HashMap<String, String>>)> {
+        self.compile_environment_policy(session_dir, boot, live, true)
+    }
+
+    fn compile_environment_policy(
+        &self,
+        session_dir: &Path,
+        boot: Option<&EnvironmentRevisionParent>,
+        live: Option<&EnvironmentRevisionParent>,
+        admit_boot_skills: bool,
     ) -> Result<(PublishedActivePolicy, Option<HashMap<String, String>>)> {
         let (boot_ref, live_ref) = match (boot, live) {
             (None, None) => return Ok((self.materialize_active_policy(session_dir)?, None)),
@@ -104,6 +110,10 @@ impl ServiceState {
         };
         let live = live.as_ref().unwrap_or(&boot);
         validate_preparation(&boot.specification)?;
+        if admit_boot_skills {
+            runtime.block_on(crate::environment_routes::admit_boot_skills(self, &boot.specification.skills.selected))
+                .map_err(crate::lifecycle_readiness::SelectionRefusal)?;
+        }
         let corporate = capsem_core::net::policy_config::load_corp_policy_files()
             .map_err(anyhow::Error::msg)
             .context("load current corporate environment policy")?;

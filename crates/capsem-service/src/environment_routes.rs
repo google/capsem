@@ -29,6 +29,7 @@ use capsem_core::managed_sessions::LeaseClock;
 use capsem_logger::db::EnvironmentReferenceQuery;
 use capsem_service::environment_files::EnvironmentFileError;
 pub(crate) use sources::catalogs::launch_policy;
+pub(crate) use skills::admit_boot_skills;
 use std::sync::Arc;
 
 fn coordinator(state: &ServiceState) -> EnvironmentMutationCoordinator {

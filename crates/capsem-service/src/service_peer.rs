@@ -97,6 +97,12 @@ pub(crate) async fn restrict_owner_routes(
                     .strip_prefix("/vms/")
                     .and_then(|path| path.strip_suffix("/exec"))
                     .is_some_and(|id| actor.bind_session(&state, id, capsem_api::AgentOperation::Execute));
+            let vm_skill_inspect = request.method() == axum::http::Method::GET
+                && request.extensions().get::<axum::extract::MatchedPath>().is_some_and(|path| {
+                    matches!(path.as_str(), "/vms/{id}/skills/list" | "/vms/{id}/skills/{skill_id}/info")
+                })
+                && request.uri().path().split('/').nth(2)
+                    .is_some_and(|id| actor.bind_session(&state, id, capsem_api::AgentOperation::Inspect));
             let environment_inspect = request.method() == axum::http::Method::GET
                 && request
                     .extensions()
@@ -136,7 +142,7 @@ pub(crate) async fn restrict_owner_routes(
                     .get::<axum::extract::MatchedPath>()
                     .is_some_and(|path| path.as_str() == "/requests/{id}/resolve")
                 && crate::environment_routes::decisions::permits_cancel(&actor);
-            if !admitted && !environment_inspect && !environment_listing && !environment_proposal && !own_cancellation {
+            if !admitted && !vm_skill_inspect && !environment_inspect && !environment_listing && !environment_proposal && !own_cancellation {
                 return refuse(&state, request, Reason::ScopeRequired, Some(actor.evidence().clone())).await;
             }
         }
