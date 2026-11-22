@@ -25,6 +25,7 @@ pub const ROUTES: &[&str] = &[
     "/environments/{id}/changes",
     "/environments/{id}/info",
     "/environments/{id}/plugins/list",
+    "/environments/{id}/promote",
     "/environments/{id}/revisions/list",
     "/environments/{id}/revisions/{revision_id}/image-update",
     "/environments/{id}/revisions/{revision_id}/info",

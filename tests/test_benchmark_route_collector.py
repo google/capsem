@@ -8,8 +8,9 @@ import threading
 import time
 from pathlib import Path
 
-from benchmarks.helpers.route_requests import EnvironmentFixture
 from capsem_builder.gate import config as gate_config
+
+from benchmarks.helpers.route_requests import EnvironmentFixture
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -24,7 +25,7 @@ def test_every_measured_route_resolves_to_a_concrete_fixture_request() -> None:
     collector = _collector()
     request_path = collector["request_path"]
 
-    fixture = EnvironmentFixture({"environment_id": "environment", "revision_id": "original"}, "changed", {})
+    fixture = EnvironmentFixture({"environment_id": "environment", "revision_id": "original"}, "changed", {}, "request")
     paths = {route: request_path(route, "live-owner", environment=fixture) for route in collector["measured_routes"]()}
     unresolved = {route: path for route, path in paths.items() if "{" in path or "}" in path}
 

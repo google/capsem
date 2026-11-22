@@ -2,13 +2,13 @@
 
 import json
 import sys
-import tomllib
 from importlib.machinery import SourceFileLoader
 from importlib.util import module_from_spec, spec_from_loader
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import tomllib
 
 from benchmarks.helpers import route_requests
 
@@ -54,6 +54,21 @@ def test_environment_readiness_targets_the_original_revision():
     assert collector.request_path(route, environment=fixture) == (
         "/environments/environment/revisions/original/readiness"
     )
+
+
+def test_policy_validation_and_request_paths_use_their_reviewed_identities():
+    revision = {"environment_id": "environment", "revision_id": "original"}
+    fixture = route_requests.EnvironmentFixture(revision, "changed", {}, "reviewed-request")
+    for template, expected in {
+        route_requests.ENV_REVISION_INFO: "/environments/environment/revisions/original/info",
+        route_requests.ENV_VALIDATE: "/environments/environment/revisions/changed/validate",
+        route_requests.ENV_IMAGE_UPDATE: "/environments/environment/revisions/changed/image-update",
+        "/environments/{id}/rules/list": "/environments/environment/rules/list?revision_id=changed",
+        route_requests.REQUEST_RESOLVE: "/requests/reviewed-request/resolve",
+    }.items():
+        assert collector.request_path(template, environment=fixture) == expected
+
+    assert collector.request_path("/vms/{id}/mcps/{server_id}/tools", "live-owner") == "/vms/live-owner/mcps/local/tools"
 
 
 def test_a_successful_http_replay_must_return_the_original_applied_receipt():
