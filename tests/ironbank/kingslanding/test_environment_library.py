@@ -1,6 +1,7 @@
 """Saved environment discovery through the native authenticated gateway."""
 
 import secrets
+import tomllib
 import uuid
 from contextlib import closing
 
@@ -9,7 +10,9 @@ from helpers.gateway import TcpHttpClient
 from helpers.service import vm_name
 from helpers.service_gateway import ServiceGateway
 
+from tests.fixtures.oci.registry import publish_catalog, registry
 from tests.ironbank.kingslanding.test_environment_startup import create, request, save
+from tests.ironbank.kingslanding.test_image_catalog import entry, use_catalog
 from tests.ironbank.kingslanding.test_run import service
 
 __all__ = ["service"]
@@ -87,3 +90,58 @@ def test_environment_library_pages_verified_heads_and_keeps_delegation_exact(ser
                 assert agent.call_json("GET", route)[0] in (401, 403)
     finally:
         gateway.stop()
+
+
+def test_environment_create_replays_the_committed_pin_without_catalog_after_restart(service, tmp_path):
+    artifacts = {}
+    with registry(tmp_path, artifacts=artifacts) as (image, certificate, requests):
+        authority = image.split("/", 1)[0]
+        publish_catalog(artifacts, "library/catalog", "stable", entry(image))
+        use_catalog(service, f"{authority}/library/catalog:stable", certificate)
+        gateway = ServiceGateway(service)
+        route = "/environments/create"
+        payload = {
+            "request_id": str(uuid.uuid4()),
+            "reason": "Save the admitted Redis image",
+            "specification": {"name": "restart-create-replay", "image": {"reference": "redis"}},
+        }
+        gateway.start()
+        try:
+            with closing(TcpHttpClient(gateway.base_url, gateway.token)) as operator:
+                supplied_pin = {
+                    **payload["specification"],
+                    "image": {"reference": "redis", "resolved_digest": image.rsplit("@", 1)[1]},
+                }
+                assert operator.call_json("POST", route, {**payload, "specification": supplied_pin})[0] == 422
+                status, receipt = operator.call_json("POST", route, payload)
+                assert status == 200 and receipt["decision"] == "approved" and receipt["application"] == "applied"
+                selected = receipt["result"]
+                root = f"/environments/{selected['environment_id']}"
+                revision = f"{root}/revisions/{selected['revision_id']}/info"
+                before = operator.get(revision)
+                assert tomllib.loads(before["canonical_toml"])["image"]["resolved_digest"] == image.rsplit("@", 1)[1]
+        finally:
+            gateway.stop()
+
+        service.stop(cleanup=False)
+        use_catalog(service, f"{authority}/library/withdrawn-catalog:stable", certificate)
+        service.start()
+        gateway.start()
+        try:
+            with closing(TcpHttpClient(gateway.base_url, gateway.token)) as operator:
+                before_replay = len(requests)
+                assert operator.call_json("POST", route, payload) == (200, receipt)
+                assert operator.call_json("POST", route, {**payload, "reason": "Different intent"})[0] == 409
+                assert operator.get(revision) == before
+                assert len(requests) == before_replay, requests[before_replay:]
+
+                fresh = {**payload, "request_id": str(uuid.uuid4())}
+                status, refused = operator.call_json("POST", route, fresh)
+                assert (status, refused) == (400, {"error": "environment source resolution failed"})
+                assert any(path.startswith("/v2/library/withdrawn-catalog/")
+                           for path in requests[before_replay:])
+                rows = operator.get("/environments/list?search=restart-create-replay")["environments"]
+                assert [row["environment"] for row in rows] == [selected]
+                assert operator.call_json("GET", f"/requests/{fresh['request_id']}/info")[0] == 404
+        finally:
+            gateway.stop()

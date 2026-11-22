@@ -90,6 +90,7 @@ def test_gateway_submission_preserves_the_committed_head_and_running_sibling(ser
         }
         assert review["summary"]["decision"] == "pending"
         assert review["disposition"] is None
+        assert review["restart_required"] is True
         assert review["base"]["specification"]["variables"] == {"EDITOR": "vim"}
         assert review["proposed"]["specification"]["variables"] == {"EDITOR": "emacs"}
 
@@ -122,7 +123,12 @@ def test_gateway_submission_preserves_the_committed_head_and_running_sibling(ser
     gateway.start()
     recovered_operator = TcpHttpClient(gateway.base_url, gateway.token)
     try:
-        assert recovered_operator.call_json("GET", review_path) == (200, review)
+        # The proposal and review token survive restart. The old running owner
+        # is gone, so there is no longer a live restart estimate for it.
+        recovered_status, recovered_review = recovered_operator.call_json("GET", review_path)
+        assert recovered_status == 200, recovered_review
+        assert "restart_required" not in recovered_review
+        assert recovered_review == {key: value for key, value in review.items() if key != "restart_required"}
         assert recovered_operator.call_json("GET", inbox_path) == (200, inbox)
         resolve_path = f"/requests/{payload['request_id']}/resolve"
         status, resolution = recovered_operator.call_json("POST", resolve_path, {
