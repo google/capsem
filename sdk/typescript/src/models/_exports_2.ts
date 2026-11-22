@@ -1,5 +1,6 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+export type { VmStartRequest } from "./VmStartRequest.js";
 export type { VmStatsDetailResponse } from "./VmStatsDetailResponse.js";
 export type { VmStatsSummaryResponse } from "./VmStatsSummaryResponse.js";
 export type { VmStatusResponse } from "./VmStatusResponse.js";

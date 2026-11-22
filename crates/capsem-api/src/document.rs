@@ -98,6 +98,18 @@ pub fn openapi() -> OpenApi {
         "/environments/{id}/revisions/{revision_id}/readiness",
         "getEnvironmentReadiness",
     );
+    let image_update = doc
+        .operation::<environments::EnvironmentImageUpdateResponse>(
+            "/environments/{id}/revisions/{revision_id}/image-update",
+            "checkEnvironmentImageUpdate",
+        )
+        .description(Some("Check for a verified image update against the current active saved revision."))
+        .extensions(Some([("x-capsem-request-timeout-ms", IMAGE_PULL_REQUEST_TIMEOUT_MS)].into_iter().collect()));
+    doc.add(
+        "/environments/{id}/revisions/{revision_id}/image-update",
+        HttpMethod::Get,
+        image_update,
+    );
     let request = doc.schema::<EnvironmentCreateRequest>();
     let create = doc.operation::<EnvironmentMutationResponse>("/environments/create", "createEnvironment")
         .description(Some("Create an operator blueprint. Reconcile the same request ID explicitly after interruption; never infer completed application from an accepted decision. Skills and rules resolve from configured catalogs. MCP catalog selections record the exact verified definitions and their configured inputs. Server launch requires scoped runtime preparation. Anonymous public HTTPS Git references resolve under current corporate policy; this does not prepare a sandbox checkout."))

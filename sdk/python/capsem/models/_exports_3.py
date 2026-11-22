@@ -1,5 +1,6 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .mcp_server_info_response import McpServerInfoResponse
 from .mcp_servers_list_response import McpServersListResponse
 from .mcp_tool_info_response import McpToolInfoResponse
 from .mcp_tools_list_response import McpToolsListResponse
@@ -117,9 +118,9 @@ from .rule_catalog_definition_access import RuleCatalogDefinitionAccess
 from .rule_catalog_definition_detection import RuleCatalogDefinitionDetection
 from .rule_catalog_detail_response import RuleCatalogDetailResponse
 from .rule_catalog_list_response import RuleCatalogListResponse
-from .rule_catalog_summary import RuleCatalogSummary
 
 __all__ = [
+    'McpServerInfoResponse',
     'McpServersListResponse',
     'McpToolInfoResponse',
     'McpToolsListResponse',
@@ -199,5 +200,4 @@ __all__ = [
     'RuleCatalogDefinitionDetection',
     'RuleCatalogDetailResponse',
     'RuleCatalogListResponse',
-    'RuleCatalogSummary',
 ]

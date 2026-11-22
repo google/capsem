@@ -6,6 +6,7 @@ export {authorizeGoogleConnection} from "./authorizeGoogleConnection.js";
 export {callMcpTool} from "./callMcpTool.js";
 export {cancelConnectionAuthorization} from "./cancelConnectionAuthorization.js";
 export {changeEnvironment} from "./changeEnvironment.js";
+export {checkEnvironmentImageUpdate} from "./checkEnvironmentImageUpdate.js";
 export {checkHypervisorUpdate} from "./checkHypervisorUpdate.js";
 export {claimManagedSession} from "./claimManagedSession.js";
 export {closeManagedSession} from "./closeManagedSession.js";

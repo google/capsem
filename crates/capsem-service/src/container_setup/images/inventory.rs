@@ -41,7 +41,7 @@ async fn read(
     decision.check_source(&requested).await?;
     let architecture = stage::catalog_architecture().map_err(|e| ImageError::Failed(format!("{e:#}")))?;
     let loaded = decision
-        .load(false)
+        .load(CatalogRead::Cached)
         .await
         .cloned()
         .ok_or_else(|| ImageError::Failed("image catalog unavailable".into()))?;

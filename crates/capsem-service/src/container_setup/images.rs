@@ -29,6 +29,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use tokio::time::{Duration, Instant};
 pub(crate) mod inventory;
 mod saved;
+pub(crate) use saved::available_update;
 mod transport;
 
 /// How long a catalog read is reused before the next request reads it again.
@@ -99,6 +100,13 @@ pub(crate) struct CatalogCache {
     metrics: CacheMetrics,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CatalogRead {
+    Cached,
+    Refresh,
+    RequireFresh,
+}
+
 impl Default for CatalogCache {
     fn default() -> Self {
         Self {
@@ -117,7 +125,7 @@ impl CatalogCache {
         images: &dyn ImageSource,
         source: &CatalogSource,
         parent: &StdPath,
-        refresh: bool,
+        read_mode: CatalogRead,
     ) -> Option<LoadedCatalog> {
         let mut slot = self.slot.lock().await;
         let now = Instant::now();
@@ -126,7 +134,7 @@ impl CatalogCache {
             .as_ref()
             .filter(|(loaded, _)| loaded.source == *source)
             .map(|(loaded, read)| (loaded.clone(), *read));
-        if !refresh {
+        if read_mode == CatalogRead::Cached {
             if let Some((loaded, read)) = &last {
                 if now.duration_since(*read) < CATALOG_REFRESH {
                     self.metrics.hit();
@@ -174,7 +182,8 @@ impl CatalogCache {
                 );
                 slot.failed = Some((source.clone(), now));
                 self.metrics.load(load_started.elapsed(), LoadStatus::Error);
-                last.map(|(loaded, _)| loaded)
+                last.filter(|_| read_mode != CatalogRead::RequireFresh)
+                    .map(|(loaded, _)| loaded)
             }
         };
         // Held across the read on purpose: concurrent requests share it.
@@ -271,7 +280,7 @@ impl<'a> Decision<'a> {
     /// service's copy unless `refresh`) and joined to the policy.
     pub(super) async fn app(&mut self, resolved: &ResolvedImage) -> Option<api::ImageApp> {
         let architecture = stage::catalog_architecture().ok()?;
-        let catalog = self.load(false).await?;
+        let catalog = self.load(CatalogRead::Cached).await?;
         let mut matches = catalog.catalog.entries().iter().flat_map(|(name, entry)| {
             entry
                 .versions()
@@ -287,13 +296,13 @@ impl<'a> Decision<'a> {
         matches.next().is_none().then_some(app)
     }
 
-    async fn load(&mut self, refresh: bool) -> Option<&LoadedCatalog> {
-        if refresh || !self.asked {
+    async fn load(&mut self, read_mode: CatalogRead) -> Option<&LoadedCatalog> {
+        if read_mode != CatalogRead::Cached || !self.asked {
             let loaded = match self.policy.catalog_source() {
                 Some(source) => {
                     self.setups
                         .catalog
-                        .get(&*self.setups.source, source, &self.parent, refresh)
+                        .get(&*self.setups.source, source, &self.parent, read_mode)
                         .await
                 }
                 None => None,
@@ -310,7 +319,7 @@ impl<'a> Decision<'a> {
     /// Resolve `image` -- a catalog name or a reference -- to what to pull.
     pub(crate) async fn resolve(&mut self, image: &str) -> Result<Requested, ImageError> {
         if is_catalog_name(image) {
-            if let Some(loaded) = self.load(false).await {
+            if let Some(loaded) = self.load(CatalogRead::Cached).await {
                 if loaded.catalog.entry(image).is_some() {
                     let architecture =
                         stage::catalog_architecture().map_err(|e| ImageError::Invalid(format!("{e:#}")))?;
@@ -340,7 +349,7 @@ impl<'a> Decision<'a> {
     /// first; the catalog is read only when they refuse.
     pub(crate) async fn check_source(&mut self, requested: &Requested) -> Result<(), ImageError> {
         if !self.policy.grants_source(&requested.identity) {
-            self.load(false).await;
+            self.load(CatalogRead::Cached).await;
         }
         self.policy
             .check_source(&requested.identity)
@@ -356,7 +365,7 @@ impl<'a> Decision<'a> {
         if let Ok(resolved) = admit(&self.policy, &requested.identity, image) {
             return Ok(resolved);
         }
-        self.load(false).await;
+        self.load(CatalogRead::Cached).await;
         admit(&self.policy, &requested.identity, image).map_err(ImageError::Refused)
     }
 
@@ -371,7 +380,7 @@ impl<'a> Decision<'a> {
         access: RegistryAccess,
         options: ImageFetchOptions,
     ) -> Result<Option<capsem_assets::oci::RootfsLayout>, ImageError> {
-        let Some(loaded) = self.load(false).await else {
+        let Some(loaded) = self.load(CatalogRead::Cached).await else {
             return Ok(None);
         };
         let architecture = stage::catalog_architecture().map_err(|e| ImageError::Failed(format!("{e:#}")))?;
@@ -483,7 +492,12 @@ pub(crate) async fn handle_list_images(
     Query(query): Query<ImageListQuery>,
 ) -> Result<Json<ImageListResponse>, AppError> {
     let mut decision = Decision::new(&state).await?;
-    let Some(loaded) = decision.load(query.refresh).await.cloned() else {
+    let read_mode = if query.refresh {
+        CatalogRead::Refresh
+    } else {
+        CatalogRead::Cached
+    };
+    let Some(loaded) = decision.load(read_mode).await.cloned() else {
         if let Err(error) = decision.setups.source.observe_cache(&[], &decision.parent) {
             warn!(%error, "cache verification cancellation remains pending");
         }
@@ -668,8 +682,16 @@ pub(crate) struct AdmittedImage {
 /// Shared native operation for HTTP prefetch and environment pin resolution.
 /// Callers receive an admitted identity only after filesystem verification.
 pub(crate) async fn pull_image(state: &ServiceState, request: ImagePullRequest) -> Result<AdmittedImage, AppError> {
+    pull_image_with_catalog(state, request, CatalogRead::Cached).await
+}
+
+async fn pull_image_with_catalog(
+    state: &ServiceState,
+    request: ImagePullRequest,
+    read_mode: CatalogRead,
+) -> Result<AdmittedImage, AppError> {
     let budget = capsem_api::IMAGE_PULL_TIMEOUT_SECS;
-    tokio::time::timeout(Duration::from_secs(budget), fetch_image(state, request))
+    tokio::time::timeout(Duration::from_secs(budget), fetch_image(state, request, read_mode))
         .await
         .map_err(|_| {
             AppError::new(
@@ -680,8 +702,18 @@ pub(crate) async fn pull_image(state: &ServiceState, request: ImagePullRequest) 
         })?
 }
 
-async fn fetch_image(state: &ServiceState, request: ImagePullRequest) -> Result<AdmittedImage, AppError> {
+async fn fetch_image(
+    state: &ServiceState,
+    request: ImagePullRequest,
+    read_mode: CatalogRead,
+) -> Result<AdmittedImage, AppError> {
     let mut decision = Decision::new(state).await?;
+    if read_mode == CatalogRead::RequireFresh
+        && is_catalog_name(&request.image)
+        && decision.load(read_mode).await.is_none()
+    {
+        return Err(ImageError::Failed("current image catalog unavailable".into()).into());
+    }
     let requested = decision.resolve(&request.image).await?;
     decision.check_source(&requested).await?;
     let download = state.containers.downloads.begin(&requested.pull);

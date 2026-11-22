@@ -780,6 +780,58 @@
         }
       }
     },
+    "/environments/{id}/revisions/{revision_id}/image-update": {
+      "get": {
+        "description": "Check for a verified image update against the current active saved revision.",
+        "operationId": "checkEnvironmentImageUpdate",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "revision_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentImageUpdateResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "x-capsem-request-timeout-ms": 1020000
+      }
+    },
     "/environments/{id}/revisions/{revision_id}/info": {
       "get": {
         "operationId": "getEnvironmentRevision",
@@ -7461,10 +7513,45 @@
       "EnvironmentImageUpdatePolicy": {
         "type": "string",
         "enum": [
+          "pinned",
           "manual",
           "ask",
           "auto"
         ]
+      },
+      "EnvironmentImageUpdateResponse": {
+        "type": "object",
+        "description": "A verified image candidate for an immutable saved revision.",
+        "required": [
+          "environment"
+        ],
+        "properties": {
+          "available": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EnvironmentImage",
+                "description": "Empty for an environment with no image, a pinned image, or the latest compatible digest."
+              }
+            ]
+          },
+          "current": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EnvironmentImage"
+              }
+            ]
+          },
+          "environment": {
+            "$ref": "#/components/schemas/EnvironmentRevisionReference"
+          }
+        },
+        "additionalProperties": false
       },
       "EnvironmentListItem": {
         "type": "object",

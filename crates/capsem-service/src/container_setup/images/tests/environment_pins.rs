@@ -79,6 +79,82 @@ fn request(image: &str) -> ImagePullRequest {
 }
 
 #[tokio::test]
+async fn environment_image_check_reports_a_verified_candidate_without_advancing_the_revision() {
+    let fx = Fixture::default_policy();
+    let initial_catalog = {
+        let mut catalog = fx.catalog.lock().unwrap();
+        let full = catalog.clone().unwrap();
+        catalog.as_mut().unwrap()["entries"]["codex-cli"]["versions"]
+            .as_array_mut()
+            .unwrap()
+            .truncate(1);
+        full
+    };
+    let (status, body) = fx
+        .call(
+            axum::http::Method::POST,
+            "/environments/create",
+            Some(json!({
+                "request_id": "00000000-0000-4000-8000-000000000100",
+                "specification": {"name": "development", "image": {"reference": "codex-cli"}},
+                "reason": "verify update under a changed catalog"
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let result: capsem_api::EnvironmentMutationResponse = serde_json::from_value(body).unwrap();
+    let before = result.result.unwrap();
+    let path = format!(
+        "/environments/{}/revisions/{}/image-update",
+        before.environment_id, before.revision_id
+    );
+
+    let (status, unchanged) = fx.call(axum::http::Method::GET, &path, None).await;
+    assert_eq!(status, StatusCode::OK, "{unchanged}");
+    assert_eq!(unchanged["available"], Value::Null);
+
+    *fx.catalog.lock().unwrap() = Some(initial_catalog);
+    let (status, offer) = fx.call(axum::http::Method::GET, &path, None).await;
+    assert_eq!(status, StatusCode::OK, "{offer}");
+    assert_eq!(offer["environment"], serde_json::to_value(&before).unwrap());
+    assert_eq!(offer["current"]["resolved_digest"], digest('a'));
+    assert_eq!(offer["available"]["reference"], "codex-cli");
+    assert_eq!(offer["available"]["resolved_digest"], digest('b'));
+    assert_eq!(offer["available"]["update_policy"], "manual");
+    *fx.catalog.lock().unwrap() = None;
+    let pull_count = fx.pulls().len();
+    let (status, unavailable) = fx.call(axum::http::Method::GET, &path, None).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{unavailable}");
+    assert_eq!(fx.pulls().len(), pull_count);
+
+    let current = fx
+        .state
+        .environments
+        .load_current(&before.environment_id)
+        .await
+        .unwrap();
+    assert_eq!(current.document.identity.revision_id, before.revision_id);
+    assert_eq!(
+        current.document.specification.image.unwrap().resolved_digest,
+        digest('a')
+    );
+}
+
+#[tokio::test]
+async fn pinned_environment_images_skip_update_resolution() {
+    use capsem_config::environment::EnvironmentImageUpdatePolicy;
+    let fx = Fixture::default_policy();
+    let mut catalog_image = saved_image("codex-cli", 'a');
+    catalog_image.update_policy = EnvironmentImageUpdatePolicy::Pinned;
+    let digest_ref = format!("ghcr.io/google/capsem/codex-cli@{}", digest('a'));
+    for image in [catalog_image, saved_image(&digest_ref, 'a')] {
+        assert!(available_update(&fx.state, &image).await.unwrap().is_none());
+    }
+    assert!(fx.pulls().is_empty());
+    assert!(fx.catalog_reads.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn native_pin_preserves_image_index_identity_separately_from_platform_manifest() {
     let fx = Fixture::default_policy();
     let admitted = pull_image(&fx.state, request("codex-cli")).await.unwrap();

@@ -2,8 +2,9 @@
 use super::*;
 use axum::extract::Query;
 use capsem_api::environments::{
-    EnvironmentRevisionDetailResponse, EnvironmentRevisionListQuery, EnvironmentRevisionListResponse,
-    EnvironmentRevisionReference, EnvironmentTomlValidationRequest, EnvironmentTomlValidationResponse,
+    EnvironmentImageUpdateResponse, EnvironmentRevisionDetailResponse, EnvironmentRevisionListQuery,
+    EnvironmentRevisionListResponse, EnvironmentRevisionReference, EnvironmentTomlValidationRequest,
+    EnvironmentTomlValidationResponse,
 };
 
 fn bad_query(error: impl Into<String>) -> AppError {
@@ -52,6 +53,32 @@ pub(crate) async fn info(
         .map_err(unavailable)?
         .map(Json)
         .ok_or_else(|| AppError::new(StatusCode::NOT_FOUND, "committed environment revision not found".into()))
+}
+
+pub(crate) async fn image_update(
+    actor: AuthenticatedActor,
+    State(state): State<Arc<ServiceState>>,
+    Path(path): Path<(String, String)>,
+) -> Result<Json<EnvironmentImageUpdateResponse>, AppError> {
+    actor.require_operator()?;
+    let environment = exact_reference(path)?;
+    let Json(current) = super::info(actor, State(state.clone()), Path(environment.environment_id.clone())).await?;
+    if current.archived || current.document.identity.revision_id != environment.revision_id {
+        return Err(AppError::new(
+            StatusCode::CONFLICT,
+            "image update check requires the current active environment revision".into(),
+        ));
+    }
+    let current = current.document.specification.image;
+    let available = match &current {
+        Some(image) => crate::container_setup::images::available_update(&state, image).await?,
+        None => None,
+    };
+    Ok(Json(EnvironmentImageUpdateResponse {
+        environment,
+        current,
+        available,
+    }))
 }
 
 pub(crate) async fn validate_toml(

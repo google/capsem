@@ -172,6 +172,17 @@ pub struct EnvironmentReadinessResponse {
     /// Approved startup deadline, or zero when the revision has no image startup.
     pub startup_timeout_seconds: u32,
 }
+
+/// A verified image candidate for an immutable saved revision.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentImageUpdateResponse {
+    pub environment: EnvironmentRevisionReference,
+    pub current: Option<EnvironmentImage>,
+    /// Empty for an environment with no image, a pinned image, or the latest compatible digest.
+    pub available: Option<EnvironmentImage>,
+}
+
 impl EnvironmentRevisionReference {
     pub fn validate(&self) -> Result<(), &'static str> {
         if !crate::identity::canonical_uuid(&self.environment_id) || !crate::identity::canonical_uuid(&self.revision_id)

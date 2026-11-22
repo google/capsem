@@ -1017,6 +1017,9 @@ json = { count = 1, reason = "http" }
 [sources."sdk/rust/src/operations/generated/get_environment_readiness.rs"]
 json = { count = 1, reason = "http" }
 
+[sources."sdk/rust/src/operations/generated/check_environment_image_update.rs"]
+json = { count = 1, reason = "http" }
+
 [sources."sdk/rust/src/operations/generated/get_environment_revision.rs"]
 json = { count = 1, reason = "http" }
 

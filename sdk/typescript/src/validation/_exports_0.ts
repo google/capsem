@@ -87,6 +87,7 @@ export {EnvironmentEffectiveDetectionRuleSchema} from "./EnvironmentEffectiveDet
 export {EnvironmentIdentitySchema} from "./EnvironmentIdentity.js";
 export {EnvironmentImageSchema} from "./EnvironmentImage.js";
 export {EnvironmentImageUpdatePolicySchema} from "./EnvironmentImageUpdatePolicy.js";
+export {EnvironmentImageUpdateResponseSchema} from "./EnvironmentImageUpdateResponse.js";
 export {EnvironmentListItemSchema} from "./EnvironmentListItem.js";
 export {EnvironmentListResponseSchema} from "./EnvironmentListResponse.js";
 export {EnvironmentListSummarySchema} from "./EnvironmentListSummary.js";
@@ -199,4 +200,3 @@ export {InteractionBlockSchema} from "./InteractionBlock.js";
 export {InteractionBlockKindSchema} from "./InteractionBlockKind.js";
 export {InteractionBodySchema} from "./InteractionBody.js";
 export {InteractionContentSchema} from "./InteractionContent.js";
-export {InteractionMessageSchema} from "./InteractionMessage.js";

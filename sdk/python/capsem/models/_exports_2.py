@@ -1,5 +1,6 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .file_action_count import FileActionCount
 from .file_entry_type import FileEntryType
 from .file_event import FileEvent
 from .file_event_action import FileEventAction
@@ -79,9 +80,9 @@ from .mcp_info_response import McpInfoResponse
 from .mcp_permission_action import McpPermissionAction
 from .mcp_published_tool import McpPublishedTool
 from .mcp_refresh_response import McpRefreshResponse
-from .mcp_server_info_response import McpServerInfoResponse
 
 __all__ = [
+    'FileActionCount',
     'FileEntryType',
     'FileEvent',
     'FileEventAction',
@@ -161,5 +162,4 @@ __all__ = [
     'McpPermissionAction',
     'McpPublishedTool',
     'McpRefreshResponse',
-    'McpServerInfoResponse',
 ]

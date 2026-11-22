@@ -7,6 +7,7 @@ from .environment_effective_detection_rule import EnvironmentEffectiveDetectionR
 from .environment_identity import EnvironmentIdentity
 from .environment_image import EnvironmentImage
 from .environment_image_update_policy import EnvironmentImageUpdatePolicy
+from .environment_image_update_response import EnvironmentImageUpdateResponse
 from .environment_list_item import EnvironmentListItem
 from .environment_list_response import EnvironmentListResponse
 from .environment_list_summary import EnvironmentListSummary
@@ -117,7 +118,6 @@ from .exposure_info import ExposureInfo
 from .exposure_list_response import ExposureListResponse
 from .exposure_request import ExposureRequest
 from .exposure_target import ExposureTarget
-from .file_action_count import FileActionCount
 
 __all__ = [
     'EnvironmentDetectionRule',
@@ -127,6 +127,7 @@ __all__ = [
     'EnvironmentIdentity',
     'EnvironmentImage',
     'EnvironmentImageUpdatePolicy',
+    'EnvironmentImageUpdateResponse',
     'EnvironmentListItem',
     'EnvironmentListResponse',
     'EnvironmentListSummary',
@@ -199,5 +200,4 @@ __all__ = [
     'ExposureListResponse',
     'ExposureRequest',
     'ExposureTarget',
-    'FileActionCount',
 ]

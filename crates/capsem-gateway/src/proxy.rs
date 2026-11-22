@@ -34,7 +34,10 @@ fn upstream_deadline(path: &str) -> Duration {
     let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
     if matches!(
         segments.as_slice(),
-        ["images", "pull"] | ["environments", "create"] | ["environments", _, "changes"]
+        ["images", "pull"]
+            | ["environments", "create"]
+            | ["environments", _, "changes"]
+            | ["environments", _, "revisions", _, "image-update"]
     ) {
         return Duration::from_millis(capsem_api::IMAGE_PULL_REQUEST_TIMEOUT_MS);
     }

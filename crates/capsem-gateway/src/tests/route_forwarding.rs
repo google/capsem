@@ -612,6 +612,7 @@ async fn readiness_routes_forward_exact_qualified_paths_only_after_authenticatio
         .with_state(state);
     for path in [
         "/environments/00000000-0000-4000-8000-000000000001/revisions/00000000-0000-4000-8000-000000000002/readiness",
+        "/environments/00000000-0000-4000-8000-000000000001/revisions/00000000-0000-4000-8000-000000000002/image-update",
         "/vms/00000000-0000-4000-8000-000000000003/readiness?intent=fork",
     ] {
         for (method, bearer, status) in [

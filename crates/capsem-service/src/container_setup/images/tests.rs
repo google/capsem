@@ -849,7 +849,10 @@ async fn a_catalog_read_from_another_source_is_never_served() {
         ca: None,
     };
     *fx.catalog.lock().unwrap() = None;
-    assert!(cache.get(source, &moved, parent.path(), false).await.is_none());
+    assert!(cache
+        .get(source, &moved, parent.path(), CatalogRead::Cached)
+        .await
+        .is_none());
 }
 
 #[tokio::test]

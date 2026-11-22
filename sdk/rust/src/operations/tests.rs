@@ -74,6 +74,11 @@ operation!(
     "getEnvironmentReadiness",
     GetEnvironmentReadinessParams
 );
+operation!(
+    check_environment_image_update,
+    "checkEnvironmentImageUpdate",
+    CheckEnvironmentImageUpdateParams
+);
 operation!(create_environment, "createEnvironment", CreateEnvironmentParams);
 operation!(change_environment, "changeEnvironment", ChangeEnvironmentParams);
 operation!(list_requests, "listRequests", ListRequestsParams);

@@ -38,6 +38,10 @@ pub(super) fn build_service_router(state: Arc<ServiceState>) -> Router {
             "/environments/{id}/revisions/{revision_id}/readiness",
             get(environment_routes::readiness),
         )
+        .route(
+            "/environments/{id}/revisions/{revision_id}/image-update",
+            get(environment_routes::history::image_update),
+        )
         .route("/environments/create", post(environment_routes::create))
         .route("/environments/{id}/changes", post(environment_routes::change))
         .route("/requests/list", get(environment_routes::reviews::list))

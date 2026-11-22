@@ -8,6 +8,7 @@ pub use environments::{McpCatalogDetailResponse, McpCatalogListResponse};
 pub use environments::{CatalogSnapshot, RuleCatalogDetailResponse, RuleCatalogListResponse, SkillCatalogDetailResponse, SkillCatalogListResponse};
 pub use environments::{EnvironmentSkillDetailResponse, EnvironmentSkillListResponse, VmSkillDetailResponse, VmSkillListResponse};
 pub use environments::{
+    EnvironmentImageUpdateResponse,
     EnvironmentChangeIntent, EnvironmentChangeRequest, EnvironmentCreateRequest, EnvironmentCurrentResponse,
     EnvironmentListResponse, EnvironmentMutationResponse, EnvironmentPluginListResponse, EnvironmentReadinessResponse,
     EnvironmentRevisionDetailResponse, EnvironmentRevisionListResponse, EnvironmentRuleListResponse,

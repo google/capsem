@@ -3,6 +3,7 @@
 
 
 export enum EnvironmentImageUpdatePolicy {
+  PINNED = "pinned",
   MANUAL = "manual",
   ASK = "ask",
   AUTO = "auto",

@@ -1,6 +1,31 @@
 //! A saved image selects immutable content, while current policy admits it.
 use super::*;
-use capsem_config::environment::EnvironmentImage;
+use capsem_config::environment::{EnvironmentImage, EnvironmentImageUpdatePolicy};
+
+pub(crate) async fn available_update(
+    state: &ServiceState,
+    image: &EnvironmentImage,
+) -> Result<Option<EnvironmentImage>, AppError> {
+    if image.update_policy == EnvironmentImageUpdatePolicy::Pinned
+        || (!is_catalog_name(&image.reference) && requested(&image.reference)?.identity.digest().is_some())
+    {
+        return Ok(None);
+    }
+    let admitted = pull_image_with_catalog(
+        state,
+        ImagePullRequest {
+            image: image.reference.clone(),
+            registry: None,
+        },
+        CatalogRead::RequireFresh,
+    )
+    .await?;
+    let resolved_digest = admitted.resolved.digest().to_string();
+    Ok((resolved_digest != image.resolved_digest).then(|| EnvironmentImage {
+        resolved_digest,
+        ..image.clone()
+    }))
+}
 
 impl Decision<'_> {
     pub(crate) async fn resolve_saved(&mut self, image: &EnvironmentImage) -> Result<Requested, ImageError> {
@@ -15,7 +40,7 @@ impl Decision<'_> {
         }
         let architecture = stage::catalog_architecture().map_err(|error| ImageError::Invalid(format!("{error:#}")))?;
         let catalog = self
-            .load(false)
+            .load(CatalogRead::Cached)
             .await
             .ok_or_else(|| ImageError::Failed("saved image catalog unavailable".into()))?;
         let selected = catalog
@@ -47,7 +72,7 @@ impl Decision<'_> {
             .resolve(digest)
             .map_err(|error| ImageError::Invalid(format!("saved image pin mismatch: {error:#}")))?;
         if self.policy.admit(&resolved).is_err() {
-            self.load(false).await;
+            self.load(CatalogRead::Cached).await;
             self.policy
                 .admit(&resolved)
                 .map_err(|error| ImageError::Refused(format!("{error:#}")))?;

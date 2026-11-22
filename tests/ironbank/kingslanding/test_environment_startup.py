@@ -10,9 +10,11 @@ import hashlib
 import json
 import secrets
 import shlex
+import ssl
 import time
 import uuid
 from urllib.parse import urlsplit
+from urllib.request import urlopen
 
 import pytest
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
@@ -41,11 +43,11 @@ IMAGE_CONFIG = {
     "Env": ["PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],
     "WorkingDir": "/workspace",
     "Entrypoint": ["/bin/sh", "-c"],
-    "Cmd": [
+    "Cmd": [(
         'set -eu; test "$(cat /workspace/prepared-value)" = "$BOUND_REVISION"; '
         'cp /workspace/start-count /workspace/entrypoint-count; '
         'printf started >> /workspace/entrypoint-runs; exec redis-server --loglevel warning'
-    ],
+    )],
 }
 
 
@@ -84,6 +86,50 @@ def observe(service, vm, reference, count):
     redis = request(service, "POST", f"/vms/{vm}/exec", {"command": "redis-cli PING"})
     assert redis["exit_code"] == 0 and exec_output_text(redis).strip() == "PONG", redis
     return info["owner_generation"]
+
+
+def test_image_update_check_keeps_the_running_and_restarted_workload_pinned(service, tmp_path):
+    artifacts = {}
+    with registry(tmp_path, image_config=IMAGE_CONFIG, artifacts=artifacts) as (image, certificate, _):
+        location, original_digest = image.split("@")
+        authority, repository = location.split("/", 1)
+        publish_catalog(artifacts, "library/catalog", "stable", entry(image))
+        use_catalog(service, f"{authority}/library/catalog:stable", certificate)
+        selected = save(service, {
+            "name": "image-update-check",
+            "image": {"reference": "redis"},
+            "startup": {"script": STARTUP.replace("sleep 3\n", ""), "timeout_seconds": 10},
+            "variables": {"BOUND_REVISION": "retained-variable"},
+        })
+        vm = create(service, selected, vm_name("image-update"))
+        generation = observe(service, vm, selected, 1)
+
+        with urlopen(
+            f"https://{authority}/v2/{repository}/manifests/{original_digest}",
+            context=ssl.create_default_context(cafile=str(certificate)),
+            timeout=5,
+        ) as response:
+            manifest = json.load(response)
+        manifest["annotations"] = {"org.opencontainers.image.version": "updated"}
+        candidate = json.dumps(manifest, sort_keys=True).encode()
+        candidate_digest = f"sha256:{hashlib.sha256(candidate).hexdigest()}"
+        artifacts[f"/v2/{repository}/manifests/{candidate_digest}"] = (candidate, manifest["mediaType"])
+        catalog = entry(image)
+        catalog["redis"]["versions"].extend(entry(f"{location}@{candidate_digest}")["redis"]["versions"])
+        publish_catalog(artifacts, "library/catalog", "stable", catalog)
+
+        path = f"/environments/{selected['environment_id']}/revisions/{selected['revision_id']}/image-update"
+        update = request(service, "GET", path)
+        assert update["environment"] == selected
+        assert update["current"]["resolved_digest"] == original_digest
+        assert update["available"]["resolved_digest"] == candidate_digest
+        assert observe(service, vm, selected, 1) == generation
+        workload = request(service, "GET", f"/vms/{vm}/container")
+        assert workload["resolved"] == image
+        request(service, "POST", f"/vms/{vm}/stop", {})
+        request(service, "POST", f"/vms/{vm}/start", {})
+        assert observe(service, vm, selected, 2) != generation
+        assert request(service, "GET", f"/vms/{vm}/container")["resolved"] == image
 
 
 def test_saved_environment_remote_mcp_is_scoped_to_its_guest(service, tmp_path):

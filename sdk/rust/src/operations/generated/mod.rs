@@ -11,6 +11,8 @@ mod cancel_connection_authorization;
 pub use cancel_connection_authorization::{cancel_connection_authorization, CancelConnectionAuthorizationParams};
 mod change_environment;
 pub use change_environment::{change_environment, ChangeEnvironmentParams};
+mod check_environment_image_update;
+pub use check_environment_image_update::{check_environment_image_update, CheckEnvironmentImageUpdateParams};
 mod check_hypervisor_update;
 pub use check_hypervisor_update::{check_hypervisor_update, CheckHypervisorUpdateParams};
 mod claim_managed_session;

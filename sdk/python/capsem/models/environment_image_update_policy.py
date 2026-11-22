@@ -6,6 +6,7 @@ from enum import StrEnum
 
 
 class EnvironmentImageUpdatePolicy(StrEnum):
+    PINNED = 'pinned'
     MANUAL = 'manual'
     ASK = 'ask'
     AUTO = 'auto'

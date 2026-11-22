@@ -87,6 +87,7 @@ export type { EnvironmentEffectiveDetectionRule } from "./EnvironmentEffectiveDe
 export type { EnvironmentIdentity } from "./EnvironmentIdentity.js";
 export type { EnvironmentImage } from "./EnvironmentImage.js";
 export { EnvironmentImageUpdatePolicy } from "./EnvironmentImageUpdatePolicy.js";
+export type { EnvironmentImageUpdateResponse } from "./EnvironmentImageUpdateResponse.js";
 export type { EnvironmentListItem } from "./EnvironmentListItem.js";
 export type { EnvironmentListResponse } from "./EnvironmentListResponse.js";
 export type { EnvironmentListSummary } from "./EnvironmentListSummary.js";
@@ -199,4 +200,3 @@ export type { InteractionBlock } from "./InteractionBlock.js";
 export { InteractionBlockKind } from "./InteractionBlockKind.js";
 export type { InteractionBody } from "./InteractionBody.js";
 export type { InteractionContent } from "./InteractionContent.js";
-export type { InteractionMessage } from "./InteractionMessage.js";

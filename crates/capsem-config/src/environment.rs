@@ -105,7 +105,7 @@ pub struct EnvironmentRepositorySelection {
 }
 
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentImage {
     pub reference: String,
@@ -118,6 +118,7 @@ pub struct EnvironmentImage {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EnvironmentImageUpdatePolicy {
+    Pinned,
     #[default]
     Manual,
     Ask,
