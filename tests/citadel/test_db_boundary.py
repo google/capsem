@@ -89,6 +89,8 @@ LOGGER_DB_INTERNALS = {
     Path("crates/capsem-logger/src/db/handle_tests/snapshot_leases.rs"),
     # Open-time format validation, under the existing writer/reader authority.
     Path("crates/capsem-logger/src/schema/environment.rs"),
+    # The versioned transition borrows the admission or writer connection.
+    Path("crates/capsem-logger/src/schema/v072.rs"),
     # Generation publication/retention execute on the owning writer thread.
     Path("crates/capsem-logger/src/writer/archive_publication.rs"),
     Path("crates/capsem-logger/src/writer/environment_retention.rs"),

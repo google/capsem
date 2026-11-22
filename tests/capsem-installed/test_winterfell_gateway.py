@@ -18,6 +18,7 @@ from helpers.image_session import WORKSPACE, image_session, wait_running, worklo
 from helpers.service import (
     ServiceInstance,
     installed_exec_output_text,
+    preserve_tmp_dir_on_failure,
     resolve_winterfell_artifact_roots,
     vm_record,
     wait_exec_ready,
@@ -132,7 +133,16 @@ def test_installed_image_session_lives_through_stop_resume_and_fork(tmp_path) ->
 
             # A fork is an image session of the same digest, with the files.
             digest = gateway.get(f"/vms/{vm_id}/container")["digest"]
-            fork_id = gateway.post(f"/vms/{vm_id}/fork", {"name": f"{name}-fork"})["id"]
+            try:
+                status, fork = gateway.call_json(
+                    "POST", f"/vms/{vm_id}/fork", {"name": f"{name}-fork"}, timeout=60
+                )
+                assert status == 200, fork
+            except Exception:
+                # The image fixture removes the VM and its logs during cleanup.
+                preserve_tmp_dir_on_failure(service.home_dir, force=True)
+                raise
+            fork_id = fork["id"]
             try:
                 gateway.post(f"/vms/{fork_id}/resume", {}, timeout=120)
                 wait_running(gateway, fork_id, timeout=300)
