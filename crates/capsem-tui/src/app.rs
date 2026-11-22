@@ -33,9 +33,11 @@ pub enum AppOverlay {
 pub enum ControlAction {
     ListApprovals {
         id: String,
+        view_id: u64,
     },
     ResolveApproval {
         id: String,
+        view_id: u64,
         generation: String,
         ask_id: String,
         decision: capsem_sdk::models::SecurityAskDecision,
@@ -130,7 +132,7 @@ impl ControlAction {
 
     pub fn target(&self) -> &str {
         match self {
-            Self::ListApprovals { id } | Self::ResolveApproval { id, .. } => id,
+            Self::ListApprovals { id, .. } | Self::ResolveApproval { id, .. } => id,
             Self::OpenBrowser { .. } => "browser on this device",
             Self::StartService => "Capsem service",
             Self::Update => "complete verified release",
@@ -165,6 +167,7 @@ pub struct App {
     empty_state_prompted: bool,
     fork_draft: Option<ForkDraft>,
     handled_browser: std::collections::BTreeMap<String, capsem_sdk::models::BrowserRequest>,
+    approval_view_id: u64,
     approval_view: Option<ApprovalView>,
     approval_request: Option<ControlAction>,
 }
@@ -196,6 +199,7 @@ impl App {
             empty_state_prompted: false,
             fork_draft: None,
             handled_browser: Default::default(),
+            approval_view_id: 0,
             approval_view: None,
             approval_request: None,
         };

@@ -3,9 +3,10 @@ use capsem_sdk::models::{SecurityAskDecision, SecurityAskListResponse, SecurityA
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ApprovalView {
+    pub(crate) id: u64,
     pub vm_id: String,
     pub list: Option<SecurityAskListResponse>,
-    pub selected: usize,
+    pub selected: Option<usize>,
     pub loading: bool,
     pub resolving: bool,
     pub error: Option<String>,
@@ -24,10 +25,12 @@ impl App {
         self.catalog_request = None;
         self.fork_draft = None;
         self.pending_action = None;
+        self.approval_view_id = self.approval_view_id.wrapping_add(1);
         self.approval_view = Some(ApprovalView {
+            id: self.approval_view_id,
             vm_id: session.id.clone(),
             list: None,
-            selected: 0,
+            selected: None,
             loading: false,
             resolving: false,
             error: None,
@@ -46,35 +49,49 @@ impl App {
             return;
         }
         view.loading = true;
-        self.approval_request = Some(ControlAction::ListApprovals { id: view.vm_id.clone() });
+        self.approval_request = Some(ControlAction::ListApprovals {
+            id: view.vm_id.clone(),
+            view_id: view.id,
+        });
     }
 
-    pub fn apply_approval_list(&mut self, id: &str, result: Result<SecurityAskListResponse, String>) {
+    pub fn apply_approval_list(&mut self, id: &str, view_id: u64, result: Result<SecurityAskListResponse, String>) {
         let Some(view) = &mut self.approval_view else { return };
-        if view.vm_id != id || self.overlay != AppOverlay::Approvals {
+        if view.vm_id != id || view.id != view_id || self.overlay != AppOverlay::Approvals || !view.loading {
             return;
         }
         view.loading = false;
         match result {
             Ok(list) if list.vm_id == id => {
-                view.selected = view.selected.min(list.requests.len().saturating_sub(1));
+                view.selected = match &view.list {
+                    Some(previous) if previous.generation == list.generation => view
+                        .selected
+                        .and_then(|index| previous.requests.get(index))
+                        .and_then(|selected| {
+                            list.requests
+                                .iter()
+                                .position(|request| request.ask_id == selected.ask_id)
+                        }),
+                    None if view.error.is_none() && !list.requests.is_empty() => Some(0),
+                    _ => None,
+                };
                 view.list = Some(list);
                 view.error = None;
             }
             _ => {
                 view.list = None;
+                view.selected = None;
                 view.error = Some("Approval requests unavailable; R retries the current state".into());
             }
         }
     }
 
-    pub fn complete_approval_decision(&mut self, id: &str, success: bool) {
+    pub fn complete_approval_decision(&mut self, id: &str, view_id: u64, success: bool) {
         let Some(view) = &mut self.approval_view else { return };
-        if view.vm_id != id {
+        if view.vm_id != id || view.id != view_id || !view.resolving {
             return;
         }
         view.resolving = false;
-        view.list = None;
         view.error = (!success).then(|| "Decision not confirmed; check the current state before deciding again".into());
         self.refresh_approvals();
     }
@@ -97,10 +114,11 @@ impl App {
             return AppAction::Consumed;
         };
         if matches!(key.code, KeyCode::Up | KeyCode::Down) && !list.requests.is_empty() {
+            let count = list.requests.len();
             view.selected = if key.code == KeyCode::Down {
-                (view.selected + 1) % list.requests.len()
+                Some(view.selected.map_or(0, |index| (index + 1) % count))
             } else {
-                (view.selected + list.requests.len() - 1) % list.requests.len()
+                Some(view.selected.map_or(count - 1, |index| (index + count - 1) % count))
             };
         }
         let decision = match key.code {
@@ -108,7 +126,7 @@ impl App {
             KeyCode::Char('d' | 'D') if key.modifiers == KeyModifiers::NONE => SecurityAskDecision::Deny,
             _ => return AppAction::Consumed,
         };
-        let Some(request) = list.requests.get(view.selected) else {
+        let Some(request) = view.selected.and_then(|index| list.requests.get(index)) else {
             return AppAction::Consumed;
         };
         let now = std::time::SystemTime::now()
@@ -125,6 +143,7 @@ impl App {
         view.resolving = true;
         AppAction::Invoke(ControlAction::ResolveApproval {
             id: view.vm_id.clone(),
+            view_id: view.id,
             generation: list.generation.clone(),
             ask_id: request.ask_id.clone(),
             decision,

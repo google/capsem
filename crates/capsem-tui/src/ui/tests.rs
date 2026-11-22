@@ -20,8 +20,9 @@ fn approval_rows_render_semantic_status_colors_without_changing_decision_hints()
     ] {
         let heading = format!("{status:?} · review");
         let view = crate::app::ApprovalView {
+            id: 1,
             vm_id: "vm".into(),
-            selected: 0,
+            selected: Some(0),
             loading: false,
             resolving: false,
             error: None,

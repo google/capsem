@@ -30,6 +30,7 @@ async fn approval_decision_posts_observed_generation_once_and_surfaces_conflict(
     let result = GatewayProvider::with_test_token(format!("http://{addr}"), "test-token")
         .invoke_async(&ControlAction::ResolveApproval {
             id: "vm-a".into(),
+            view_id: 1,
             ask_id: "ask-a".into(),
             generation: "11111111-1111-4111-8111-111111111111".into(),
             decision: capsem_sdk::models::SecurityAskDecision::Approve,

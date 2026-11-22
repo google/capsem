@@ -32,6 +32,8 @@ pub(super) fn render(frame: &mut Frame<'_>, area: Rect, view: Option<&crate::app
         "Recording one decision…"
     } else if view.loading {
         "Checking current requests…"
+    } else if view.selected.is_none() && view.list.as_ref().is_some_and(|list| !list.requests.is_empty()) {
+        "Select a request with ↑/↓ before deciding."
     } else {
         "Decisions apply only to this session generation."
     });
@@ -74,7 +76,7 @@ pub(super) fn render(frame: &mut Frame<'_>, area: Rect, view: Option<&crate::app
     if items.is_empty() && !view.loading {
         frame.render_widget(Paragraph::new("No requests recorded for this session."), rows[1]);
     } else {
-        let mut selection = ListState::default().with_selected(Some(view.selected));
+        let mut selection = ListState::default().with_selected(view.selected);
         frame.render_stateful_widget(
             List::new(items).highlight_style(Style::default().bg(SELECTED_BG)),
             rows[1],

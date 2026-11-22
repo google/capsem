@@ -14,7 +14,7 @@ use crate::gateway_provider::ActionOutcome;
 pub async fn invoke(hypervisor: &Hypervisor, transport: &Transport, action: &ControlAction) -> Result<ActionOutcome> {
     let vm = |id: &str| hypervisor.vm(VmSelector::Id(id.into()));
     match action {
-        ControlAction::ListApprovals { id } => {
+        ControlAction::ListApprovals { id, .. } => {
             let list = api::list_security_asks(
                 transport,
                 &api::ListSecurityAsksParams {
@@ -38,6 +38,7 @@ pub async fn invoke(hypervisor: &Hypervisor, transport: &Transport, action: &Con
             generation,
             ask_id,
             decision,
+            ..
         } => {
             api::resolve_security_ask(
                 transport,

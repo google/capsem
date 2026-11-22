@@ -213,17 +213,18 @@ fn run_loop(
                         app.set_control_progress(label);
                     }
                     ControlEvent::Finished(action, Ok(outcome)) => {
-                        if let ControlAction::ListApprovals { id } = &action {
+                        if let ControlAction::ListApprovals { id, view_id } = &action {
                             app.apply_approval_list(
                                 id,
+                                *view_id,
                                 outcome
                                     .approval_requests
-                                    .clone()
                                     .ok_or_else(|| "approval response missing".into()),
                             );
+                            continue;
                         }
-                        if let ControlAction::ResolveApproval { id, .. } = &action {
-                            app.complete_approval_decision(id, true);
+                        if let ControlAction::ResolveApproval { id, view_id, .. } = &action {
+                            app.complete_approval_decision(id, *view_id, true);
                         }
                         if let ControlAction::OpenBrowser { id, request } = &action {
                             app.complete_browser_open(id, request, true);
@@ -239,14 +240,15 @@ fn run_loop(
                         if let Some(session_id) = outcome.focus_session {
                             app.focus_session_when_available(session_id);
                         }
-                        should_refresh |= !matches!(action, ControlAction::ListApprovals { .. });
+                        should_refresh = true;
                     }
                     ControlEvent::Finished(action, Err(error)) => {
-                        if let ControlAction::ListApprovals { id } = &action {
-                            app.apply_approval_list(id, Err("approval requests unavailable".into()));
+                        if let ControlAction::ListApprovals { id, view_id } = &action {
+                            app.apply_approval_list(id, *view_id, Err("approval requests unavailable".into()));
+                            continue;
                         }
-                        if let ControlAction::ResolveApproval { id, .. } = &action {
-                            app.complete_approval_decision(id, false);
+                        if let ControlAction::ResolveApproval { id, view_id, .. } = &action {
+                            app.complete_approval_decision(id, *view_id, false);
                         }
                         if let ControlAction::OpenBrowser { id, request } = &action {
                             app.complete_browser_open(id, request, false);
@@ -259,7 +261,7 @@ fn run_loop(
                         }
                         app.clear_control_progress();
                         app.set_control_message(error);
-                        should_refresh |= !matches!(action, ControlAction::ListApprovals { .. });
+                        should_refresh = true;
                     }
                 }
             }
@@ -270,8 +272,12 @@ fn run_loop(
             }
         }
         if control_bridge.is_none() {
-            if let Some(ControlAction::ListApprovals { id }) = app.take_approval_request() {
-                app.apply_approval_list(&id, Err("approval requests unavailable in fixture mode".into()));
+            if let Some(ControlAction::ListApprovals { id, view_id }) = app.take_approval_request() {
+                app.apply_approval_list(
+                    &id,
+                    view_id,
+                    Err("approval requests unavailable in fixture mode".into()),
+                );
                 needs_draw = true;
             }
         }

@@ -489,6 +489,18 @@ fn render_overlay(frame: &mut Frame<'_>, area: Rect, ctx: &RenderLayoutCtx<'_>) 
     };
     let popup = centered_rect(area, 86, height);
     frame.render_widget(Clear, popup);
+    let approval_title = ctx.approval_view.and_then(|view| {
+        state
+            .sessions
+            .iter()
+            .find(|session| session.id == view.vm_id)
+            .map(|session| {
+                format!(
+                    " approval requests · {} ",
+                    truncate(&session.title, usize::from(popup.width.saturating_sub(26)))
+                )
+            })
+    });
     let title = match overlay {
         AppOverlay::Help => " help ",
         AppOverlay::Stats => " session info ",
@@ -496,7 +508,7 @@ fn render_overlay(frame: &mut Frame<'_>, area: Rect, ctx: &RenderLayoutCtx<'_>) 
         AppOverlay::Create => "",
         AppOverlay::Fork => " fork session ",
         AppOverlay::Confirm => " confirm ",
-        AppOverlay::Approvals => " approval requests ",
+        AppOverlay::Approvals => approval_title.as_deref().unwrap_or(" approval requests "),
         AppOverlay::None => "",
     };
     let block = Block::new()
