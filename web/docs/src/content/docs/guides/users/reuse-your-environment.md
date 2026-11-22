@@ -93,6 +93,13 @@ Open **Change history** to inspect older revisions. Complete revisions show
 canonical TOML. When values have been purged, the view identifies the removed
 variables and shows the remaining content when it is available.
 
+Use the SDK's `environments.skills` method to list selected skill pins for the
+exact saved revision. `environments.skill` returns the selected skill's complete
+UTF-8 file dictionary. A moved catalog tag leaves the pinned files intact. When
+current catalog discovery is unavailable, Capsem can serve a verified retained
+copy and reports `discovery_fresh` as false. A recorded revocation blocks access
+to the content.
+
 ## Archive a saved environment
 
 Open the environment with **Edit**, choose **Archive environment**, enter a

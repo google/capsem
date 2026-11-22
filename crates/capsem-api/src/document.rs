@@ -39,6 +39,16 @@ pub fn openapi() -> OpenApi {
         .description(Some("Compile the saved environment's rules using current corporate policy and admitted catalog definitions. Supply revision_id to require the exact current revision."))
         .parameters(Some(environments::EnvironmentPolicyListQuery::into_params(|| Some(ParameterIn::Query))));
     doc.add("/environments/{id}/rules/list", HttpMethod::Get, rules);
+    let skills = doc
+        .operation::<EnvironmentSkillListResponse>("/environments/{id}/skills/list", "listEnvironmentSkills")
+        .description(Some("List selected pins and their availability. Continue with next_cursor against the same saved revision."))
+        .parameters(Some(environments::EnvironmentSkillListQuery::into_params(|| Some(ParameterIn::Query))));
+    doc.add("/environments/{id}/skills/list", HttpMethod::Get, skills);
+    let skill = doc
+        .operation::<EnvironmentSkillDetailResponse>("/environments/{id}/skills/{skill_id}/info", "getEnvironmentSkill")
+        .description(Some("Read the complete UTF-8 file dictionary for an admitted skill from the selected revision."))
+        .parameters(Some(environments::EnvironmentPolicyListQuery::into_params(|| Some(ParameterIn::Query))));
+    doc.add("/environments/{id}/skills/{skill_id}/info", HttpMethod::Get, skill);
     let revisions = doc
         .operation::<EnvironmentRevisionListResponse>("/environments/{id}/revisions/list", "listEnvironmentRevisions")
         .description(Some("List committed revisions newest first for the operator."))

@@ -107,6 +107,8 @@ pub(crate) async fn restrict_owner_routes(
                             "/environments/{id}/info"
                                 | "/environments/{id}/plugins/list"
                                 | "/environments/{id}/rules/list"
+                                | "/environments/{id}/skills/list"
+                                | "/environments/{id}/skills/{skill_id}/info"
                                 | "/environments/{id}/revisions/{revision_id}/readiness"
                         )
                     })

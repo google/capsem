@@ -111,3 +111,29 @@ class Environments:
         if result.revision != reference:
             raise ValueError("environment rule revision identity changed")
         return result
+
+    async def skills(
+        self, reference: models.EnvironmentRevisionReference, *, search: str | None = None,
+        after: str | None = None, limit: int | None = None, request_timeout: float | None = None,
+    ) -> models.EnvironmentSkillListResponse:
+        """List selected skill pins and their admission status for an exact saved revision."""
+        result = await api.list_environment_skills(
+            self._transport, id=reference.environment_id, revision_id=reference.revision_id,
+            search=search, after=after, limit=limit, request_timeout=request_timeout,
+        )
+        if result.revision != reference:
+            raise ValueError("environment skill revision identity changed")
+        return result
+
+    async def skill(
+        self, reference: models.EnvironmentRevisionReference, skill_id: str, *, request_timeout: float | None = None,
+    ) -> models.EnvironmentSkillDetailResponse:
+        """Read the complete UTF-8 dictionary for a selected skill."""
+        result = await api.get_environment_skill(
+            self._transport, id=reference.environment_id, revision_id=reference.revision_id,
+            skill_id=skill_id, request_timeout=request_timeout,
+        )
+        if (result.revision != reference or result.selection.id != skill_id or result.metadata.id != skill_id
+                or result.metadata.version != result.selection.version):
+            raise ValueError("environment skill identity changed")
+        return result

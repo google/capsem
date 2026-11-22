@@ -1,5 +1,13 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .supply_chain_manifest_evidence import SupplyChainManifestEvidence
+from .supply_chain_reference import SupplyChainReference
+from .terminal_cursor import TerminalCursor
+from .terminal_event import TerminalEvent
+from .terminal_event_kind import TerminalEventKind
+from .terminal_modes import TerminalModes
+from .terminal_notification import TerminalNotification
+from .terminal_state import TerminalState
 from .terminal_summary import TerminalSummary
 from .text_content import TextContent
 from .text_content_kind import TextContentKind
@@ -42,6 +50,14 @@ from .vm_summary import VmSummary
 from .widget import Widget
 
 __all__ = [
+    'SupplyChainManifestEvidence',
+    'SupplyChainReference',
+    'TerminalCursor',
+    'TerminalEvent',
+    'TerminalEventKind',
+    'TerminalModes',
+    'TerminalNotification',
+    'TerminalState',
     'TerminalSummary',
     'TextContent',
     'TextContentKind',

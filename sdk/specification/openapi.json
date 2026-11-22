@@ -996,6 +996,152 @@
         }
       }
     },
+    "/environments/{id}/skills/list": {
+      "get": {
+        "description": "List selected pins and their availability. Continue with next_cursor against the same saved revision.",
+        "operationId": "listEnvironmentSkills",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "revision_id",
+            "in": "query",
+            "description": "Require this exact current saved revision.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "description": "Case-insensitive match on protected selection metadata.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "Continue with the cursor for the same saved revision.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Number of matches per page, from 1 to 64. Defaults to 24.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentSkillListResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/environments/{id}/skills/{skill_id}/info": {
+      "get": {
+        "description": "Read the complete UTF-8 file dictionary for an admitted skill from the selected revision.",
+        "operationId": "getEnvironmentSkill",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "skill_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "revision_id",
+            "in": "query",
+            "description": "Require the current environment to match this saved revision.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentSkillDetailResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "HTTP error; inspect status and error body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/host-logs/{name}": {
       "get": {
         "description": "Send Accept: application/json for the typed response. Without it the route returns plain text.",
@@ -5200,6 +5346,84 @@
           }
         }
       },
+      "CatalogCompatibility": {
+        "type": "object",
+        "required": [
+          "min_runtime_contract"
+        ],
+        "properties": {
+          "min_runtime_contract": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "CatalogEntryMetadata": {
+        "type": "object",
+        "required": [
+          "id",
+          "version",
+          "name",
+          "publisher",
+          "provenance",
+          "license",
+          "compatibility",
+          "status"
+        ],
+        "properties": {
+          "compatibility": {
+            "$ref": "#/components/schemas/CatalogCompatibility"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "license": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "provenance": {
+            "type": "string"
+          },
+          "publisher": {
+            "type": "string",
+            "description": "Publisher-claimed labels, not a verified signing identity."
+          },
+          "status": {
+            "$ref": "#/components/schemas/CatalogEntryStatus"
+          },
+          "status_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "CatalogEntryStatus": {
+        "type": "string",
+        "enum": [
+          "active",
+          "deprecated",
+          "revoked"
+        ]
+      },
       "CatalogInfo": {
         "type": "object",
         "description": "One catalog version, identified by its manifest digest.",
@@ -6031,6 +6255,31 @@
           "ask",
           "block"
         ]
+      },
+      "EnvironmentCatalogPin": {
+        "type": "object",
+        "description": "The registry owner verifies the OCI source and digest before constructing\na canonical revision. Format validation alone does not attest provenance.",
+        "required": [
+          "id",
+          "version",
+          "catalog_reference",
+          "resolved_digest"
+        ],
+        "properties": {
+          "catalog_reference": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "resolved_digest": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
       },
       "EnvironmentCatalogSelections_EnvironmentCatalogPin": {
         "type": "object",
@@ -7559,6 +7808,105 @@
               "string",
               "null"
             ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentSkillAvailability": {
+        "type": "string",
+        "enum": [
+          "available",
+          "revoked",
+          "unavailable"
+        ]
+      },
+      "EnvironmentSkillDetailResponse": {
+        "type": "object",
+        "required": [
+          "revision",
+          "selection",
+          "metadata",
+          "discovery_fresh",
+          "files"
+        ],
+        "properties": {
+          "discovery_fresh": {
+            "type": "boolean"
+          },
+          "files": {
+            "type": "object",
+            "description": "Complete UTF-8 content keyed by normalized relative path.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/CatalogEntryMetadata"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/EnvironmentRevisionReference"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/EnvironmentCatalogPin"
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentSkillListResponse": {
+        "type": "object",
+        "required": [
+          "revision",
+          "skills",
+          "discovery_fresh"
+        ],
+        "properties": {
+          "discovery_fresh": {
+            "type": "boolean",
+            "description": "Whether the current catalog was checked. A verified retained pin may be available offline."
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "revision": {
+            "$ref": "#/components/schemas/EnvironmentRevisionReference"
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentSkillSummary"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "EnvironmentSkillSummary": {
+        "type": "object",
+        "required": [
+          "selection",
+          "availability"
+        ],
+        "properties": {
+          "availability": {
+            "$ref": "#/components/schemas/EnvironmentSkillAvailability"
+          },
+          "metadata": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CatalogEntryMetadata"
+              }
+            ]
+          },
+          "selection": {
+            "$ref": "#/components/schemas/EnvironmentCatalogPin"
           }
         },
         "additionalProperties": false

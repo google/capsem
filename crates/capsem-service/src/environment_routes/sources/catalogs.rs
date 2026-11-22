@@ -12,6 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 type Error = EnvironmentResolutionError;
 mod runtime;
+pub(in crate::environment_routes) mod skills;
 pub(crate) use runtime::launch_policy;
 
 async fn source(state: &ServiceState, kind: CatalogKind) -> Result<ValidatedCatalogSource, Error> {

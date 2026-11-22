@@ -8,6 +8,37 @@ const input: EnvironmentCreateRequest = {request_id: requestId, specification: {
 const pending = {request_id: requestId, environment_id: environmentId, decision: 'approved', application: 'pending', result: null, application_error: null};
 const current = {document: {identity: {schema_version: 1, id: environmentId, revision_id: requestId}, specification: {name: 'development'}}, archived: false, timestamp_unix_ms: 1, actor: 'operator', reason: 'approved', request_id: requestId};
 
+it('lists selected skill pins and rejects detail with substituted metadata', async () => {
+  const revision = {environment_id: environmentId, revision_id: requestId};
+  const selection = {id: 'review', version: '1.0.0', catalog_reference: 'registry.example/skills:stable', resolved_digest: `sha256:${'0'.repeat(64)}`};
+  const metadata = {id: 'review', version: '1.0.0', name: 'Review', publisher: 'Fixture', provenance: 'Fixture catalog',
+    license: 'Apache-2.0', compatibility: {min_runtime_contract: 1}, status: 'active'};
+  const files = {'SKILL.md': 'review fixture\n', 'references/notes.md': 'notes\n'};
+  const detail = {revision, selection, metadata, files, discovery_fresh: false};
+  let payload: unknown = {revision, discovery_fresh: false, skills: [{selection, metadata, availability: 'available'}]};
+  await gateway((_request, reply) => reply.end(JSON.stringify(payload)), async (url, received) => {
+    const hv = new Hypervisor(url, 'token');
+    try {
+      expect((await hv.environments.skills(revision, {search: 'fixture', limit: 12})).skills[0]?.selection).toEqual(selection);
+      const query = new URL(received[0]!.url!, url).searchParams;
+      expect(query.get('revision_id')).toBe(requestId);
+      expect(query.get('search')).toBe('fixture');
+      expect(query.get('limit')).toBe('12');
+      payload = detail;
+      expect((await hv.environments.skill(revision, 'review')).files).toEqual(files);
+      expect(received[1]?.url).toBe(`/environments/${environmentId}/skills/review/info?revision_id=${requestId}`);
+      for (const invalid of [
+        {...detail, selection: {...selection, id: 'other'}},
+        {...detail, metadata: {...metadata, id: 'other'}},
+        {...detail, metadata: {...metadata, version: '2.0.0'}},
+      ]) {
+        payload = invalid;
+        await expect(hv.environments.skill(revision, 'review')).rejects.toThrow('skill identity changed');
+      }
+    } finally { hv.close(); }
+  });
+});
+
 it('runs a command from an exact saved revision and refuses inline variables', async () => {
   const reference = {environment_id: environmentId, revision_id: requestId};
   const output = {stdout: {encoding: 'utf8', data: 'pinned'}, stderr: {encoding: 'utf8', data: ''}, exit_code: 0};

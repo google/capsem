@@ -93,6 +93,9 @@ impl Registry {
         drop(blobs);
         pin
     }
+    pub fn unpublish_tag(&self, kind: CatalogKind) {
+        self.blobs.lock().unwrap().remove(&format!("team/{}/manifests/stable", kind.as_str()));
+    }
     pub fn alias(&self, original: &str, replacement: &str) {
         let mut blobs = self.blobs.lock().unwrap();
         let copied: Vec<_> = blobs

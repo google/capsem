@@ -48,6 +48,7 @@ from .get_environment_readiness import (
 from .get_environment_revision import (
     get_environment_revision as get_environment_revision,
 )
+from .get_environment_skill import get_environment_skill as get_environment_skill
 from .get_hypervisor_info import get_hypervisor_info as get_hypervisor_info
 from .get_hypervisor_logs import get_hypervisor_logs as get_hypervisor_logs
 from .get_image_inventory import get_image_inventory as get_image_inventory
@@ -79,6 +80,7 @@ from .list_environment_revisions import (
     list_environment_revisions as list_environment_revisions,
 )
 from .list_environment_rules import list_environment_rules as list_environment_rules
+from .list_environment_skills import list_environment_skills as list_environment_skills
 from .list_environments import list_environments as list_environments
 from .list_images import list_images as list_images
 from .list_mcp_servers import list_mcp_servers as list_mcp_servers

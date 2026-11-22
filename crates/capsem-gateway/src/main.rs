@@ -348,6 +348,8 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
         .route("/environments/plugins/list", get(proxy::handle_proxy))
         .route("/environments/{id}/plugins/list", get(proxy::handle_proxy))
         .route("/environments/{id}/rules/list", get(proxy::handle_proxy))
+        .route("/environments/{id}/skills/list", get(proxy::handle_proxy))
+        .route("/environments/{id}/skills/{skill_id}/info", get(proxy::handle_proxy))
         .route("/environments/{id}/revisions/list", get(proxy::handle_proxy))
         .route(
             "/environments/{id}/revisions/{revision_id}/info",

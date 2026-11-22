@@ -4,6 +4,7 @@
 mod agent_access;
 mod approvals;
 pub mod environments;
+pub use environments::{EnvironmentSkillDetailResponse, EnvironmentSkillListResponse};
 pub use environments::{
     EnvironmentChangeIntent, EnvironmentChangeRequest, EnvironmentCreateRequest, EnvironmentCurrentResponse,
     EnvironmentListResponse, EnvironmentMutationResponse, EnvironmentPluginListResponse, EnvironmentReadinessResponse,

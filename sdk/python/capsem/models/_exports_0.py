@@ -22,6 +22,9 @@ from .capability_summary import CapabilitySummary
 from .capture_status import CaptureStatus
 from .captured_content import CapturedContent
 from .captured_payload import CapturedPayload
+from .catalog_compatibility import CatalogCompatibility
+from .catalog_entry_metadata import CatalogEntryMetadata
+from .catalog_entry_status import CatalogEntryStatus
 from .catalog_info import CatalogInfo
 from .connection_list_response import ConnectionListResponse
 from .connection_provider import ConnectionProvider
@@ -54,6 +57,7 @@ from .enrollment_kind import EnrollmentKind
 from .environment_archive_action import EnvironmentArchiveAction
 from .environment_archive_request import EnvironmentArchiveRequest
 from .environment_capability_decision import EnvironmentCapabilityDecision
+from .environment_catalog_pin import EnvironmentCatalogPin
 from .environment_catalog_selections__environment_catalog_pin import (
     EnvironmentCatalogSelections_EnvironmentCatalogPin,
 )
@@ -86,12 +90,6 @@ from .environment_mcp_permissions import EnvironmentMcpPermissions
 from .environment_mcps__environment_catalog_pin import (
     EnvironmentMcps_EnvironmentCatalogPin,
 )
-from .environment_mcps__environment_catalog_selection import (
-    EnvironmentMcps_EnvironmentCatalogSelection,
-)
-from .environment_mutation_response import EnvironmentMutationResponse
-from .environment_packages import EnvironmentPackages
-from .environment_plugin_descriptor import EnvironmentPluginDescriptor
 
 __all__ = [
     'AgentAccessScope',
@@ -116,6 +114,9 @@ __all__ = [
     'CaptureStatus',
     'CapturedContent',
     'CapturedPayload',
+    'CatalogCompatibility',
+    'CatalogEntryMetadata',
+    'CatalogEntryStatus',
     'CatalogInfo',
     'ConnectionListResponse',
     'ConnectionProvider',
@@ -148,6 +149,7 @@ __all__ = [
     'EnvironmentArchiveAction',
     'EnvironmentArchiveRequest',
     'EnvironmentCapabilityDecision',
+    'EnvironmentCatalogPin',
     'EnvironmentCatalogSelections_EnvironmentCatalogPin',
     'EnvironmentCatalogSelections_EnvironmentCatalogPinSelectedItem',
     'EnvironmentCatalogSelections_EnvironmentCatalogSelection',
@@ -170,8 +172,4 @@ __all__ = [
     'EnvironmentMcpDefinitionSandbox',
     'EnvironmentMcpPermissions',
     'EnvironmentMcps_EnvironmentCatalogPin',
-    'EnvironmentMcps_EnvironmentCatalogSelection',
-    'EnvironmentMutationResponse',
-    'EnvironmentPackages',
-    'EnvironmentPluginDescriptor',
 ]

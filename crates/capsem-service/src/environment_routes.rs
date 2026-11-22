@@ -23,6 +23,7 @@ pub(crate) mod plugins;
 pub(crate) mod proposals;
 pub(crate) mod reviews;
 pub(crate) mod rules;
+pub(crate) mod skills;
 mod sources;
 use capsem_core::managed_sessions::LeaseClock;
 use capsem_logger::db::EnvironmentReferenceQuery;

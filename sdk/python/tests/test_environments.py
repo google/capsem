@@ -39,6 +39,33 @@ def test_run_uses_an_exact_saved_revision_and_rejects_inline_variables():
     asyncio.run(run())
 
 
+def test_selected_skill_methods_correlate_revision_and_pin():
+    async def run():
+        reference = models.EnvironmentRevisionReference(environment_id=ENVIRONMENT, revision_id=REQUEST)
+        revision = reference.model_dump(mode="json")
+        selection = {"id": "review", "version": "1.0.0", "catalog_reference": "registry.example/skills:stable",
+                     "resolved_digest": "sha256:" + "0" * 64}
+        metadata = {"id": "review", "version": "1.0.0", "name": "Review", "publisher": "Fixture",
+                    "provenance": "Fixture catalog", "license": "Apache-2.0",
+                    "compatibility": {"min_runtime_contract": 1}, "status": "active"}
+        files = {"SKILL.md": "review fixture\n", "references/notes.md": "notes\n"}
+        response: dict[str, object] = {"revision": revision, "discovery_fresh": False, "skills": [
+            {"selection": selection, "metadata": metadata, "availability": "available"},
+        ]}
+        async with gateway(response=response) as (url, received), Hypervisor(url, "gateway-token") as hv:
+            page = await hv.environments.skills(reference, search="fixture", limit=12)
+            assert page.skills[0].selection.id == "review" and page.discovery_fresh is False
+            assert 'search=fixture' in received[-1][1] and 'limit=12' in received[-1][1]
+            response.clear()
+            response.update(revision=revision, selection=selection, metadata=metadata, files=files, discovery_fresh=False)
+            assert (await hv.environments.skill(reference, "review")).files == files
+            assert f"/environments/{ENVIRONMENT}/skills/review/info?revision_id={REQUEST}" == received[-1][1]
+            metadata["version"] = "2.0.0"
+            with pytest.raises(ValueError, match="skill identity changed"):
+                await hv.environments.skill(reference, "review")
+    asyncio.run(run())
+
+
 def test_environment_creation_inspection_and_explicit_reconciliation():
     async def run():
         response = dict(PENDING)

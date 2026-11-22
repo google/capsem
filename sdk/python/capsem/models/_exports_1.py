@@ -1,5 +1,11 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .environment_mcps__environment_catalog_selection import (
+    EnvironmentMcps_EnvironmentCatalogSelection,
+)
+from .environment_mutation_response import EnvironmentMutationResponse
+from .environment_packages import EnvironmentPackages
+from .environment_plugin_descriptor import EnvironmentPluginDescriptor
 from .environment_plugin_direction_state import EnvironmentPluginDirectionState
 from .environment_plugin_entry import EnvironmentPluginEntry
 from .environment_plugin_field import EnvironmentPluginField
@@ -43,6 +49,10 @@ from .environment_rules__environment_catalog_selection__environment_detection_ru
 )
 from .environment_sandbox_target import EnvironmentSandboxTarget
 from .environment_secret_binding import EnvironmentSecretBinding
+from .environment_skill_availability import EnvironmentSkillAvailability
+from .environment_skill_detail_response import EnvironmentSkillDetailResponse
+from .environment_skill_list_response import EnvironmentSkillListResponse
+from .environment_skill_summary import EnvironmentSkillSummary
 from .environment_specification__environment_image__environment_repository__environment_catalog_pin import (
     EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin,
 )
@@ -100,16 +110,12 @@ from .host_logs_response import HostLogsResponse
 from .host_triage_response import HostTriageResponse
 from .http_event import HttpEvent
 from .hypervisor_info import HypervisorInfo
-from .image_app import ImageApp
-from .image_cache_state import ImageCacheState
-from .image_download_phase import ImageDownloadPhase
-from .image_download_progress import ImageDownloadProgress
-from .image_evidence import ImageEvidence
-from .image_evidence_kind import ImageEvidenceKind
-from .image_info import ImageInfo
-from .image_interface import ImageInterface
 
 __all__ = [
+    'EnvironmentMcps_EnvironmentCatalogSelection',
+    'EnvironmentMutationResponse',
+    'EnvironmentPackages',
+    'EnvironmentPluginDescriptor',
     'EnvironmentPluginDirectionState',
     'EnvironmentPluginEntry',
     'EnvironmentPluginField',
@@ -137,6 +143,10 @@ __all__ = [
     'EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRuleCustomValue',
     'EnvironmentSandboxTarget',
     'EnvironmentSecretBinding',
+    'EnvironmentSkillAvailability',
+    'EnvironmentSkillDetailResponse',
+    'EnvironmentSkillListResponse',
+    'EnvironmentSkillSummary',
     'EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection',
     'EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelectionImage',
     'EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelectionRepositoriesItem',
@@ -182,12 +192,4 @@ __all__ = [
     'HostTriageResponse',
     'HttpEvent',
     'HypervisorInfo',
-    'ImageApp',
-    'ImageCacheState',
-    'ImageDownloadPhase',
-    'ImageDownloadProgress',
-    'ImageEvidence',
-    'ImageEvidenceKind',
-    'ImageInfo',
-    'ImageInterface',
 ]

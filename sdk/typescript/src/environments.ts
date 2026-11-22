@@ -77,6 +77,29 @@ export class Environments {
     verifyRevision(reference, result.revision);
     return result;
   }
+
+  /** List selected skill pins and their admission status for an exact saved revision. */
+  async skills(reference: models.EnvironmentRevisionReference,
+    {signal, timeoutMs, ...query}: EnvironmentListOptions = {}): Promise<models.EnvironmentSkillListResponse> {
+    const result = await api.listEnvironmentSkills(this.transport, {
+      ...query, id: reference.environment_id, revision_id: reference.revision_id,
+    }, {signal, timeoutMs});
+    verifyRevision(reference, result.revision);
+    return result;
+  }
+
+  /** Read the complete UTF-8 dictionary for a selected skill. */
+  async skill(reference: models.EnvironmentRevisionReference, skillId: string,
+    options: CallOptions = {}): Promise<models.EnvironmentSkillDetailResponse> {
+    const result = await api.getEnvironmentSkill(this.transport, {
+      id: reference.environment_id, revision_id: reference.revision_id, skill_id: skillId,
+    }, options);
+    verifyRevision(reference, result.revision);
+    if (result.selection.id !== skillId || result.metadata.id !== skillId || result.metadata.version !== result.selection.version) {
+      throw new Error('Environment skill identity changed');
+    }
+    return result;
+  }
 }
 
 function verifyRevision(expected: models.EnvironmentRevisionReference, actual: models.EnvironmentRevisionReference): void {

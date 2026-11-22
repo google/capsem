@@ -1,5 +1,13 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+export { ManagedSessionClosedState } from "./ManagedSessionClosedState.js";
+export type { ManagedSessionCreate } from "./ManagedSessionCreate.js";
+export { ManagedSessionErrorCode } from "./ManagedSessionErrorCode.js";
+export type { ManagedSessionFailure } from "./ManagedSessionFailure.js";
+export { ManagedSessionOutcome } from "./ManagedSessionOutcome.js";
+export type { ManagedSessionOwnership } from "./ManagedSessionOwnership.js";
+export { ManagedSessionState } from "./ManagedSessionState.js";
+export { MaterialClass } from "./MaterialClass.js";
 export type { McpDefaultPermissionResponse } from "./McpDefaultPermissionResponse.js";
 export type { McpInfoResponse } from "./McpInfoResponse.js";
 export { McpPermissionAction } from "./McpPermissionAction.js";

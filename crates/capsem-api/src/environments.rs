@@ -7,6 +7,8 @@ mod revisions;
 pub use revisions::*;
 mod rules;
 pub use rules::*;
+mod skills;
+pub use skills::*;
 use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 

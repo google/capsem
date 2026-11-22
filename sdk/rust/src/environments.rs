@@ -163,6 +163,52 @@ impl Environments<'_> {
         }
         Ok(result)
     }
+
+    /// Read a page of selected skill pins and their current admission status.
+    pub async fn skills(
+        &self,
+        reference: &EnvironmentRevisionReference,
+        search: Option<&str>,
+        after: Option<&str>,
+        limit: Option<u16>,
+    ) -> Result<models::EnvironmentSkillListResponse> {
+        reference.validate().map_err(Error::InvalidInput)?;
+        let input = api::ListEnvironmentSkillsParams {
+            id: reference.environment_id.clone(),
+            revision_id: Some(reference.revision_id.clone()),
+            search: search.map(str::to_owned),
+            after: after.map(str::to_owned),
+            limit: limit.map(u32::from),
+        };
+        let result = api::list_environment_skills(&self.0.transport, &input, self.0.options).await?;
+        if result.revision != *reference {
+            return Err(Error::InvalidResponse("environment skill revision identity changed"));
+        }
+        Ok(result)
+    }
+
+    /// Read the complete UTF-8 dictionary for a selected pin.
+    pub async fn skill(
+        &self,
+        reference: &EnvironmentRevisionReference,
+        skill_id: &str,
+    ) -> Result<models::EnvironmentSkillDetailResponse> {
+        reference.validate().map_err(Error::InvalidInput)?;
+        let input = api::GetEnvironmentSkillParams {
+            id: reference.environment_id.clone(),
+            skill_id: skill_id.into(),
+            revision_id: Some(reference.revision_id.clone()),
+        };
+        let result = api::get_environment_skill(&self.0.transport, &input, self.0.options).await?;
+        if result.revision != *reference
+            || result.selection.id != skill_id
+            || result.metadata.id != skill_id
+            || result.metadata.version != result.selection.version
+        {
+            return Err(Error::InvalidResponse("environment skill identity changed"));
+        }
+        Ok(result)
+    }
 }
 #[cfg(test)]
 mod tests;

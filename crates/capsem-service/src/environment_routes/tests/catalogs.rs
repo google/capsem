@@ -196,6 +196,85 @@ fn document(kind: CatalogKind, revoked: bool) -> serde_json::Value {
 }
 
 #[tokio::test]
+async fn selected_skill_http_uses_complete_pinned_content_and_durable_admission() {
+    let mut fx = Fixture::new().await;
+    let kind = CatalogKind::Skills;
+    let mut original = document(kind, false);
+    let support = "Review the fixture output.\n";
+    original["entries"][0]["payload"]["files"]["references/fixture.md"] =
+        json!({"content":support,"sha256":registry::digest(support.as_bytes())});
+    let mut notes = original["entries"][0].clone();
+    notes["metadata"]["id"] = "notes".into();
+    let instruction = "---\nname: notes\ndescription: Read notes\n---\nRead the notes.\n";
+    notes["payload"]["files"]["SKILL.md"] = json!({"content":instruction,"sha256":registry::digest(instruction.as_bytes())});
+    original["entries"].as_array_mut().unwrap().push(notes);
+    let digest = fx.registry.publish(kind, original.clone());
+    let app = crate::router_runtime::build_service_router(fx.state.clone());
+    let (status, saved) = route_request(app.clone(), Method::POST, "/environments/create", Some(json!({
+        "request_id":id(671), "reason":"selected skill fixture", "specification":{
+            "name":"skill-inspection","skills":{"selected":[{"id":"review","version":"1.0.0"},{"id":"notes","version":"1.0.0"}]}
+        }
+    }))).await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    let saved: capsem_api::EnvironmentMutationResponse = serde_json::from_value(saved).unwrap();
+    let exact = saved.result.unwrap();
+    let base = format!("/environments/{}/skills", exact.environment_id);
+    let list = format!("{base}/list?search=FIXTURE&revision_id={}", exact.revision_id);
+    let info = format!("{base}/review/info?revision_id={}", exact.revision_id);
+    let (status, summary) = route_request(app.clone(), Method::GET, &list, None).await;
+    assert_eq!(status, StatusCode::OK, "{summary}");
+    assert_eq!(summary["skills"][0]["selection"]["resolved_digest"], digest);
+    assert_eq!(summary["skills"][0]["availability"], "available");
+    assert!(summary["skills"][0].get("files").is_none());
+    assert_eq!(route_request(app.clone(), Method::GET, &format!("{base}/unselected/info"), None).await.0,
+        StatusCode::NOT_FOUND);
+    let (status, first) = route_request(app.clone(), Method::GET, &format!("{base}/list?limit=1"), None).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(first["skills"][0]["selection"]["id"], "notes");
+    let cursor = first["next_cursor"].as_str().unwrap();
+    let next = format!("{base}/list?limit=1&after={cursor}");
+    let (status, second) = route_request(app.clone(), Method::GET, &next, None).await;
+    assert_eq!(status, StatusCode::OK, "{second}");
+    assert_eq!(second["skills"][0]["selection"]["id"], "review");
+    assert!(second["next_cursor"].is_null());
+
+    let mut moved = document(kind, false);
+    moved["entries"][0]["metadata"]["name"] = "New tag metadata".into();
+    assert_ne!(fx.registry.publish(kind, moved), digest);
+    let (status, detail) = route_request(app.clone(), Method::GET, &info, None).await;
+    assert_eq!(status, StatusCode::OK, "{detail}");
+    assert_eq!(detail["metadata"]["name"], "Review");
+    assert_eq!(detail["selection"]["resolved_digest"], digest);
+    assert_eq!(detail["files"], json!({
+        "SKILL.md":original["entries"][0]["payload"]["files"]["SKILL.md"]["content"],
+        "references/fixture.md":support
+    }));
+
+    fx.registry.unpublish_tag(kind);
+    let (status, retained) = route_request(app.clone(), Method::GET, &info, None).await;
+    assert_eq!(status, StatusCode::OK, "{retained}");
+    assert_eq!(retained["files"], detail["files"]);
+    assert_eq!(retained["discovery_fresh"], false);
+
+    fx.registry.publish(kind, document(kind, true));
+    assert_eq!(route_request(app.clone(), Method::GET, &info, None).await.0, StatusCode::FORBIDDEN);
+    fx.registry.publish(kind, original);
+    let (status, summary) = route_request(app.clone(), Method::GET, &format!("{base}/list"), None).await;
+    assert_eq!(status, StatusCode::OK, "{summary}");
+    let skill = summary["skills"].as_array().unwrap().iter().find(|skill| skill["selection"]["id"] == "review").unwrap();
+    assert_eq!(skill["availability"], "revoked");
+    assert!(skill["metadata"].is_null());
+    fx.registry.stop().await;
+    assert_eq!(route_request(app.clone(), Method::GET, &info, None).await.0, StatusCode::FORBIDDEN);
+    let (status, updated) = route_request(app.clone(), Method::POST, &format!("/environments/{}/changes", exact.environment_id), Some(json!({
+        "request_id":id(672),"base_revision_id":exact.revision_id,"reason":"remove selected skills","specification":{"name":"skill-inspection"}
+    }))).await;
+    assert_eq!(status, StatusCode::OK, "{updated}");
+    assert_eq!(route_request(app.clone(), Method::GET, &next, None).await.0, StatusCode::CONFLICT);
+    assert_eq!(route_request(app, Method::GET, &format!("{base}/review/info"), None).await.0, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn native_catalog_pins_verify_tls_oci_content_and_retain_exact_bytes_offline() {
     let mut fx = Fixture::new().await;
     let mut pins = Vec::new();
