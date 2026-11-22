@@ -17,7 +17,7 @@ mod connection;
 pub mod credential_rewriter_hook;
 #[cfg(test)]
 use connection::classify_read;
-use connection::handle_inner;
+pub use connection::{handle_connection, handle_standalone_connection};
 mod decision_fields;
 use decision_fields::SecurityBoundaryDecisionFields;
 pub mod decompression_hook;
@@ -113,18 +113,6 @@ static FIRST_NETWORK_READY_EMITTED: AtomicBool = AtomicBool::new(false);
 /// Build an empty pipeline for callers that do not install production hooks.
 pub fn make_default_pipeline() -> Arc<pipeline::Pipeline> {
     Arc::new(pipeline::Pipeline::builder().build())
-}
-
-/// RAII helper: decrements the `mitm.active_connections` gauge when
-/// `handle_connection` returns (success, error, or panic-via-unwind).
-/// Held in a `let _gauge_guard = ConnectionGauge;` binding for the
-/// connection's lifetime.
-struct ConnectionGauge;
-
-impl Drop for ConnectionGauge {
-    fn drop(&mut self) {
-        ::metrics::gauge!(m::ACTIVE_CONNECTIONS).decrement(1.0);
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -234,108 +222,7 @@ impl StandaloneModelTarget {
     }
 }
 
-/// Handle a single MITM proxy connection from the guest.
-///
-/// This is the async entry point for each vsock:5002 connection.
-/// Per-request telemetry is emitted by `TelemetryHook` (a sync
-/// ChunkHook) when each HTTP response body completes. This function
-/// only emits connection-level error events (TLS failures, no SNI,
-/// etc.).
-#[tracing::instrument(skip_all, name = "capsem.mitm.connection", target = "capsem.mitm", fields(vsock_fd = vsock_fd.as_raw_fd()))]
-pub async fn handle_connection(vsock_fd: OwnedFd, config: Arc<MitmProxyConfig>) {
-    // The `protocol="…"` partition for `mitm.connections_total` is
-    // incremented inside `handle_inner` once the first-byte sniff has
-    // classified the wire payload (T2.1). Errors before classification
-    // count as `protocol="unknown"`.
-    ::metrics::gauge!(m::ACTIVE_CONNECTIONS).increment(1.0);
-    let _gauge_guard = ConnectionGauge;
-
-    let result = handle_inner(vsock_fd, &config).await;
-
-    match result {
-        Err(_) if config.shutdown.is_cancelled() => {
-            debug!("MITM proxy: owner stopped connection before request admission");
-        }
-        Ok(domain) => {
-            debug!(domain, "MITM proxy: connection closed");
-        }
-        Err((domain, decision, reason)) => {
-            let display_domain = if domain.is_empty() {
-                "<unknown>".to_string()
-            } else {
-                domain
-            };
-
-            let event = NetEvent {
-                event_id: None,
-                timestamp: SystemTime::now(),
-                domain: display_domain.clone(),
-                port: 443,
-                decision,
-                process_name: None,
-                pid: None,
-                bytes_sent: 0,
-                bytes_received: 0,
-                duration_ms: 0,
-                method: None,
-                path: None,
-                query: None,
-                status_code: None,
-                matched_rule: Some(reason.clone()),
-                request_headers: None,
-                response_headers: None,
-                request_body: None,
-                response_body: None,
-                conn_type: Some("https-mitm".to_string()),
-                policy_mode: None,
-                policy_action: None,
-                policy_rule: None,
-                policy_reason: None,
-                trace_id: capsem_foundation::telemetry::ambient_capsem_trace_id(),
-                credential_ref: None,
-            };
-
-            crate::security_engine::emit_security_write(&config.db, WriteOp::NetEvent(event)).await;
-            warn!(domain = display_domain, reason, "MITM proxy: connection error");
-        }
-    }
-}
-
-/// Serve one plaintext OpenAI-compatible client connection while pinning all
-/// upstream routing to a provider selected from the trusted policy snapshot.
-pub async fn handle_standalone_connection(
-    client_fd: OwnedFd,
-    config: Arc<MitmProxyConfig>,
-    target: StandaloneModelTarget,
-) {
-    ::metrics::gauge!(m::ACTIVE_CONNECTIONS).increment(1.0);
-    let _gauge_guard = ConnectionGauge;
-    let std_fd = std::fs::File::from(client_fd);
-    if let Err(error) = capsem_foundation::unix::fd::set_nonblocking(std_fd.as_fd(), true) {
-        warn!(%error, "standalone proxy could not configure client socket");
-        return;
-    }
-    // SAFETY: AsyncFdStream retains this owned file unchanged until deregistration.
-    let async_fd = match unsafe { tokio::io::unix::AsyncFd::register(std_fd) } {
-        Ok(fd) => fd,
-        Err(error) => {
-            warn!(%error, "standalone proxy could not adopt client socket");
-            return;
-        }
-    };
-    serve_pipeline(
-        TokioIo::new(AsyncFdStream(async_fd)),
-        PipelineTarget::Standalone(target),
-        &config,
-        Arc::new(None),
-    )
-    .await;
-}
-
-/// Deadline for each pre-classification read from a freshly-accepted guest
-/// connection. The guest is the adversary here: one that connects and then
-/// stalls without sending a ClientHello must not pin the handler task and its
-/// ACTIVE_CONNECTIONS slot indefinitely (slowloris).
+/// Deadline for pre-classification reads and HTTP headers on guest connections.
 const CLASSIFY_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// Handle a single HTTP request within a MITM-proxied connection
