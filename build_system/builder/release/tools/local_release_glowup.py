@@ -1386,6 +1386,11 @@ export DEBIAN_FRONTEND=noninteractive
 {probe_functions}
 sudo apt-get remove --purge -y capsem || true
 rm -rf "$HOME/.capsem"
+# The predecessor writes its service PID using systemd's file creation mask.
+# Use a private process environment for the disposable installed proof.
+install -d -m 0700 "$HOME/.config/systemd/user/capsem.service.d"
+printf '[Service]\\nUMask=0077\\n' > "$HOME/.config/systemd/user/capsem.service.d/release-qualification.conf"
+systemctl --user daemon-reload
 curl -fsSL {shlex.quote(install_script_url)} | \
   CAPSEM_CHANNEL={shlex.quote(fresh_channel)} \
   CAPSEM_RELEASE_BASE_URL={shlex.quote(release_base_url)} \

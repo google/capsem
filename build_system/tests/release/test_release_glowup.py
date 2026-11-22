@@ -1539,6 +1539,10 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
     ):
         subprocess.run(["bash", "-n"], input=script, text=True, check=True)
     assert "CAPSEM_MANIFEST_URL=" in before_script
+    assert "UMask=0077" in before_script
+    assert before_script.index("systemctl --user daemon-reload") < before_script.index(
+        "curl -fsSL http://127.0.0.1:8765/install.sh"
+    )
     assert "update --assets --channel" in before_script
     assert "systemctl --user set-environment" in before_script
     assert "CAPSEM_AUTOMATIC_UPDATE_INITIAL_DELAY_SECS=2" in before_script
