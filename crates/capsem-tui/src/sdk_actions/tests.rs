@@ -132,24 +132,59 @@ async fn invoke_with_response(
 ) -> anyhow::Result<crate::gateway_provider::ActionOutcome> {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
+    let start_id = match &action {
+        ControlAction::Start { id, .. } | ControlAction::Resume { id, .. } => Some(id.clone()),
+        _ => None,
+    };
     let server = tokio::spawn(async move {
-        for _ in 0..1 {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let request = read_http_request(&mut stream).await;
-            {
-                assert!(request.contains(path), "{request}");
-                assert!(request
-                    .to_ascii_lowercase()
-                    .contains("authorization: bearer test-token"));
-                write_json_response(&mut stream, body).await;
-            }
+        let expected = if let Some(id) = start_id {
+            Some(reply_to_readiness(&listener, &id, "start", false).await)
+        } else {
+            None
+        };
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let request = read_http_request(&mut stream).await;
+        assert!(request.contains(path), "{request}");
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer test-token"));
+        if let Some(expected) = expected {
+            assert_eq!(request_body(&request), serde_json::json!({"expected": expected}));
         }
+        write_json_response(&mut stream, body).await;
     });
     let outcome = GatewayProvider::with_test_token(url, "test-token")
         .invoke_async(&action)
         .await;
     server.await.unwrap();
     outcome
+}
+
+async fn reply_to_readiness(
+    listener: &tokio::net::TcpListener,
+    id: &str,
+    intent: &str,
+    running: bool,
+) -> serde_json::Value {
+    let generation = running.then_some("11111111-1111-4111-8111-111111111111");
+    let selection = serde_json::json!({
+        "id": id, "generation": generation, "running": running, "environment": null,
+    });
+    let (mut stream, _) = listener.accept().await.unwrap();
+    let request = read_http_request(&mut stream).await;
+    assert!(
+        request.starts_with(&format!("GET /vms/{id}/readiness?intent={intent} ")),
+        "{request}"
+    );
+    assert!(request
+        .to_ascii_lowercase()
+        .contains("authorization: bearer test-token"));
+    write_json_response(
+        &mut stream,
+        &serde_json::json!({"selection": selection, "startup_timeout_seconds": 0}).to_string(),
+    )
+    .await;
+    selection
 }
 
 /// The JSON body of a raw HTTP request read by `read_http_request`.
@@ -350,22 +385,21 @@ async fn gateway_provider_invokes_fork_over_authenticated_gateway() {
         .expect("bind test gateway");
     let addr = listener.local_addr().expect("local addr");
     let server = tokio::spawn(async move {
-        for _ in 0..1 {
-            let (mut stream, _) = listener.accept().await.expect("accept request");
-            let request = read_http_request(&mut stream).await;
-            {
-                assert!(
-                    request.contains("POST /vms/vm-2/fork "),
-                    "unexpected request: {request:?}"
-                );
-                assert!(request.contains(r#""name":"vm-2-fork-copy""#));
-                write_json_response(
-                    &mut stream,
-                    r#"{"id":"fork-id","name":"vm-2-fork-copy","size_bytes":1024}"#,
-                )
-                .await;
-            }
-        }
+        let expected = reply_to_readiness(&listener, "vm-2", "fork", true).await;
+        let (mut stream, _) = listener.accept().await.expect("accept request");
+        let request = read_http_request(&mut stream).await;
+        assert!(request.starts_with("POST /vms/vm-2/fork "), "{request}");
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer test-token"));
+        let body = request_body(&request);
+        assert_eq!(body["name"], "vm-2-fork-copy");
+        assert_eq!(body["expected"], expected);
+        write_json_response(
+            &mut stream,
+            r#"{"id":"fork-id","name":"vm-2-fork-copy","size_bytes":1024}"#,
+        )
+        .await;
     });
 
     let outcome = GatewayProvider::with_test_token(format!("http://{addr}"), "test-token")
