@@ -389,7 +389,7 @@ def configure(unpacked, image, options, detached=False):
             "seccomp": options["seccomp"],
         },
     }
-    return _preparation["configure"](configured, options.get("startup"))
+    return _preparation["configure"](configured, options.get("startup"), options.get("repositories"), workspace)
 
 
 def _launcher_hook(argument):
@@ -1032,9 +1032,10 @@ def run(stage, detached=False):
         pid_file = RUNTIME / "workload.pid"
         argv = [*RUNC, "run", "--no-new-keyring", "--pid-file", str(pid_file), "--bundle", str(bundle)]
         preparation = None
-        if options.get("startup") is not None:
+        if options.get("startup") is not None or options.get("repositories") is not None:
             preparation = roots.enter_context(_preparation["Bridge"](
-                stage, options["startup"], lambda: command(*RUNC, "kill", "--all", CONTAINER, "KILL", check=False, timeout=5)
+                stage, options.get("startup"), lambda: command(*RUNC, "kill", "--all", CONTAINER, "KILL", check=False, timeout=5),
+                repositories=options.get("repositories") is not None,
             ))
             argv += ["--preserve-fds", "2"]
         if not detached:

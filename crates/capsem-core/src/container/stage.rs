@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
+use capsem_config::environment::EnvironmentRepository;
 
 use super::LAUNCHER_FILES;
 
@@ -34,12 +35,55 @@ pub struct RootfsFile<'a> {
 }
 
 /// The image to stage, optionally with its catalog-selected filesystem.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct StageImage<'a> {
     pub manifest: &'a str,
     pub rootfs: Option<RootfsFile<'a>>,
     pub environment: Option<&'a EnvironmentLaunchContext>,
     pub startup: Option<&'a capsem_config::environment::EnvironmentStartup>,
+    pub repositories: &'a [EnvironmentRepository],
+}
+
+impl std::fmt::Debug for StageImage<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("StageImage")
+            .field("manifest", &self.manifest)
+            .field("rootfs", &self.rootfs)
+            .field("environment", &self.environment)
+            .field("startup", &self.startup)
+            .field("repository_count", &self.repositories.len())
+            .finish()
+    }
+}
+
+#[derive(serde::Serialize)]
+struct RepositoryLaunch<'a> {
+    url: String,
+    resolved_commit: &'a str,
+    destination: &'a str,
+}
+
+impl<'a> TryFrom<&'a EnvironmentRepository> for RepositoryLaunch<'a> {
+    type Error = anyhow::Error;
+
+    fn try_from(repository: &'a EnvironmentRepository) -> Result<Self> {
+        let url = reqwest::Url::parse(&repository.url).context("invalid saved repository URL")?;
+        anyhow::ensure!(
+            url.scheme() == "https"
+                && url.host().is_some()
+                && url.username().is_empty()
+                && url.password().is_none()
+                && url.query().is_none()
+                && url.fragment().is_none(),
+            "workload preparation requires an HTTPS repository without URL credentials"
+        );
+        Ok(Self {
+            url: url.into(),
+            resolved_commit: &repository.resolved_commit,
+            destination: &repository.destination,
+        })
+    }
 }
 
 /// Host-assigned bookkeeping in the persisted launch options. These identities
@@ -83,6 +127,7 @@ impl<'a> From<&'a str> for StageImage<'a> {
             rootfs: None,
             environment: None,
             startup: None,
+            repositories: &[],
         }
     }
 }
@@ -178,6 +223,18 @@ pub fn stage_plan<'a>(
         );
         startup.validate().map_err(anyhow::Error::msg)?;
         options["startup"] = serde_json::to_value(startup)?;
+    }
+    if !image.repositories.is_empty() {
+        anyhow::ensure!(
+            image.environment.is_some(),
+            "repositories require a qualified environment context"
+        );
+        let repositories = image
+            .repositories
+            .iter()
+            .map(RepositoryLaunch::try_from)
+            .collect::<Result<Vec<_>>>()?;
+        options["repositories"] = serde_json::to_value(repositories)?;
     }
     if let Some(rootfs) = image.rootfs {
         digest_hex(rootfs.digest)?;

@@ -38,8 +38,8 @@ impl EnvironmentBinding {
 /// connected. Never launch a valid-looking environment with fields discarded.
 pub(crate) fn validate_preparation(specification: &EnvironmentSpecification) -> Result<()> {
     ensure!(
-        specification.repositories.is_empty(),
-        "environment repositories require trusted workload preparation"
+        specification.repositories.is_empty() || specification.image.is_some(),
+        "environment repositories require an OCI image"
     );
     ensure!(
         specification.secrets.is_empty(),

@@ -22,6 +22,13 @@ fn spawn(script: &str, argv: &[&str], timeout: u32) -> (Child, File, File) {
     spawn_in(script, argv, timeout, std::path::Path::new("."))
 }
 fn spawn_in(script: &str, argv: &[&str], timeout: u32, cwd: &std::path::Path) -> (Child, File, File) {
+    let timeout = timeout.to_string();
+    let mut arguments = vec![timeout.as_str(), script, "--"];
+    arguments.extend_from_slice(argv);
+    spawn_arguments(&arguments, cwd)
+}
+
+fn spawn_arguments(arguments: &[&str], cwd: &std::path::Path) -> (Child, File, File) {
     let (output_read, output_write) = pipe();
     let (status_read, status_write) = pipe();
     let output = output_write.as_raw_fd();
@@ -30,10 +37,7 @@ fn spawn_in(script: &str, argv: &[&str], timeout: u32, cwd: &std::path::Path) ->
     command
         .current_dir(cwd)
         .arg0("capsem-prepare")
-        .arg(timeout.to_string())
-        .arg(script)
-        .arg("--")
-        .args(argv)
+        .args(arguments)
         .env("PREPARATION_TEST_VARIABLE", "approved ordinary variable")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -70,6 +74,62 @@ fn text(mut input: File) -> String {
     let mut bytes = String::new();
     input.read_to_string(&mut bytes).unwrap();
     bytes
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn approved_repository_preparation_preserves_existing_workspace_contents() {
+    let workspace = tempfile::tempdir().unwrap();
+    let repo = workspace.path().join("nested/project");
+    std::fs::create_dir_all(&repo).unwrap();
+    assert!(Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&repo)
+        .status()
+        .unwrap()
+        .success());
+    let origin = "https://example.com/approved.git";
+    assert!(Command::new("git")
+        .args(["remote", "add", "origin", origin])
+        .current_dir(&repo)
+        .status()
+        .unwrap()
+        .success());
+    std::fs::write(repo.join("AGENTS.md"), "keep existing instructions").unwrap();
+    let mut arguments = [
+        "--repositories",
+        workspace.path().to_str().unwrap(),
+        "1",
+        origin,
+        "0123456789012345678901234567890123456789",
+        "nested/project",
+        "0",
+        "",
+        "--",
+        "/bin/true",
+    ];
+    let (child, output, mut status) = spawn_arguments(&arguments, workspace.path());
+    assert_eq!(event(&mut status), Status::Preparing);
+    assert_eq!(event(&mut status), Status::Entrypoint);
+    eof(&mut status);
+    assert!(child.wait_with_output().unwrap().status.success());
+    assert_eq!(text(output), "");
+    arguments[3] = "https://example.com/different.git";
+    let (child, output, mut status) = spawn_arguments(&arguments, workspace.path());
+    assert_eq!(event(&mut status), Status::Preparing);
+    assert_eq!(
+        event(&mut status),
+        Status::Failed {
+            failure: Failure::RepositoryDestination
+        }
+    );
+    eof(&mut status);
+    assert_eq!(child.wait_with_output().unwrap().status.code(), Some(126));
+    assert_eq!(text(output), "");
+    assert_eq!(
+        std::fs::read_to_string(repo.join("AGENTS.md")).unwrap(),
+        "keep existing instructions"
+    );
 }
 
 #[test]

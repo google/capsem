@@ -12,28 +12,65 @@ use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "linux")]
+#[path = "preparation/repositories.rs"]
+mod repositories;
+
 struct Input<'a> {
-    timeout: Duration,
-    script: &'a str,
+    startup: Option<(Duration, &'a str)>,
+    #[cfg(target_os = "linux")]
+    repositories: Option<(&'a std::path::Path, Vec<repositories::Repository<'a>>)>,
     argv: &'a [String],
 }
 impl<'a> Input<'a> {
     fn parse(args: &'a [String]) -> Result<Self, Failure> {
+        if args.iter().any(|value| value.contains('\0')) {
+            return Err(Failure::InvalidInput);
+        }
+        #[cfg(target_os = "linux")]
+        let (args, repositories) = if args.first().is_some_and(|arg| arg == "--repositories") {
+            let workspace = std::path::Path::new(args.get(1).ok_or(Failure::InvalidInput)?);
+            let count: usize = args
+                .get(2)
+                .and_then(|count| count.parse().ok())
+                .ok_or(Failure::InvalidInput)?;
+            if !workspace.is_absolute() || !(1..=capsem_proto::ENVIRONMENT_MAX_REPOSITORIES).contains(&count) {
+                return Err(Failure::InvalidInput);
+            }
+            let end = 3 + count * 3;
+            let repositories = args
+                .get(3..end)
+                .ok_or(Failure::InvalidInput)?
+                .chunks_exact(3)
+                .map(repositories::Repository::parse)
+                .collect::<Result<Vec<_>, _>>()?;
+            (&args[end..], Some((workspace, repositories)))
+        } else {
+            (args, None)
+        };
         if args.len() < 4
             || args[2] != "--"
             || args[3].is_empty()
             || args[1].len() > capsem_proto::ENVIRONMENT_MAX_STARTUP_SCRIPT_BYTES
-            || args.iter().any(|value| value.contains('\0'))
         {
             return Err(Failure::InvalidInput);
         }
         let seconds: u32 = args[0].parse().map_err(|_| Failure::InvalidInput)?;
         if seconds == 0 {
+            #[cfg(target_os = "linux")]
+            if repositories.is_some() && args[1].is_empty() {
+                return Ok(Self {
+                    startup: None,
+                    repositories,
+                    argv: &args[3..],
+                });
+            }
             return Err(Failure::InvalidInput);
         }
         Ok(Self {
-            timeout: Duration::from_secs(u64::from(seconds)),
-            script: &args[1],
+            startup: Some((Duration::from_secs(u64::from(seconds)), &args[1])),
+            #[cfg(target_os = "linux")]
+            repositories,
             argv: &args[3..],
         })
     }
@@ -88,8 +125,16 @@ pub(crate) fn run(args: &[String]) -> i32 {
     if report(&mut status, Status::Preparing).is_err() {
         return 126;
     }
-    if let Err(failure) = supervise(&input, &output, &signals) {
-        return failed(&mut status, failure);
+    #[cfg(target_os = "linux")]
+    if let Some((workspace, repositories)) = &input.repositories {
+        if let Err(failure) = repositories::prepare(workspace, repositories, &signals) {
+            return failed(&mut status, failure);
+        }
+    }
+    if let Some((timeout, script)) = input.startup {
+        if let Err(failure) = run_startup(script, timeout, &output, &signals) {
+            return failed(&mut status, failure);
+        }
     }
     if report(&mut status, Status::Entrypoint).is_err() {
         return 126;
@@ -102,11 +147,11 @@ pub(crate) fn run(args: &[String]) -> i32 {
     failed(&mut status, Failure::EntrypointExec)
 }
 
-fn supervise(input: &Input<'_>, output: &File, signals: &cancellation::Guard) -> Result<(), Failure> {
+fn run_startup(script: &str, timeout: Duration, output: &File, signals: &cancellation::Guard) -> Result<(), Failure> {
     let mut command = Command::new("/bin/sh");
     command
         .arg("-c")
-        .arg(input.script)
+        .arg(script)
         .arg("capsem-startup")
         .stdin(Stdio::null())
         .stdout(output.try_clone().map_err(|_| Failure::Spawn)?)
@@ -119,10 +164,13 @@ fn supervise(input: &Input<'_>, output: &File, signals: &cancellation::Guard) ->
             Failure::Spawn
         }
     })?;
-    let deadline = Instant::now() + input.timeout;
+    supervise_child(&mut child, Instant::now() + timeout, signals)
+}
+
+fn supervise_child(child: &mut Child, deadline: Instant, signals: &cancellation::Guard) -> Result<(), Failure> {
     loop {
         if let Some(signal) = signals.received() {
-            terminate(&mut child, signal);
+            terminate(child, signal);
             return Err(Failure::Signal {
                 signal: signal.number(),
             });
@@ -130,7 +178,7 @@ fn supervise(input: &Input<'_>, output: &File, signals: &cancellation::Guard) ->
         match child.try_wait() {
             Ok(Some(status)) if status.success() => return Ok(()),
             Ok(Some(status)) => {
-                terminate(&mut child, Signal::Kill);
+                terminate(child, Signal::Kill);
                 return Err(match status.code() {
                     Some(code) => Failure::Exit { code },
                     None => Failure::Signal {
@@ -140,13 +188,13 @@ fn supervise(input: &Input<'_>, output: &File, signals: &cancellation::Guard) ->
             }
             Ok(None) => {}
             Err(_) => {
-                terminate(&mut child, Signal::Kill);
+                terminate(child, Signal::Kill);
                 return Err(Failure::Wait);
             }
         }
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
-            terminate(&mut child, Signal::Kill);
+            terminate(child, Signal::Kill);
             return Err(Failure::TimedOut);
         }
         std::thread::sleep(remaining.min(Duration::from_millis(10)));

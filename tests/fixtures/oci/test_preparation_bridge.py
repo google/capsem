@@ -56,11 +56,29 @@ def test_private_status_waits_for_exec_eof_and_output_uses_a_separate_pipe(prepa
         assert not (tmp_path / "preparing").exists()
 
 
+def test_repository_preparation_retains_exact_pin_and_uses_the_private_deadline(preparation, tmp_path):
+    options = [{"url": "https://example.com/source.git", "resolved_commit": "a" * 40,
+                "destination": "nested/project"}]
+    config = {"process": {"args": ["entry", "a b"]}, "mounts": [], "hooks": {"poststart": ["running"]}}
+    preparation["configure"](config, None, options, "/workspace")
+    assert config["process"]["args"] == [
+        "/run/capsem-prepare", "--repositories", "/workspace", "1", options[0]["url"],
+        "a" * 40, "nested/project", "0", "", "--", "entry", "a b",
+    ]
+    assert "poststart" not in config["hooks"]
+    with preparation["Bridge"](tmp_path, {"script": ":", "timeout_seconds": 5}, lambda: None,
+                               repositories=True, clock=lambda: 100) as bridge:
+        bridge.event({"type": "preparing"})
+        assert bridge.delay() == 305
+
+
 @pytest.mark.parametrize(("failure", "expected"), [
     ({"kind": "exit", "code": 17}, 17), ({"kind": "signal", "signal": 15}, 143),
     ({"kind": "timed_out"}, 124), ({"kind": "shell_unavailable"}, 126),
     ({"kind": "entrypoint_exec"}, 126), ({"kind": "spawn"}, 126),
     ({"kind": "wait"}, 126), ({"kind": "invalid_input"}, 126),
+    ({"kind": "repository_destination"}, 126), ({"kind": "repository_git_unavailable"}, 126),
+    ({"kind": "repository_checkout"}, 126),
 ])
 def test_private_preparation_failure_is_authoritative_over_runner_success(preparation, tmp_path, failure, expected):
     events = frame({"type": "preparing"}) + frame({"type": "failed", "failure": failure})

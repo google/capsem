@@ -38,6 +38,7 @@ fn fixture() -> (tempfile::TempDir, String, String, String) {
             }),
             environment: Some(&original),
             startup: Some(&startup),
+            repositories: &[],
         },
         &["old-command".into()],
         &BTreeMap::from([("OLD_ONLY".into(), "old".into())]),
@@ -68,6 +69,7 @@ fn a_new_revision_builds_fresh_controls_and_verifies_carried_bytes_without_publi
         &selected,
         &BTreeMap::from([("NEW_ONLY".into(), "approved".into())]),
         Some(&startup),
+        &[],
         resources,
     )
     .unwrap();
@@ -100,6 +102,7 @@ fn same_owner_is_unchanged_and_a_new_owner_can_remove_old_startup_and_variables(
         &context(1),
         &BTreeMap::new(),
         None,
+        &[],
         workload_resources(2048, 2).unwrap()
     )
     .unwrap()
@@ -110,6 +113,7 @@ fn same_owner_is_unchanged_and_a_new_owner_can_remove_old_startup_and_variables(
         &context(5),
         &BTreeMap::new(),
         None,
+        &[],
         workload_resources(2048, 2).unwrap(),
     )
     .unwrap();
@@ -147,6 +151,7 @@ fn corrupt_carried_metadata_rootfs_or_selection_never_changes_old_controls() {
                 &selected,
                 &BTreeMap::new(),
                 None,
+                &[],
                 workload_resources(2048, 2).unwrap()
             )
             .is_err(),

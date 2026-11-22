@@ -16,7 +16,10 @@ import msgpack
 STATUS_LIMIT = 256  # capsem-proto::preparation
 OUTPUT_LIMIT = 32 * 1024
 HELPER = "/run/capsem-prepare"
-FAILURES = {"invalid_input", "shell_unavailable", "spawn", "wait", "exit", "signal", "timed_out", "entrypoint_exec"}
+REPOSITORY_PREPARATION_SECONDS = 300  # capsem-proto::preparation
+MAX_REPOSITORIES = 64
+FAILURES = {"invalid_input", "shell_unavailable", "spawn", "wait", "exit", "signal", "timed_out", "entrypoint_exec",
+            "repository_destination", "repository_git_unavailable", "repository_checkout"}
 
 
 def checked(startup):
@@ -28,11 +31,28 @@ def checked(startup):
     return startup
 
 
-def configure(config, startup):
-    if startup is None:
+def repository_arguments(repositories, workspace):
+    if repositories is None:
+        return []
+    if (not isinstance(repositories, list) or not 0 < len(repositories) <= MAX_REPOSITORIES
+            or not isinstance(workspace, str) or not workspace.startswith("/")):
+        raise ValueError("invalid approved repository inputs")
+    fields = ("url", "resolved_commit", "destination")
+    arguments = ["--repositories", workspace, str(len(repositories))]
+    for repository in repositories:
+        if (not isinstance(repository, dict) or set(repository) != set(fields)
+                or any(not isinstance(repository[field], str) or "\0" in repository[field] for field in fields)):
+            raise ValueError("invalid approved repository inputs")
+        arguments.extend(repository[field] for field in fields)
+    return arguments
+
+
+def configure(config, startup, repositories=None, workspace=None):
+    if startup is None and repositories is None:
         return config
-    checked(startup)
-    config["process"]["args"] = [HELPER, str(startup["timeout_seconds"]), startup["script"], "--", *config["process"]["args"]]
+    arguments = repository_arguments(repositories, workspace)
+    seconds, script = (checked(startup)["timeout_seconds"], startup["script"]) if startup is not None else (0, "")
+    config["process"]["args"] = [HELPER, *arguments, str(seconds), script, "--", *config["process"]["args"]]
     config["mounts"].append({"destination": HELPER, "type": "bind", "source": "/run/capsem-sysutil",
                              "options": ["bind", "ro", "nosuid", "nodev"]})
     # A wrapper process is still preparing. Only its private result + exec EOF
@@ -68,8 +88,11 @@ def status_record(payload):
 
 
 class Bridge:
-    def __init__(self, stage, startup, kill, *, boot_timeout=30, clock=time.monotonic):
-        self.startup, self.kill, self.clock = checked(startup), kill, clock
+    def __init__(self, stage, startup, kill, *, repositories=False, boot_timeout=30, clock=time.monotonic):
+        self.timeout = checked(startup)["timeout_seconds"] if startup is not None else 0
+        if repositories:
+            self.timeout += REPOSITORY_PREPARATION_SECONDS
+        self.kill, self.clock = kill, clock
         self.deadline = clock() + boot_timeout
         with contextlib.ExitStack() as cleanup:
             self.stage = os.open(stage, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -212,7 +235,7 @@ class Bridge:
             self.fail(event["failure"])
         elif kind == "preparing" and self.phase is None:
             self.phase = kind
-            self.deadline = self.clock() + self.startup["timeout_seconds"]
+            self.deadline = self.clock() + self.timeout
             self.marker("preparing", b"1\n")
         elif kind == "entrypoint" and self.phase == "preparing" and not self.failure:
             self.phase = kind

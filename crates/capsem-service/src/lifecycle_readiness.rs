@@ -170,11 +170,7 @@ async fn finish_view(
                 .load_revision(&environment.environment_id, &environment.revision_id)
                 .await
                 .map_err(unavailable)?;
-            revision
-                .specification
-                .startup
-                .as_ref()
-                .map_or(0, |startup| startup.timeout_seconds)
+            revision.specification.preparation_timeout_seconds()
         }
         None => 0,
     };

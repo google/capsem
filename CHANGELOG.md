@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Prepare public HTTPS repositories at their saved commits before an OCI workload starts, while preserving existing checkouts and local edits.
 - Added: Run approved sandbox MCP servers inside a saved environment's OCI workload and retire their processes when disabled.
 - Fixed: Keep MCP spawn requests independent after a correlated denial, and close an interrupted handoff before reusing its channel.
 - Fixed: Apply the saved environment MCP server's default permission to resource reads and prompt retrieval, alongside independent tool overrides.

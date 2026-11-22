@@ -15,7 +15,7 @@ struct Rootfs {
 
 /// The caller has admitted this immutable image and selected this historical
 /// revision for the original new owner. Only image metadata is carried; args,
-/// variables, startup and resource controls are built from fresh inputs.
+/// variables, startup, repositories and resource controls use fresh inputs.
 /// Nothing is published here: the service applies its ordinary import policy.
 pub fn plan_environment(
     session: &Path,
@@ -23,6 +23,7 @@ pub fn plan_environment(
     context: &stage::EnvironmentLaunchContext,
     variables: &BTreeMap<String, String>,
     startup: Option<&capsem_config::environment::EnvironmentStartup>,
+    repositories: &[capsem_config::environment::EnvironmentRepository],
     resources: WorkloadResources,
 ) -> Result<Vec<stage::StagedFile>> {
     context.validate()?;
@@ -69,6 +70,7 @@ pub fn plan_environment(
             }),
             environment: Some(context),
             startup,
+            repositories,
         },
         &[],
         variables,

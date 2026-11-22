@@ -49,6 +49,14 @@ impl EnvironmentDocument {
 }
 
 impl<I, R, C, M> EnvironmentSpecification<I, R, C, M> {
+    /// Total approved work before entering the original OCI command.
+    pub fn preparation_timeout_seconds(&self) -> u32 {
+        capsem_proto::preparation::timeout_seconds(
+            self.startup.as_ref().map_or(0, |startup| startup.timeout_seconds),
+            !self.repositories.is_empty(),
+        )
+    }
+
     fn validate_common(&self) -> Result<(), String> {
         let name = self.name.as_bytes();
         require(

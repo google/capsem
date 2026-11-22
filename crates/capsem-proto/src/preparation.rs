@@ -10,6 +10,16 @@ pub const MAX_STATUS_BYTES: u32 = 256;
 /// receive duplicates of OUTPUT_FD only.
 pub const OUTPUT_FD: i32 = 3;
 pub const STATUS_FD: i32 = 4;
+/// Budget for all Git checkouts in one OCI workload preparation.
+pub const REPOSITORY_PREPARATION_SECONDS: u32 = 300;
+
+pub fn timeout_seconds(startup_seconds: u32, has_repositories: bool) -> u32 {
+    startup_seconds.saturating_add(if has_repositories {
+        REPOSITORY_PREPARATION_SECONDS
+    } else {
+        0
+    })
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -34,6 +44,9 @@ pub enum PreparationFailure {
     Signal { signal: i32 },
     TimedOut,
     EntrypointExec,
+    RepositoryDestination,
+    RepositoryGitUnavailable,
+    RepositoryCheckout,
 }
 
 fn validate(status: &PreparationStatus) -> io::Result<()> {

@@ -14,7 +14,7 @@ benchmark = "The benchmark collector subprocess contract and persisted benchmark
 config = "User and corporate configuration tooling exposes schema, lint, metadata and settings documents as JSON for its public configuration interfaces."
 durable = "Existing persisted management records, receipt files and replay inputs use JSON; changing them requires an explicit current format and regeneration of owned fixtures, not an internal transport shortcut."
 credentials = "OAuth/OIDC endpoint responses and existing durable credential metadata use JSON; token verification/storage compatibility requires preserving their specified shapes."
-launch-controls = "The host-owned, bounded options.json document is the persisted Python workload-launcher contract. It carries approved startup script/timeout, OCI options and qualified environment/session/generation metadata; cold rebind validates the retained revision and preserves the approved variables. It is not an internal IPC encoding or authority token."
+launch-controls = "The host-owned, bounded options.json document is the persisted Python workload-launcher contract. It carries approved startup, pinned HTTPS repositories, OCI options and qualified environment/session/generation metadata. Cold rebind validates the retained revision and rebuilds those controls."
 sandbox-mcp-launcher = "The existing guest workload launcher consumes one bounded length-prefixed JSON setup record on stdin before starting an approved OCI workload MCP executable. The host encodes it once for the boot definition. Subsequent MCP stdio bytes pass through framed exec unchanged."
 container = "OCI runtime configuration and seccomp profile documents consumed by runc are JSON; this is the external container-runtime format."
 forensic = "Security rule definitions and forensic records have existing JSON export/storage contracts; archive transport stays binary and must not hash or size their JSON envelope."
@@ -260,7 +260,7 @@ json = { count = 3, reason = "durable" }
 json = { count = 8, reason = "container" }
 
 [sources."crates/capsem-core/src/container/stage.rs"]
-json = { count = 19, reason = "launch-controls" }
+json = { count = 20, reason = "launch-controls" }
 
 [sources."crates/capsem-core/src/container/workspace_owner.rs"]
 json = { count = 5, reason = "launch-controls" }

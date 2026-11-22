@@ -89,6 +89,13 @@ catalog selector, remove its old resolution fields so Capsem can resolve the
 new selection. **Review changes** validates the text against the selected
 revision before you save.
 
+Add public HTTPS repositories to an environment with an OCI image that
+includes Git. When you save the environment, Capsem resolves each ref to an
+exact commit. On startup it checks out missing repositories below the workspace
+before running the startup script or entrypoint. Capsem leaves an existing
+checkout of the same repository intact, including local edits and untracked
+files. A destination occupied by a different repository stops preparation.
+
 Open **Change history** to inspect older revisions. Complete revisions show
 canonical TOML. When values have been purged, the view identifies the removed
 variables and shows the remaining content when it is available.

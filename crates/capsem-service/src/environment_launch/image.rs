@@ -1,7 +1,7 @@
 //! Saved workloads are selected only from the acknowledged original owner.
 use super::*;
 use crate::owner_connection::OwnerConnection;
-use capsem_config::environment::EnvironmentImage;
+use capsem_config::environment::{EnvironmentImage, EnvironmentRepository};
 use std::sync::Arc;
 
 pub(crate) struct SelectedImage {
@@ -9,6 +9,7 @@ pub(crate) struct SelectedImage {
     pub(crate) reference: EnvironmentRevisionParent,
     pub(crate) image: EnvironmentImage,
     pub(crate) startup: Option<capsem_config::environment::EnvironmentStartup>,
+    pub(crate) repositories: Vec<EnvironmentRepository>,
 }
 impl SelectedImage {
     pub(crate) fn context(&self) -> Result<capsem_core::container::stage::EnvironmentLaunchContext> {
@@ -86,6 +87,7 @@ pub(crate) async fn prepare_image(state: &Arc<ServiceState>, id: &str, attach: b
             .map_err(|_| unavailable("invalid environment launch identity".into()))?;
         let owner = Arc::clone(&selected.owner);
         let startup = selected.startup;
+        let repositories = selected.repositories;
         let manifest = recorded.manifest.clone();
         let files = state
             .off_worker(move |state| {
@@ -109,6 +111,7 @@ pub(crate) async fn prepare_image(state: &Arc<ServiceState>, id: &str, attach: b
                     &context,
                     &variables,
                     startup.as_ref(),
+                    &repositories,
                     resources,
                 )
                 .map_err(|error| format!("prepare trusted environment launch: {error:#}"))?;
@@ -173,6 +176,7 @@ async fn selected_image(
             reference,
             image,
             startup: specification.startup,
+            repositories: specification.repositories,
         },
         specification.variables,
     )))
@@ -182,9 +186,12 @@ async fn selected_image(
 /// polled route fetches a registry or retains another specification cache.
 pub(crate) async fn preparation_timeout(state: &Arc<ServiceState>, id: &str) -> Result<std::time::Duration, String> {
     let selected = selected_image(state, id).await?;
-    let seconds = selected
-        .and_then(|(selected, _variables)| selected.startup)
-        .map_or(0, |startup| startup.timeout_seconds);
+    let seconds = selected.map_or(0, |(selected, _variables)| {
+        capsem_proto::preparation::timeout_seconds(
+            selected.startup.as_ref().map_or(0, |startup| startup.timeout_seconds),
+            !selected.repositories.is_empty(),
+        )
+    });
     Ok(std::time::Duration::from_secs(u64::from(seconds)))
 }
 

@@ -16,6 +16,7 @@ fn launch_options_keep_environment_and_actual_owner_identity_outside_policy_byte
         rootfs: None,
         environment: Some(&context),
         startup: None,
+        repositories: &[],
     };
     let resources = super::super::workload_resources(2048, 2).unwrap();
     let files = stage_plan(image, &[], &BTreeMap::new(), resources, DeclaredSurface::Terminal).unwrap();
@@ -31,6 +32,7 @@ fn launch_options_keep_environment_and_actual_owner_identity_outside_policy_byte
             rootfs: None,
             environment: Some(&invalid),
             startup: None,
+            repositories: &[],
         },
         &[],
         &BTreeMap::new(),
@@ -38,6 +40,37 @@ fn launch_options_keep_environment_and_actual_owner_identity_outside_policy_byte
         DeclaredSurface::Terminal
     )
     .is_err());
+}
+
+#[test]
+fn repository_launch_options_carry_only_the_approved_checkout_inputs() {
+    let context = EnvironmentLaunchContext {
+        session_id: uuid::Uuid::from_u128(1),
+        owner_generation: uuid::Uuid::from_u128(2),
+        environment_id: uuid::Uuid::from_u128(3),
+        revision_id: uuid::Uuid::from_u128(4),
+    };
+    let repositories = [EnvironmentRepository {
+        url: "https://EXAMPLE.com/source.git".into(),
+        reference: "refs/heads/main".into(),
+        resolved_commit: "a".repeat(40),
+        destination: "approved/project".into(),
+    }];
+    let mut image = StageImage::from(MANIFEST);
+    image.repositories = &repositories;
+    let resources = super::super::workload_resources(2048, 2).unwrap();
+    assert!(stage_plan(image, &[], &BTreeMap::new(), resources, DeclaredSurface::Terminal).is_err());
+    image.environment = Some(&context);
+    let files = stage_plan(image, &[], &BTreeMap::new(), resources, DeclaredSurface::Terminal).unwrap();
+    let options: serde_json::Value = serde_json::from_slice(&files[0].bytes).unwrap();
+    assert_eq!(
+        options["repositories"],
+        serde_json::json!([{
+            "url": "https://example.com/source.git",
+            "resolved_commit": "a".repeat(40),
+            "destination": "approved/project",
+        }])
+    );
 }
 
 #[test]
@@ -52,6 +85,7 @@ fn published_root_stage_metadata_is_typed_and_keeps_the_single_stage_path() {
         rootfs: Some(rootfs),
         environment: None,
         startup: None,
+        repositories: &[],
     };
     let resources = super::super::workload_resources(2048, 2).unwrap();
     let plan = stage_plan(image, &[], &BTreeMap::new(), resources, DeclaredSurface::Terminal).unwrap();
@@ -107,6 +141,7 @@ fn published_root_stage_metadata_rejects_bad_digests_and_out_of_bound_sizes() {
             }),
             environment: None,
             startup: None,
+            repositories: &[],
         };
         assert!(stage_plan(image, &[], &BTreeMap::new(), resources, DeclaredSurface::Terminal).is_err());
     }
@@ -347,6 +382,7 @@ fn approved_startup_is_staged_only_with_a_qualified_environment_context() {
         rootfs: None,
         environment: Some(&context),
         startup: Some(&startup),
+        repositories: &[],
     };
     let files = stage_plan(image, &[], &BTreeMap::new(), resources, DeclaredSurface::Terminal).unwrap();
     let options: serde_json::Value = serde_json::from_slice(&files[0].bytes).unwrap();
@@ -371,6 +407,7 @@ fn approved_startup_is_staged_only_with_a_qualified_environment_context() {
     assert!(stage_plan(
         StageImage {
             startup: Some(&invalid),
+            repositories: &[],
             ..image
         },
         &[],

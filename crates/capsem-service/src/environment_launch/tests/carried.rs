@@ -75,6 +75,7 @@ async fn recompose(behavior: &'static str) {
             rootfs: None,
             environment: Some(&previous),
             startup: Some(&startup),
+            repositories: &[],
         },
         &["old-override".into()],
         &std::collections::BTreeMap::from([("OLD_ONLY".into(), "forbidden".into())]),

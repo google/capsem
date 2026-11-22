@@ -150,11 +150,7 @@ pub(crate) async fn readiness(
         .await;
     authorize(&actor, &environment.environment_id)?;
     let snapshot = observed.map_err(unavailable)?;
-    let startup_timeout_seconds = snapshot
-        .specification
-        .startup
-        .as_ref()
-        .map_or(0, |startup| startup.timeout_seconds);
+    let startup_timeout_seconds = snapshot.specification.preparation_timeout_seconds();
     Ok(Json(capsem_api::EnvironmentReadinessResponse {
         environment,
         startup_timeout_seconds,
