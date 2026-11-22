@@ -1805,6 +1805,32 @@ fn rename_file() {
 }
 
 #[test]
+fn rename2_noreplace_preserves_existing_directory_then_publishes_to_absent_path() {
+    let dir = temp_share("rename2-noreplace");
+    std::fs::create_dir(dir.join("staged")).unwrap();
+    std::fs::write(dir.join("staged/contents"), b"approved").unwrap();
+    std::fs::create_dir(dir.join("project")).unwrap();
+    let mut proc = test_processor(&dir);
+    let h = make_header(FUSE_RENAME2, 1, 1);
+    let mut body = fuse::as_bytes(&FuseRename2In {
+        newdir: 1,
+        flags: libc::RENAME_NOREPLACE,
+        padding: 0,
+    })
+    .to_vec();
+    body.extend_from_slice(b"staged\0project\0");
+    let request = build_request(&h, &body);
+    assert_eq!(response_error(&proc.handle_request(&request)), -libc::EEXIST);
+    assert!(dir.join("staged/contents").exists());
+    assert!(std::fs::read_dir(dir.join("project")).unwrap().next().is_none());
+
+    std::fs::remove_dir(dir.join("project")).unwrap();
+    assert_eq!(response_error(&proc.handle_request(&request)), 0);
+    assert!(!dir.join("staged").exists());
+    assert_eq!(std::fs::read(dir.join("project/contents")).unwrap(), b"approved");
+}
+
+#[test]
 fn rename_over_existing_rebinds_source_inode_to_target_path() {
     let dir = temp_share("rename-over-existing");
     std::fs::write(dir.join("config.json"), b"old").unwrap();

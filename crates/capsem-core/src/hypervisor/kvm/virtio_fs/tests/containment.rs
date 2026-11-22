@@ -136,7 +136,7 @@ fn rename2_flags_cannot_silently_overwrite_or_exchange_files() {
     let mut a = attack("rename2-flags");
     std::fs::write(a.share.join("source"), b"source").unwrap();
     std::fs::write(a.share.join("target"), b"target").unwrap();
-    for flags in [1, 2, 4, u32::MAX] {
+    for flags in [2, 4, u32::MAX] {
         let mut body = fuse::as_bytes(&FuseRename2In {
             newdir: 1,
             flags,

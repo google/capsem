@@ -1,7 +1,12 @@
 //! Directory and namespace FUSE operations: OPENDIR, READDIR, RELEASEDIR,
 //! MKDIR, RMDIR, UNLINK, RENAME, MKNOD, SYMLINK, READLINK, LINK.
 
-use std::os::unix::fs::{DirBuilderExt as _, MetadataExt};
+use capsem_foundation::unix::contained::ContainedDir;
+use std::ffi::OsStr;
+use std::os::unix::{
+    ffi::OsStrExt,
+    fs::{DirBuilderExt as _, MetadataExt},
+};
 
 use super::FuseProcessor;
 use crate::hypervisor::fuse::{self, *};
@@ -206,7 +211,7 @@ impl FuseProcessor {
             Some(s) => s,
             None => return fuse::error_response(header.unique, -libc::EIO),
         };
-        self.rename_impl(header, r.newdir, &body[std::mem::size_of::<FuseRenameIn>()..])
+        self.rename_impl(header, r.newdir, &body[std::mem::size_of::<FuseRenameIn>()..], false)
     }
 
     pub(super) fn do_rename2(&mut self, header: &FuseInHeader, body: &[u8]) -> Vec<u8> {
@@ -217,13 +222,18 @@ impl FuseProcessor {
             Some(s) => s,
             None => return fuse::error_response(header.unique, -libc::EIO),
         };
-        if r.flags != 0 {
+        if !matches!(r.flags, 0 | libc::RENAME_NOREPLACE) {
             return fuse::error_response(header.unique, -libc::ENOSYS);
         }
-        self.rename_impl(header, r.newdir, &body[std::mem::size_of::<FuseRename2In>()..])
+        self.rename_impl(
+            header,
+            r.newdir,
+            &body[std::mem::size_of::<FuseRename2In>()..],
+            r.flags == libc::RENAME_NOREPLACE,
+        )
     }
 
-    fn rename_impl(&mut self, header: &FuseInHeader, newdir: u64, names_buf: &[u8]) -> Vec<u8> {
+    fn rename_impl(&mut self, header: &FuseInHeader, newdir: u64, names_buf: &[u8], no_replace: bool) -> Vec<u8> {
         let (old_name, new_name) = match fuse::extract_two_names(names_buf) {
             Some(n) => n,
             None => return fuse::error_response(header.unique, -libc::EINVAL),
@@ -236,7 +246,19 @@ impl FuseProcessor {
             Some(p) => p,
             None => return fuse::error_response(header.unique, -libc::EINVAL),
         };
-        match std::fs::rename(&old_path, &new_path) {
+        let moved = if no_replace {
+            let (Some(old_parent), Some(new_parent)) = (old_path.parent(), new_path.parent()) else {
+                return fuse::error_response(header.unique, -libc::EINVAL);
+            };
+            (|| {
+                let source = ContainedDir::open_root_no_follow(old_parent)?;
+                let destination = ContainedDir::open_root_no_follow(new_parent)?;
+                source.rename_to_if_absent(OsStr::from_bytes(old_name), &destination, OsStr::from_bytes(new_name))
+            })()
+        } else {
+            std::fs::rename(&old_path, &new_path)
+        };
+        match moved {
             Ok(()) => {
                 self.inodes.rename_path(&old_path, &new_path);
                 fuse::success_response(header.unique, &[])

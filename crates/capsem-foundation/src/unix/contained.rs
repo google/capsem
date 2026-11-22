@@ -457,6 +457,32 @@ impl ContainedDir {
         Ok(())
     }
 
+    /// Move a child atomically if the destination name is absent.
+    #[cfg(target_os = "linux")]
+    pub fn rename_to_if_absent(&self, name: &OsStr, to: &ContainedDir, to_name: &OsStr) -> io::Result<()> {
+        check_component(name)?;
+        check_component(to_name)?;
+        let name = std::ffi::CString::new(name.as_bytes())?;
+        let to_name = std::ffi::CString::new(to_name.as_bytes())?;
+        // The paths are single NUL-terminated components and both directory
+        // descriptors remain owned. Call Linux directly for static musl guests.
+        let result = unsafe {
+            nix::libc::syscall(
+                nix::libc::SYS_renameat2,
+                self.fd.as_raw_fd(),
+                name.as_ptr(),
+                to.fd.as_raw_fd(),
+                to_name.as_ptr(),
+                nix::libc::RENAME_NOREPLACE,
+            )
+        };
+        if result == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
+    }
+
     /// Make `to_name` below `to` a second name for the regular file `name`.
     ///
     /// Neither name is resolved. A source that is not a regular file -- a

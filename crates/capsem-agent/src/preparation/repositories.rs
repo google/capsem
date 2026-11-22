@@ -5,14 +5,11 @@ use capsem_foundation::unix::{
     contained::{ContainedDir, ContainedOpenOptions},
     process::cancellation,
 };
-use nix::{
-    libc,
-    sys::stat::{mkdirat, Mode},
-};
-use std::ffi::{CStr, CString, OsStr};
+use nix::sys::stat::{mkdirat, Mode};
+use std::ffi::{CStr, OsStr};
 use std::io::{self, Read};
 use std::os::fd::{AsFd, AsRawFd};
-use std::os::unix::{ffi::OsStrExt, fs::MetadataExt, process::CommandExt};
+use std::os::unix::{fs::MetadataExt, process::CommandExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -89,15 +86,16 @@ fn prepare_one(
     let temporary = OsStr::new(&temporary);
     mkdirat(Some(parent.as_fd().as_raw_fd()), temporary, Mode::S_IRWXU).map_err(|_| Failure::RepositoryDestination)?;
     let staging = parent.descend(temporary).map_err(|_| Failure::RepositoryDestination)?;
-    let result =
-        checkout(&staging, repository, deadline, signals).and_then(|()| match publish(&parent, temporary, name) {
+    let result = checkout(&staging, repository, deadline, signals).and_then(|()| {
+        match parent.rename_to_if_absent(temporary, &parent, name) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                 let existing = parent.descend(name).map_err(|_| Failure::RepositoryDestination)?;
                 verify_existing(&existing, repository.url, deadline, signals)
             }
             Err(_) => Err(Failure::RepositoryDestination),
-        });
+        }
+    });
     if parent
         .descend(temporary)
         .is_ok_and(|remaining| same_directory(&staging, &remaining))
@@ -112,30 +110,6 @@ fn same_directory(left: &ContainedDir, right: &ContainedDir) -> bool {
         .ok()
         .zip(right.metadata().ok())
         .is_some_and(|(left, right)| (left.dev(), left.ino()) == (right.dev(), right.ino()))
-}
-
-fn publish(parent: &ContainedDir, temporary: &OsStr, name: &OsStr) -> io::Result<()> {
-    let temporary = CString::new(temporary.as_bytes())?;
-    let name = CString::new(name.as_bytes())?;
-    let fd = parent.as_fd().as_raw_fd();
-    // Both C strings contain only single path components and the parent fd
-    // remains owned throughout. Publishing may never replace an existing name.
-    // Use the Linux syscall directly because the static guest libc does not export renameat2.
-    let result = unsafe {
-        libc::syscall(
-            libc::SYS_renameat2,
-            fd,
-            temporary.as_ptr(),
-            fd,
-            name.as_ptr(),
-            libc::RENAME_NOREPLACE,
-        )
-    };
-    if result == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
-    }
 }
 
 fn checkout(
