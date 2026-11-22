@@ -6,7 +6,7 @@ from contextlib import closing
 import pytest
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.gateway import TcpHttpClient
-from helpers.service import exec_output_text, vm_name
+from helpers.service import ServiceInstance, exec_output_text, vm_name
 from helpers.service_gateway import ServiceGateway
 
 from tests.ironbank.kingslanding.test_environment_approval import delegate
@@ -127,6 +127,98 @@ def test_apply_keeps_unselected_sandboxes_pinned_and_reports_each_acknowledgemen
             assert binding(sibling) == sibling_binding and marker(sibling) == "original"
     finally:
         gateway.stop()
+
+
+def test_corporate_reload_preserves_each_acknowledged_environment_policy(monkeypatch, tmp_path):
+    policy = tmp_path / "reload-corp.toml"
+    baseline = 'refresh_policy = "24h"\n'
+    policy.write_text(baseline)
+    monkeypatch.setenv("CAPSEM_CORP_CONFIG", str(policy))
+    service = ServiceInstance()
+    gateway = ServiceGateway(service)
+    shared = "CORPORATE_REFRESH_FIXTURE"
+    selected_only = "ENVIRONMENT_REFRESH_FIXTURE"
+    try:
+        service.start()
+        gateway.start()
+        access = {"permit_fixture": {
+            "name": "Allow the corporate refresh fixture",
+            "action": "allow",
+            "match": f'process.command.contains("{shared}")',
+        }}
+        specification = {
+            "name": "corporate-reload-scope",
+            "variables": {"RELOAD_REVISION": "original"},
+            "access": {"custom": access},
+        }
+        original = save(service, specification)
+        target = create(service, original, vm_name("reload-target"))
+        sibling = create(service, original, vm_name("reload-sibling"))
+        with closing(TcpHttpClient(gateway.base_url, gateway.token)) as operator:
+            def binding(vm):
+                return operator.get(f"/vms/{vm}/info")["environment"]
+
+            def probe(vm, command):
+                result = operator.post(f"/vms/{vm}/exec", {"command": command, "target": "vm"})
+                return result["exit_code"] == 0, exec_output_text(result)
+
+            def assert_probes(corporate_allows):
+                for vm in (target, sibling):
+                    allowed, text = probe(vm, f"printf %s {shared}")
+                    assert allowed is corporate_allows
+                    if allowed:
+                        assert text == shared
+                assert probe(target, f"printf %s {selected_only}")[0] is False
+                assert probe(sibling, f"printf %s {selected_only}") == (True, selected_only)
+                for vm in (target, sibling):
+                    assert probe(vm, 'printf "%s" "$RELOAD_REVISION"') == (True, "original")
+
+            root = f"/environments/{original['environment_id']}"
+            revised = operator.post(root + "/changes", {
+                "request_id": str(uuid.uuid4()), "base_revision_id": original["revision_id"],
+                "reason": "Defer variables but apply this rule now",
+                "specification": {
+                    **specification,
+                    "variables": {"RELOAD_REVISION": "next"},
+                    "access": {"custom": {**access, "block_selected": {
+                        "name": "Block only the selected sandbox's fixture",
+                        "action": "block",
+                        "match": f'process.command.contains("{selected_only}")',
+                    }}},
+                },
+            })["result"]
+            receipt = operator.post(root + "/apply", {
+                "request_id": str(uuid.uuid4()), "base_revision_id": revised["revision_id"],
+                "revision_id": revised["revision_id"], "reason": "Apply to one running sandbox",
+                "targets": [{"session_id": target, "generation": binding(target)["owner_generation"],
+                             "base": original}],
+            })
+            assert receipt["application"] == "pending", receipt
+            acknowledged, untouched = binding(target), binding(sibling)
+            assert acknowledged["boot"] == original
+            assert acknowledged["live_policy"] == acknowledged["desired"] == revised
+            assert_probes(corporate_allows=True)
+
+            policy.write_text(baseline + f'''[corp.rules.reload_fixture]
+name = "reload_fixture"
+action = "block"
+priority = -100
+match = 'process.command.contains("{shared}")'
+''')
+            assert operator.post("/corp/reload", {}) == {"success": True, "reloaded": 2}
+            assert_probes(corporate_allows=False)
+            for vm, before in ((target, acknowledged), (sibling, untouched)):
+                narrowed = binding(vm)
+                assert narrowed["policy_digest"] != before["policy_digest"]
+                assert narrowed == {**before, "policy_digest": narrowed["policy_digest"]}
+
+            policy.write_text(baseline)
+            assert operator.post("/corp/reload", {}) == {"success": True, "reloaded": 2}
+            assert_probes(corporate_allows=True)
+            assert binding(target) == acknowledged and binding(sibling) == untouched
+    finally:
+        gateway.stop()
+        service.stop()
 
 
 def test_apply_can_retry_only_the_sandbox_whose_selection_write_failed(service):
