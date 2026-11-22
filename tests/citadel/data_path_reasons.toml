@@ -15,6 +15,7 @@ config = "User and corporate configuration tooling exposes schema, lint, metadat
 durable = "Existing persisted management records, receipt files and replay inputs use JSON; changing them requires an explicit current format and regeneration of owned fixtures, not an internal transport shortcut."
 credentials = "OAuth/OIDC endpoint responses and existing durable credential metadata use JSON; token verification/storage compatibility requires preserving their specified shapes."
 launch-controls = "The host-owned, bounded options.json document is the persisted Python workload-launcher contract. It carries approved startup script/timeout, OCI options and qualified environment/session/generation metadata; cold rebind validates the retained revision and preserves the approved variables. It is not an internal IPC encoding or authority token."
+sandbox-mcp-launcher = "The existing guest workload launcher consumes one bounded length-prefixed JSON setup record on stdin before starting an approved OCI workload MCP executable. The host encodes it once for the boot definition. Subsequent MCP stdio bytes pass through framed exec unchanged."
 container = "OCI runtime configuration and seccomp profile documents consumed by runc are JSON; this is the external container-runtime format."
 forensic = "Security rule definitions and forensic records have existing JSON export/storage contracts; archive transport stays binary and must not hash or size their JSON envelope."
 db-json = "Existing columnar query results, externally exposed forensic records and SQL-query tools use JSON. The DB-to-ledger query adapter still parses that historical result format; this is existing representation debt, not approval for new internal JSON round trips. Query cache keys are typed, and DB freshness stays DB-owned."
@@ -939,6 +940,9 @@ hash = { count = 1, reason = "hash-archive" }
 [sources."crates/capsem-core/src/environment/catalog_contents.rs"]
 json = { count = 1, reason = "environment-catalog" }
 hash = { count = 1, reason = "hash-skill-content" }
+
+[sources."crates/capsem-core/src/environment/mcp_launch.rs"]
+json = { count = 1, reason = "sandbox-mcp-launcher" }
 
 [sources."crates/capsem-mcp-aggregator/src/server_manager/http_pending.rs"]
 # Three borrowed external fields distinguish responses from server requests;

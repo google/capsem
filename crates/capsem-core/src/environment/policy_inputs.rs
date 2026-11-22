@@ -18,6 +18,7 @@ pub struct EnvironmentPolicyInputs<'a> {
     detection: &'a EnvironmentDetectionRules,
     plugins: &'a EnvironmentPlugins,
     boot_mcps: &'a EnvironmentMcps,
+    has_workload: bool,
     corporate: &'a SettingsFile,
 }
 impl<'a> EnvironmentPolicyInputs<'a> {
@@ -34,6 +35,7 @@ impl<'a> EnvironmentPolicyInputs<'a> {
             detection: &boot.detection,
             plugins: &boot.plugins,
             boot_mcps: &boot.mcps,
+            has_workload: boot.image.is_some(),
             corporate,
         }
     }
@@ -63,6 +65,9 @@ impl<'a> EnvironmentPolicyInputs<'a> {
     }
     pub fn boot_mcps(&self) -> &'a EnvironmentMcps {
         self.boot_mcps
+    }
+    pub fn has_workload(&self) -> bool {
+        self.has_workload
     }
     pub fn corporate(&self) -> &'a SettingsFile {
         self.corporate

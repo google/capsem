@@ -168,6 +168,9 @@ macro_rules! launcher_in_moved_root {
 /// stdio, so the workload's command reads and writes the client's.
 pub const LAUNCH_COMMAND: &str = launcher_in_moved_root!("/root/.capsem-image");
 
+/// Fixed owner-only launcher. Approved process data is supplied on stdin.
+pub const MCP_LAUNCH_COMMAND: &str = launcher_in_moved_root!("--mcp-stdio");
+
 /// The launcher with nothing attached: a detached create, a relaunch. The
 /// workload's command runs on a terminal the launcher holds, so an
 /// interactive one (a shell, an agent's TUI) waits for its user instead of

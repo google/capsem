@@ -14,6 +14,7 @@ mod owner_sandbox;
 mod private_seats;
 mod proxy_mcp;
 mod runtime_config;
+mod sandbox_mcp;
 mod trace_hints;
 mod vsock;
 
@@ -67,6 +68,7 @@ struct PreparedOwnerResources {
     checkpoint: Arc<vsock::SuspendFiles>,
     terminal_output: Arc<capsem_core::terminal::SessionTerminal>,
     aggregator: capsem_proto::mcp_aggregator::AggregatorClient,
+    sandbox_mcp: Option<std::os::unix::net::UnixStream>,
     mcp_servers: Vec<capsem_proto::mcp_contracts::McpServerDef>,
     builtin_bin: Option<PathBuf>,
     builtin_env: std::collections::HashMap<String, String>,
@@ -406,7 +408,13 @@ fn main() -> Result<()> {
     let builtin_env = std::collections::HashMap::new();
     let mcp_servers = runtime_config.mcp_servers(builtin_bin.as_deref(), builtin_env.clone());
     // Native MCP children and their privileged capabilities stay service-owned.
-    let aggregator = rt.block_on(connect_mcp_aggregator(&mcp_servers, &upstream_grants))?;
+    let (sandbox_mcp, sandbox_broker) = if runtime_config.sandbox_mcps.is_empty() {
+        (None, None)
+    } else {
+        let (owner, broker) = std::os::unix::net::UnixStream::pair()?;
+        (Some(owner), Some(broker))
+    };
+    let aggregator = rt.block_on(connect_mcp_aggregator(&mcp_servers, &upstream_grants, sandbox_broker))?;
     let prepared_vm = prepare_vm(BootOptions {
         assets: &args.assets_dir,
         kernel_override: args.kernel.as_deref(),
@@ -509,6 +517,7 @@ fn main() -> Result<()> {
         checkpoint,
         terminal_output,
         aggregator,
+        sandbox_mcp,
         mcp_servers,
         builtin_bin,
         builtin_env,
@@ -642,6 +651,7 @@ async fn run_async_main_loop(
         checkpoint,
         terminal_output,
         aggregator: aggregator_client,
+        sandbox_mcp,
         mcp_servers,
         builtin_bin,
         builtin_env,
@@ -830,6 +840,29 @@ async fn run_async_main_loop(
     let upstream_grants_for_vsock = Arc::clone(&upstream_grants);
 
     let vm_ready = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let guest_control = crate::guest_control::channel(128);
+    if let Some(socket) = sandbox_mcp {
+        tokio::spawn(sandbox_mcp::sync_enabled(
+            mcp_runtime.aggregator.clone(),
+            runtime_source.sandbox_mcps(),
+            runtime_config
+                .sandbox_mcps
+                .iter()
+                .map(|server| server.enabled)
+                .collect(),
+        ));
+        let owner = sandbox_mcp::Owner {
+            jobs: job_store.clone(),
+            hub: guest_control.0.clone(),
+            policy: runtime_source.sandbox_mcps(),
+            ready: vm_ready.clone(),
+        };
+        tokio::spawn(async move {
+            if let Err(error) = owner.serve(socket).await {
+                tracing::debug!(%error, "sandbox MCP owner capability ended");
+            }
+        });
+    }
 
     let ctrl_tx_ipc = ctrl_tx.clone();
     let uds_path = args.uds_path.clone();
@@ -855,6 +888,7 @@ async fn run_async_main_loop(
             ipc_tx: ipc_tx_clone,
             _ctrl_tx: ctrl_tx,
             ctrl_rx,
+            guest_control,
             terminal_output: terminal_output_clone,
             session_browser: browser_for_vsock,
             job_store: job_store_clone,

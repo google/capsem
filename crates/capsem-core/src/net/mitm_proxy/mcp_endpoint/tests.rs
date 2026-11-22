@@ -210,6 +210,7 @@ where
                 AggregatorMethod::ReadResource { .. } => "read_resource",
                 AggregatorMethod::GetPrompt { .. } => "get_prompt",
                 AggregatorMethod::Refresh { .. } => "refresh",
+                AggregatorMethod::SandboxEnabled { .. } => "sandbox_enabled",
                 AggregatorMethod::Shutdown => "shutdown",
             };
             calls_h.lock().await.push(label.to_string());

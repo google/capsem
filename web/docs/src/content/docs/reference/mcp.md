@@ -46,6 +46,12 @@ The boot revision fixes the endpoint. The broker checks the method and resolved
 addresses against the active HTTP policy before connecting.
 The server's default permission also governs resource reads and prompt retrieval.
 
+Sandbox servers with ordinary configuration run inside the environment's OCI
+workload as its configured user. The VM owner starts a server on discovery or
+first use and keeps its executable, arguments, working directory, and variables
+fixed for that boot. Disabling a server retires its process and removes its
+tools from discovery.
+
 In the desktop environment editor, open **Browse MCP catalog** to inspect a
 version, fill its configuration fields, and add it to the draft.
 **Review changes** shows the exact endpoint or sandbox command and arguments

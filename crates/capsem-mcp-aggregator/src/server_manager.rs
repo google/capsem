@@ -10,6 +10,7 @@ use std::future::Future;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 
 use anyhow::{bail, Context, Result};
 use capsem_mcp_transport::http_transport::BrokerHttpClient;
@@ -445,6 +446,7 @@ pub struct McpServerManager {
     running: HashMap<String, ServerPool>,
     http_client: reqwest::Client,
     capabilities: Option<(BrokerHttpClient, McpSpawnClient)>,
+    sandbox_attempts: HashMap<String, Instant>,
     // Unified, namespaced catalogs
     tool_catalog: Vec<McpToolDef>,
     resource_catalog: Vec<McpResourceDef>,
@@ -462,6 +464,7 @@ impl McpServerManager {
             running: HashMap::new(),
             http_client,
             capabilities: None,
+            sandbox_attempts: HashMap::new(),
             tool_catalog: Vec::new(),
             resource_catalog: Vec::new(),
             prompt_catalog: Vec::new(),
@@ -487,7 +490,20 @@ impl McpServerManager {
     /// Connect to all enabled servers (HTTP and stdio), run MCP handshake,
     /// then query each to build the unified catalog.
     pub async fn initialize_all(&mut self) -> Result<()> {
-        let defs: Vec<McpServerDef> = self.definitions.iter().filter(|d| d.enabled).cloned().collect();
+        self.initialize_servers(true).await
+    }
+
+    pub(crate) async fn initialize_static(&mut self) -> Result<()> {
+        self.initialize_servers(false).await
+    }
+
+    async fn initialize_servers(&mut self, include_sandbox: bool) -> Result<()> {
+        let defs: Vec<McpServerDef> = self
+            .definitions
+            .iter()
+            .filter(|d| d.enabled && (include_sandbox || d.sandbox_slot.is_none()))
+            .cloned()
+            .collect();
 
         for def in &defs {
             match self.connect_and_initialize(def).await {
@@ -508,6 +524,84 @@ impl McpServerManager {
             servers = self.running.len(),
             "MCP aggregator catalog built"
         );
+        Ok(())
+    }
+
+    pub(crate) fn pending_sandbox(&self, server: Option<&str>) -> Option<Self> {
+        let definitions: Vec<_> = self
+            .definitions
+            .iter()
+            .filter(|definition| {
+                definition.enabled
+                    && definition.sandbox_slot.is_some()
+                    && server.is_none_or(|name| name == definition.name)
+                    && !self.is_running(&definition.name)
+                    && self
+                        .sandbox_attempts
+                        .get(&definition.name)
+                        .is_none_or(|attempt| attempt.elapsed() >= Duration::from_secs(1))
+            })
+            .cloned()
+            .collect();
+        (!definitions.is_empty()).then(|| self.replacement(definitions))
+    }
+
+    pub(crate) fn publish_sandbox(&mut self, staged: Self) {
+        let attempted: HashSet<_> = staged
+            .definitions
+            .iter()
+            .map(|definition| definition.name.as_str())
+            .collect();
+        let keep = |server: &str| !attempted.contains(server);
+        self.running.retain(|server, _| keep(server));
+        self.tool_catalog.retain(|tool| keep(&tool.server_name));
+        self.resource_catalog.retain(|resource| keep(&resource.server_name));
+        self.prompt_catalog.retain(|prompt| keep(&prompt.server_name));
+        self.tool_names
+            .retain(|name| parse_namespaced(name).is_none_or(|(server, _)| keep(server)));
+        self.resource_routing.retain(|_, server| keep(server));
+        self.prompt_routing.retain(|_, server| keep(server));
+        self.running.extend(staged.running);
+        self.tool_catalog.extend(staged.tool_catalog);
+        self.resource_catalog.extend(staged.resource_catalog);
+        self.prompt_catalog.extend(staged.prompt_catalog);
+        self.tool_names.extend(staged.tool_names);
+        self.resource_routing.extend(staged.resource_routing);
+        self.prompt_routing.extend(staged.prompt_routing);
+        self.sandbox_attempts.extend(
+            staged
+                .definitions
+                .into_iter()
+                .map(|definition| (definition.name, Instant::now())),
+        );
+    }
+
+    pub(crate) fn update_sandbox_enabled(&mut self, enabled: &[bool]) -> Result<()> {
+        let slots: Vec<_> = self
+            .definitions
+            .iter()
+            .filter_map(|definition| definition.sandbox_slot)
+            .collect();
+        anyhow::ensure!(
+            slots.iter().copied().eq(0..enabled.len() as u32),
+            "sandbox MCP slot set does not match boot"
+        );
+        let mut disabled = Vec::new();
+        for definition in &mut self.definitions {
+            if let Some(slot) = definition.sandbox_slot {
+                let next = enabled[slot as usize];
+                if definition.enabled != next {
+                    definition.enabled = next;
+                    self.sandbox_attempts.remove(&definition.name);
+                    if !next {
+                        disabled.push(definition.clone());
+                    }
+                }
+            }
+        }
+        if !disabled.is_empty() {
+            self.publish_sandbox(self.replacement(disabled));
+        }
         Ok(())
     }
 
@@ -835,7 +929,9 @@ impl McpServerManager {
 
     /// Check if a server is currently connected.
     pub fn is_running(&self, name: &str) -> bool {
-        self.running.contains_key(name)
+        self.running
+            .get(name)
+            .is_some_and(|pool| !pool.peers[0].client.is_closed())
     }
 
     /// Look up a tool's peer and original name. Clone the peer so the caller

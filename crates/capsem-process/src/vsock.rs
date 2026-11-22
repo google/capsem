@@ -71,6 +71,7 @@ pub(crate) struct VsockOptions {
     pub(crate) ipc_tx: broadcast::Sender<ProcessToService>,
     pub(crate) _ctrl_tx: crate::control_queue::Sender,
     pub(crate) ctrl_rx: crate::control_queue::Receiver,
+    pub(crate) guest_control: (crate::guest_control::Sender, crate::guest_control::Receiver),
     pub(crate) terminal_output: Arc<capsem_core::terminal::SessionTerminal>,
     pub(crate) session_browser: Arc<crate::browser::SessionBrowser>,
     pub(crate) job_store: Arc<JobStore>,
@@ -100,6 +101,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         mut vsock_rx,
         ipc_tx,
         ctrl_rx,
+        guest_control,
         terminal_output,
         session_browser,
         job_store,
@@ -208,7 +210,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     shutdown.lock().await.terminal_bridge = Some(terminal_bridge);
 
     // 2. Stable Control Bridge (Read + Write)
-    let (ctrl_out_tx, mut ctrl_out_rx) = crate::guest_control::channel(128);
+    let (ctrl_out_tx, mut ctrl_out_rx) = guest_control;
     let js = Arc::clone(&job_store);
     let db_ctrl = Arc::clone(&db);
     let security_rules_ctrl = Arc::clone(&security_rules);
@@ -263,6 +265,9 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                 );
                 let mut replay_failed = false;
                 for msg in &to_replay {
+                    if msg.sandbox().is_some_and(|id| !js.sandbox_mcps.accepting(id)) {
+                        continue;
+                    }
                     if let Err(e) = control.write(msg.bytes()).await {
                         error!(error = %e, "control bridge: replay write failed");
                         replay_failed = true;
@@ -287,6 +292,9 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     // *before* writing so a write-fail/silent-drop is
                     // recoverable via the next rekey replay.
                     Some(frame) = ctrl_out_rx.recv_prepared() => {
+                        if frame.sandbox().is_some_and(|id| !js.sandbox_mcps.accepting(id)) {
+                            continue;
+                        }
                         if let Some(flow) = frame.publication() {
                             if !js.publisher.pending_connection(flow) {
                                 tracing::debug!(?flow, "control bridge: stale publication setup dropped");
@@ -699,6 +707,9 @@ pub(crate) async fn handle_guest_msg_with_tasks(
         GuestToHost::ShutdownComplete => js.shutdown_complete.notify_one(),
         GuestToHost::BootTiming { stages } => drop(guest_report::record_boot_timing(stages)),
         GuestToHost::ExecDone { id, exit_code } => {
+            if js.sandbox_mcps.complete(id) {
+                return;
+            }
             let streaming = {
                 let mut guard = js.active_execs.lock().unwrap();
                 let Some(active) = guard.get_mut(&id) else {

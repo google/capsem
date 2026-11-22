@@ -8,8 +8,12 @@ use std::os::fd::AsFd;
 pub(crate) async fn connect_mcp_aggregator(
     servers: &[capsem_proto::mcp_contracts::McpServerDef],
     upstream: &UpstreamGrantClient,
+    sandbox: Option<std::os::unix::net::UnixStream>,
 ) -> Result<AggregatorClient> {
-    let stream = upstream.open_mcp_aggregator().await?;
+    let stream = match sandbox {
+        Some(sandbox) => upstream.open_mcp_aggregator_with_sandbox(sandbox.into()).await?,
+        None => upstream.open_mcp_aggregator().await?,
+    };
     fd::set_nonblocking(stream.as_fd(), true)?;
     let stream = tokio::net::UnixStream::from_std(stream)?;
     let (reader, mut writer) = stream.into_split();

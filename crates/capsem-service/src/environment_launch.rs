@@ -49,7 +49,8 @@ pub(crate) fn validate_preparation(specification: &EnvironmentSpecification) -> 
         specification.packages == Default::default(),
         "environment packages require registry policy resolution"
     );
-    capsem_core::environment::validate_environment_mcp_launch(&specification.mcps).map_err(anyhow::Error::msg)?;
+    capsem_core::environment::validate_environment_mcp_launch(&specification.mcps, specification.image.is_some())
+        .map_err(anyhow::Error::msg)?;
     Ok(())
 }
 

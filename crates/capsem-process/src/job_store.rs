@@ -18,6 +18,7 @@ pub(crate) struct JobStore {
     /// Active exec jobs keyed by id, each with captured stdout and a notifier
     /// the EXEC-port reader thread fires after depositing captured bytes.
     pub(crate) active_execs: Mutex<HashMap<u64, ActiveExec>>,
+    pub(crate) sandbox_mcps: crate::sandbox_mcp::Jobs,
     /// In-flight explicit file operations keyed by service job id. The guest
     /// response only carries enough context for reads; writes need the original
     /// path, size and bounded content preview for the security-event ledger row.
@@ -130,6 +131,7 @@ impl JobStore {
             jobs: Mutex::new(HashMap::new()),
             clone_completions: Mutex::new(HashMap::new()),
             active_execs: Mutex::new(HashMap::new()),
+            sandbox_mcps: Default::default(),
             active_file_ops: Mutex::new(HashMap::new()),
             file_memory: Arc::new(tokio::sync::Semaphore::new(capsem_proto::APPROVAL_HELD_BYTES_TOTAL)),
             snapshot_transition: Mutex::new(None),
@@ -155,6 +157,7 @@ impl JobStore {
     /// the oneshots (see `ipc.rs` Exec/WriteFile/ReadFile handlers) get a
     /// prompt failure instead of a 30s IPC timeout.
     pub(crate) fn fail_all(&self, message: &str) {
+        self.sandbox_mcps.clear();
         self.cancel_file_reads();
         let pending: Vec<_> = self.jobs.lock().unwrap().drain().collect();
         for (_id, tx) in pending {

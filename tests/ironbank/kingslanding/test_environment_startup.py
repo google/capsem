@@ -187,6 +187,78 @@ with subprocess.Popen(['/run/capsem-mcp-server'], stdin=subprocess.PIPE,
         stop_process(upstream)
 
 
+def test_saved_sandbox_mcp_runs_approved_stdio_through_the_vm_owner(service, tmp_path):
+    workload = {
+        "User": "999:999", "WorkingDir": "/tmp",
+        "Entrypoint": ["redis-server", "--save", "", "--appendonly", "no"],
+    }
+    peer = r'''while IFS= read -r message; do
+    id=$(printf '%s' "$message" | sed -n 's/.*"id"[ ]*:[ ]*\([0-9][0-9]*\).*/\1/p')
+    test -n "$id" || continue
+    case "$message" in
+        *'"initialize"'*) result='{"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"fixture","version":"1"}}' ;;
+        *'"tools/list"'*) result='{"tools":[{"name":"check","inputSchema":{"type":"object"}}]}' ;;
+        *'"resources/list"'*) result='{"resources":[]}' ;;
+        *'"prompts/list"'*) result='{"prompts":[]}' ;;
+        *'"tools/call"'*) result=$(printf '{"content":[{"type":"text","text":"%s|%s|%s|%s"}]}' "$(id -u)" "$PWD" "$MCP_FIXTURE" "$1") ;;
+        *) exit 2 ;;
+    esac
+    printf '{"jsonrpc":"2.0","id":%s,"result":%s}\n' "$id" "$result"
+done'''
+    probe = """import json, subprocess, time
+
+with subprocess.Popen(['/run/capsem-mcp-server'], stdin=subprocess.PIPE,
+                      stdout=subprocess.PIPE, text=True) as relay:
+    def send(method, identity=None, params=None):
+        request = {'jsonrpc': '2.0', 'method': method}
+        if identity is not None:
+            request['id'] = identity
+        if params is not None:
+            request['params'] = params
+        relay.stdin.write(json.dumps(request) + '\\n')
+        relay.stdin.flush()
+        if identity is not None:
+            return json.loads(relay.stdout.readline())
+    try:
+        assert 'result' in send('initialize', 0, {
+            'protocolVersion': '2024-11-05', 'capabilities': {},
+            'clientInfo': {'name': 'sandbox-mcp-acceptance', 'version': '1'},
+        })
+        send('notifications/initialized')
+        for attempt in range(5):
+            tools = send('tools/list', 1 + attempt)['result']['tools']
+            if 'guest__check' in {tool['name'] for tool in tools}:
+                break
+            time.sleep(1)
+        print(json.dumps(send('tools/call', 10, {'name': 'guest__check'})))
+    finally:
+        relay.stdin.close()
+"""
+    artifacts = {}
+    with registry(tmp_path, image_config=workload, artifacts=artifacts) as (image, certificate, _):
+        authority = image.split("/", 1)[0]
+        publish_catalog(artifacts, "library/catalog", "stable", entry(image))
+        use_catalog(service, f"{authority}/library/catalog:stable", certificate)
+        saved = save(service, {
+            "name": "sandbox-mcp", "image": {"reference": "redis"},
+            "mcps": {
+                "servers": {"guest": {
+                    "kind": "sandbox", "executable": "/bin/sh",
+                    "args": ["-ec", peer, "fixture", "literal-token"],
+                    "workdir": "/workspace", "variables": {"MCP_FIXTURE": "approved"},
+                }},
+                "permissions": {"guest": {"default": "block", "tools": {"check": "allow"}}},
+            },
+        })
+        vm = create(service, saved, vm_name("sandbox-mcp"))
+        result = request(service, "POST", f"/vms/{vm}/exec", {
+            "target": "vm", "command": f"python3 -c {shlex.quote(probe)}", "timeout_secs": 30,
+        })
+        assert result["exit_code"] == 0, result
+        call = json.loads(exec_output_text(result))
+        assert call["result"]["content"] == [{"type": "text", "text": "999|/workspace|approved|literal-token"}], call
+
+
 @pytest.mark.parametrize("operation", ["clone", "start", "fork"])
 def test_advanced_saved_revision_uses_new_controls_from_carried_image_bytes(
     operation, service, tmp_path

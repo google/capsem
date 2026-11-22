@@ -8,6 +8,7 @@ pub(crate) struct Prepared {
     frame: PreparedFrame<HostToGuest>,
     ack: Option<u64>,
     publication: Option<capsem_proto::router::FlowKey>,
+    sandbox: Option<u64>,
 }
 
 impl Prepared {
@@ -21,7 +22,20 @@ impl Prepared {
             frame: PreparedFrame::new(message, capsem_proto::MAX_FRAME_SIZE)?,
             ack,
             publication,
+            sandbox: None,
         })
+    }
+    pub(crate) fn sandbox_mcp(id: u64) -> io::Result<Self> {
+        let mut frame = Self::new(&HostToGuest::Exec {
+            id,
+            command: capsem_core::container::MCP_LAUNCH_COMMAND.into(),
+        })?;
+        frame.sandbox = Some(id);
+        Ok(frame)
+    }
+
+    pub(crate) fn sandbox(&self) -> Option<u64> {
+        self.sandbox
     }
 
     pub(crate) fn ack(&self) -> Option<u64> {

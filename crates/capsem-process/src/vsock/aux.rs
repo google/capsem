@@ -95,6 +95,12 @@ pub(super) fn dispatch_aux_connection(
                         return;
                     }
                     info!(id, ?output_protocol, "exec port: received ExecStarted");
+                    if js.sandbox_mcps.known(id) {
+                        if output_protocol == capsem_proto::ExecOutputProtocol::FramedLanes {
+                            js.sandbox_mcps.attach(id, conn);
+                        }
+                        return;
+                    }
                     let (stream, input) = js
                         .active_execs
                         .lock()

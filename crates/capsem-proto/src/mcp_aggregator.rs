@@ -155,6 +155,9 @@ pub enum AggregatorMethod {
         /// New server definitions to use (replaces the current set).
         servers: Vec<McpServerDef>,
     },
+    /// Update only availability of the existing boot slots.
+    #[serde(rename = "sandbox_enabled")]
+    SandboxEnabled { enabled: Vec<bool> },
 
     /// Shut down all connections and exit.
     #[serde(rename = "shutdown")]
@@ -370,6 +373,14 @@ impl AggregatorClient {
             AggregatorResult::Ok { .. } => Ok(()),
             AggregatorResult::Error { error } => Err(anyhow::anyhow!(error)),
             other => Err(anyhow::anyhow!("unexpected response: {:?}", other)),
+        }
+    }
+
+    pub async fn sandbox_enabled(&self, enabled: Vec<bool>) -> Result<()> {
+        match self.request(AggregatorMethod::SandboxEnabled { enabled }).await? {
+            AggregatorResult::Ok { ok: true } => Ok(()),
+            AggregatorResult::Error { error } => Err(anyhow::anyhow!(error)),
+            other => Err(anyhow::anyhow!("unexpected sandbox slot response: {other:?}")),
         }
     }
 

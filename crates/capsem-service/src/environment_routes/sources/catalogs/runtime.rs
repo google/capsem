@@ -19,7 +19,7 @@ pub(crate) async fn launch_policy(
             .ok_or(Error::InvalidPin)?;
         let verified = mcp_definition(state, pin)
             .await?
-            .configure(saved.clone().into_catalog_input(), false)
+            .configure(saved.clone().into_catalog_input(), inputs.has_workload())
             .map_err(|_| Error::InvalidPin)?;
         if saved != &verified {
             return Err(Error::InvalidPin);

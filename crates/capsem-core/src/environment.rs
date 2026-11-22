@@ -20,7 +20,7 @@ pub use catalog_contents::{
 pub use catalog_rules::RuleCatalogInputs;
 mod mcp_launch;
 mod mcp_permissions;
-pub use mcp_launch::validate_environment_mcp_launch;
+pub use mcp_launch::{validate_environment_mcp_launch, SandboxMcp};
 mod repositories;
 mod resolution;
 pub use repositories::{

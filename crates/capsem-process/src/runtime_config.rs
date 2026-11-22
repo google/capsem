@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use capsem_core::environment::SandboxMcp;
 use capsem_core::net::policy::NetworkMechanics;
 use capsem_core::net::policy_config::{ActivePolicyFile, ModelEndpointRegistry, SecurityRuleSet};
 use capsem_core::security_engine::SecurityPluginPolicy;
@@ -14,6 +15,7 @@ use std::sync::{Arc, RwLock};
 pub(crate) struct RuntimePolicySource {
     active_policy_path: PathBuf,
     current: Arc<RwLock<Option<RuntimePolicyConfig>>>,
+    sandbox_mcps: tokio::sync::watch::Sender<Arc<Vec<SandboxMcp>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -27,6 +29,7 @@ pub(crate) struct RuntimePolicyConfig {
     pub(crate) plugins: SecurityPluginPolicy,
     pub(crate) model_endpoints: ModelEndpointRegistry,
     pub(crate) mcp: capsem_core::mcp::policy::McpConfig,
+    pub(crate) sandbox_mcps: Arc<Vec<SandboxMcp>>,
 }
 
 impl RuntimePolicySource {
@@ -34,6 +37,7 @@ impl RuntimePolicySource {
         Self {
             active_policy_path: active_policy_path.into(),
             current: Arc::new(RwLock::new(None)),
+            sandbox_mcps: tokio::sync::watch::channel(Arc::new(Vec::new())).0,
         }
     }
 
@@ -54,7 +58,16 @@ impl RuntimePolicySource {
             toml::from_str(content_text).with_context(|| format!("parse {}", self.active_policy_path.display()))?;
         let digest = capsem_core::net::policy_config::active_policy_digest(content);
         let config = RuntimePolicyConfig::from_active(active, self.active_policy_path.clone(), digest)?;
-        *self.current.write().unwrap() = Some(config.clone());
+        let mut current = self.current.write().unwrap();
+        if let Some(previous) = current.as_ref() {
+            let (before, after) = (&previous.sandbox_mcps, &config.sandbox_mcps);
+            anyhow::ensure!(
+                before.len() == after.len() && before.iter().zip(after.iter()).all(|(old, new)| old.same_launch(new)),
+                "sandbox MCP slot definitions can change only at the next boot"
+            );
+        }
+        *current = Some(config.clone());
+        self.sandbox_mcps.send_replace(config.sandbox_mcps.clone());
         Ok(config)
     }
 
@@ -67,6 +80,9 @@ impl RuntimePolicySource {
             .unwrap()
             .clone()
             .context("runtime policy has not been loaded")
+    }
+    pub(crate) fn sandbox_mcps(&self) -> tokio::sync::watch::Receiver<Arc<Vec<SandboxMcp>>> {
+        self.sandbox_mcps.subscribe()
     }
 }
 
@@ -91,6 +107,7 @@ impl RuntimePolicyConfig {
             plugins: compiled.plugins,
             model_endpoints: compiled.model_endpoints,
             mcp: compiled.mcp,
+            sandbox_mcps: Arc::new(compiled.sandbox_mcps),
         })
     }
 
@@ -152,6 +169,20 @@ impl RuntimePolicyConfig {
                 );
             }
         }
+        definitions.extend(self.sandbox_mcps.iter().enumerate().map(|(slot, server)| McpServerDef {
+            name: server.name.clone(),
+            enabled: server.enabled,
+            source: "sandbox".into(),
+            sandbox_slot: Some(slot as u32),
+            url: String::new(),
+            command: None,
+            args: Vec::new(),
+            env: HashMap::new(),
+            headers: HashMap::new(),
+            auth: None,
+            pool_size: None,
+            pool_safe_tools: Vec::new(),
+        }));
         definitions
     }
 }

@@ -55,6 +55,7 @@ pub struct CompiledActivePolicy {
     pub mcp: McpConfig,
     /// Names whose endpoint permission comes from the scoped environment.
     pub scoped_mcp_servers: BTreeSet<String>,
+    pub sandbox_mcps: Vec<crate::environment::SandboxMcp>,
 }
 
 /// Digest of an active policy's serialized bytes, as `blake3:<hex>`.
@@ -170,6 +171,12 @@ impl ActivePolicyFile {
             Some(environment) => environment.compile_mcp(self.mcp.as_ref())?,
             None => (self.mcp.clone().unwrap_or_default(), BTreeSet::new()),
         };
+        let sandbox_mcps = self
+            .environment
+            .as_ref()
+            .map(|environment| environment.sandbox_mcps(&mcp))
+            .transpose()?
+            .unwrap_or_default();
         let (user, corp) = self.merged_policy_inputs();
         let mut merged = MergedPolicies::from_files(&user, &corp)?;
         apply_network_config(&self.network, &mut merged.network);
@@ -198,6 +205,7 @@ impl ActivePolicyFile {
             model_endpoints: merged.model_endpoints,
             mcp,
             scoped_mcp_servers,
+            sandbox_mcps,
         })
     }
 

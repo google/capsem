@@ -114,10 +114,11 @@ pub async fn run(vm_id: String, trace_id: String) -> Result<()> {
     // installing the manager into the shared lock. `initialize_all` is async
     // and would otherwise need to run while holding the sync RwLock guard.
     let mut mgr = McpServerManager::confined(defs, worker.http, worker.spawn.context("MCP spawn grant missing")?);
-    if let Err(e) = mgr.initialize_all().await {
+    if let Err(e) = mgr.initialize_static().await {
         warn!(error = %e, "some MCP servers failed to initialize");
     }
     let manager = Arc::new(RwLock::new(mgr));
+    let definitions_gate = Arc::new(tokio::sync::Mutex::new(()));
 
     info!("aggregator ready, entering pipelined request loop");
 
@@ -173,9 +174,19 @@ pub async fn run(vm_id: String, trace_id: String) -> Result<()> {
             }
 
             let mgr_h = Arc::clone(&manager);
+            let gate = definitions_gate.clone();
             let tx_h = resp_tx.clone();
             handlers.spawn(async move {
-                let resp = handle_request(&mgr_h, req).await;
+                let resp = if matches!(
+                    req.method,
+                    AggregatorMethod::Refresh { .. } | AggregatorMethod::SandboxEnabled { .. }
+                ) {
+                    let _change = gate.lock().await;
+                    handle_request(&mgr_h, req).await
+                } else {
+                    start_sandbox_servers(&mgr_h, &gate, &req.method).await;
+                    handle_request(&mgr_h, req).await
+                };
                 if tx_h.send(resp).await.is_err() {
                     debug!("aggregator writer channel closed; dropping response");
                 }
@@ -225,6 +236,52 @@ where
             error!(%error, "failed to read request frame");
             None
         }
+    }
+}
+
+async fn start_sandbox_servers(
+    manager: &RwLock<McpServerManager>,
+    gate: &tokio::sync::Mutex<()>,
+    method: &AggregatorMethod,
+) {
+    use capsem_proto::mcp_contracts::{parse_namespaced, parse_resource_uri};
+    let server = match method {
+        AggregatorMethod::ListServers
+        | AggregatorMethod::ListTools
+        | AggregatorMethod::ListResources
+        | AggregatorMethod::ListPrompts => None,
+        AggregatorMethod::CallTool { name, .. } | AggregatorMethod::GetPrompt { name, .. } => {
+            let Some((server, _)) = parse_namespaced(name) else {
+                return;
+            };
+            Some(server)
+        }
+        AggregatorMethod::ReadResource { uri, .. } => {
+            let Some((server, _)) = parse_resource_uri(uri) else {
+                return;
+            };
+            Some(server)
+        }
+        _ => return,
+    };
+    if manager
+        .read()
+        .expect("manager rwlock poisoned")
+        .pending_sandbox(server)
+        .is_none()
+    {
+        return;
+    }
+    let _change = gate.lock().await;
+    let pending = manager.read().expect("manager rwlock poisoned").pending_sandbox(server);
+    if let Some(mut staged) = pending {
+        if let Err(error) = staged.initialize_all().await {
+            warn!(%error, "sandbox MCP discovery failed");
+        }
+        manager
+            .write()
+            .expect("manager rwlock poisoned")
+            .publish_sandbox(staged);
     }
 }
 
@@ -406,7 +463,7 @@ async fn handle_request(manager: &Arc<RwLock<McpServerManager>>, req: Aggregator
             // Build and initialize the replacement manager off the lock,
             // then swap it in under a brief write guard.
             let mut new_mgr = manager.read().expect("manager rwlock poisoned").replacement(servers);
-            if let Err(e) = new_mgr.initialize_all().await {
+            if let Err(e) = new_mgr.initialize_static().await {
                 warn!(error = %e, "some servers failed during refresh");
             }
             *manager.write().expect("manager rwlock poisoned") = new_mgr;
@@ -414,6 +471,22 @@ async fn handle_request(manager: &Arc<RwLock<McpServerManager>>, req: Aggregator
             AggregatorResponse {
                 id,
                 body: AggregatorResult::Ok { ok: true },
+            }
+        }
+
+        AggregatorMethod::SandboxEnabled { enabled } => {
+            let result = manager
+                .write()
+                .expect("manager rwlock poisoned")
+                .update_sandbox_enabled(&enabled);
+            AggregatorResponse {
+                id,
+                body: match result {
+                    Ok(()) => AggregatorResult::Ok { ok: true },
+                    Err(error) => AggregatorResult::Error {
+                        error: error.to_string(),
+                    },
+                },
             }
         }
 
