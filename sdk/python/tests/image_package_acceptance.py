@@ -204,9 +204,7 @@ def main() -> None:
             for operation in (vm.start, vm.resume):
                 result = await operation()
                 assert isinstance(result, models.ProvisionResponse)
-                assert (
-                    result.id == "restore-vm" and result.status == models.VmLifecycleState.RUNNING
-                )
+                assert result.id == "restore-vm" and result.status == models.VmLifecycleState.RUNNING
             for operation in (vm.start, vm.resume):
                 restore_entered.clear()
                 pending = asyncio.create_task(operation())
@@ -258,17 +256,13 @@ def main() -> None:
         ("POST", "/images/pull"),
         ("POST", "/images/pull"),
     ]
+    ready = ("GET", readiness_path, None)
+    start = ("POST", "/vms/restore-vm/start", {"expected": selection})
+    resume = ("POST", "/vms/restore-vm/resume", {"expected": selection})
+    info = ("GET", "/vms/restore-vm/info", None)
     assert lifecycle_requests == [
-        ("GET", readiness_path, None),
-        ("POST", "/vms/restore-vm/start", {"expected": selection}),
-        ("GET", readiness_path, None),
-        ("POST", "/vms/restore-vm/resume", {"expected": selection}),
-        ("GET", readiness_path, None),
-        ("POST", "/vms/restore-vm/start", {"expected": selection}),
-        ("GET", "/vms/restore-vm/info", None),
-        ("GET", readiness_path, None),
-        ("POST", "/vms/restore-vm/resume", {"expected": selection}),
-        ("GET", "/vms/restore-vm/info", None),
+        ready, start, ready, resume,
+        ready, start, info, ready, resume, info,
         ("GET", "/vms/slow/info", None),
     ]
     assert received[1][2] == {
