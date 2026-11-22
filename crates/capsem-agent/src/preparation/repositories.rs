@@ -120,7 +120,17 @@ fn publish(parent: &ContainedDir, temporary: &OsStr, name: &OsStr) -> io::Result
     let fd = parent.as_fd().as_raw_fd();
     // Both C strings contain only single path components and the parent fd
     // remains owned throughout. Publishing may never replace an existing name.
-    let result = unsafe { libc::renameat2(fd, temporary.as_ptr(), fd, name.as_ptr(), libc::RENAME_NOREPLACE) };
+    // Use the Linux syscall directly because the static guest libc does not export renameat2.
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            fd,
+            temporary.as_ptr(),
+            fd,
+            name.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
     if result == 0 {
         Ok(())
     } else {
