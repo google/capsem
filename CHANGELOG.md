@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Added: Save exact MCP catalog definitions in environment revisions with the declared configuration inputs and separate credential references.
 - Added: Browse digest-pinned MCP catalogs in the gateway and SDKs, including published server definitions, configuration requirements, and optional tool indexes.
 - Security: Require release manifests and corporate policies to specify an exact OCI manifest digest for MCP catalog sources.
 - Added: Inspect the compiled access and detection rules of a saved environment, including corporate ownership and precedence, and review changes to custom rule enablement.

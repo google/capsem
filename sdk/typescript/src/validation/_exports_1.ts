@@ -1,5 +1,8 @@
 // Generated from Capsem OpenAPI. Do not edit.
 
+export {InteractionMessageKindSchema} from "./InteractionMessageKind.js";
+export {InteractionReportSchema} from "./InteractionReport.js";
+export {InteractionRequestSchema} from "./InteractionRequest.js";
 export {InteractionRequestKindSchema} from "./InteractionRequestKind.js";
 export {InteractionRoleSchema} from "./InteractionRole.js";
 export {InteractionToolCallSchema} from "./InteractionToolCall.js";
@@ -197,6 +200,3 @@ export {VmReadinessResponseSchema} from "./VmReadinessResponse.js";
 export {VmSkillDetailResponseSchema} from "./VmSkillDetailResponse.js";
 export {VmSkillListResponseSchema} from "./VmSkillListResponse.js";
 export {VmStartRequestSchema} from "./VmStartRequest.js";
-export {VmStatsDetailResponseSchema} from "./VmStatsDetailResponse.js";
-export {VmStatsSummaryResponseSchema} from "./VmStatsSummaryResponse.js";
-export {VmStatusResponseSchema} from "./VmStatusResponse.js";

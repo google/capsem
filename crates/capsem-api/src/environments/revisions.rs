@@ -57,7 +57,7 @@ pub struct EnvironmentRevisionDetailResponse {
     /// Exact canonical serialization, present only for complete history.
     pub canonical_toml: Option<String>,
     /// Retained fields of a purged revision, never replayable.
-    #[schema(value_type = Option<EnvironmentSpecification<EnvironmentImage, EnvironmentRepository, EnvironmentCatalogPin>>)]
+    #[schema(value_type = Option<EnvironmentSpecification<EnvironmentImage, EnvironmentRepository, EnvironmentCatalogPin, EnvironmentMcpDefinition>>)]
     pub partial_specification: Option<Box<EnvironmentSpecification>>,
     pub purged_variables: Vec<String>,
 }
@@ -90,6 +90,6 @@ impl std::fmt::Debug for EnvironmentTomlValidationRequest {
 pub struct EnvironmentTomlValidationResponse {
     pub base: EnvironmentRevisionReference,
     /// Validated selectors for the existing change and review operation.
-    #[schema(value_type = EnvironmentSpecification<EnvironmentImageSelection, EnvironmentRepositorySelection, EnvironmentCatalogSelection>)]
+    #[schema(value_type = EnvironmentSpecification<EnvironmentImageSelection, EnvironmentRepositorySelection, EnvironmentCatalogSelection, EnvironmentMcpCatalogInput>)]
     pub specification: EnvironmentDraft,
 }

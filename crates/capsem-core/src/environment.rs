@@ -86,7 +86,9 @@ impl EnvironmentChangeImpact {
             (
                 McpDefinitions,
                 NextStart,
-                before.mcps.catalog != after.mcps.catalog || before.mcps.servers != after.mcps.servers,
+                before.mcps.catalog != after.mcps.catalog
+                    || before.mcps.catalog_configuration != after.mcps.catalog_configuration
+                    || before.mcps.servers != after.mcps.servers,
             ),
             (McpPermissions, Live, before.mcps.permissions != after.mcps.permissions),
             (Skills, NextStart, before.skills != after.skills),

@@ -3,7 +3,7 @@
 use crate::{container_setup::images, AppError, ServiceState};
 use axum::http::StatusCode;
 use capsem_config::{
-    catalogs::CatalogKind,
+    catalogs::{CatalogKind, McpCatalogDefinition},
     environment::{EnvironmentCatalogPin, EnvironmentCatalogSelection},
 };
 use capsem_core::environment::{EnvironmentPinResolver, EnvironmentResolutionError};
@@ -45,6 +45,13 @@ impl EnvironmentPinResolver for Sources {
         pin: &EnvironmentCatalogPin,
     ) -> Result<(), EnvironmentResolutionError> {
         catalogs::admit(&self.0, kind, pin).await
+    }
+
+    async fn mcp_catalog_definition(
+        &self,
+        pin: &EnvironmentCatalogPin,
+    ) -> Result<McpCatalogDefinition, EnvironmentResolutionError> {
+        catalogs::mcp_definition(&self.0, pin).await
     }
 }
 fn image_error(error: AppError) -> EnvironmentResolutionError {

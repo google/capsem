@@ -3,6 +3,8 @@ import type { EnvironmentChangeRequest, EnvironmentCurrentResponse } from '@caps
 
 type Specification = EnvironmentCurrentResponse['document']['specification'];
 export type EnvironmentDraft = EnvironmentChangeRequest['specification'];
+type McpDraft = NonNullable<EnvironmentDraft['mcps']>;
+type McpCatalogInput = NonNullable<McpDraft['catalog_configuration']>[string];
 
 export const environmentSections = {
   repositories: 'Repositories', variables: 'Environment variables', secrets: 'Secret bindings',
@@ -31,6 +33,24 @@ function catalogSelections(catalog: Specification['skills']) {
   return { selected: (catalog?.selected ?? []).map(({ id, version }) => ({ id, version })) };
 }
 
+function mcpDraft(mcps: NonNullable<Specification['mcps']>): McpDraft {
+  const { catalog, catalog_configuration, ...inline } = mcps;
+  const inputs: [string, McpCatalogInput][] = [];
+  for (const [id, definition] of Object.entries(catalog_configuration ?? {})) {
+    if (definition.kind === 'remote') {
+      if (Object.keys(definition.headers ?? {}).length || definition.binding_id) {
+        inputs.push([id, { values: definition.headers, ...(definition.binding_id ? { binding_id: definition.binding_id } : {}) }]);
+      }
+    } else if (Object.keys(definition.variables ?? {}).length || Object.keys(definition.secrets ?? {}).length) {
+      inputs.push([id, { values: definition.variables, secrets: definition.secrets }]);
+    }
+  }
+  return {
+    ...inline, catalog: catalogSelections(catalog),
+    ...(inputs.length ? { catalog_configuration: Object.fromEntries(inputs) } : {}),
+  };
+}
+
 /** Translate committed content to editable selectors. Only the service may resolve their pins. */
 export function environmentDraft(specification: Specification): EnvironmentDraft {
   const { image, repositories, access, detection, skills, mcps, ...rest } = specification;
@@ -41,7 +61,7 @@ export function environmentDraft(specification: Specification): EnvironmentDraft
     ...(access ? { access: { ...access, catalog: catalogSelections(access.catalog) } } : {}),
     ...(detection ? { detection: { ...detection, catalog: catalogSelections(detection.catalog) } } : {}),
     ...(skills ? { skills: catalogSelections(skills) } : {}),
-    ...(mcps ? { mcps: { ...mcps, catalog: catalogSelections(mcps.catalog) } } : {}),
+    ...(mcps ? { mcps: mcpDraft(mcps) } : {}),
   };
 }
 

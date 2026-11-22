@@ -1,0 +1,28 @@
+// Generated from Capsem OpenAPI. Do not edit.
+
+import type { EnvironmentCatalogSelections_EnvironmentCatalogSelection } from "./EnvironmentCatalogSelections_EnvironmentCatalogSelection.js";
+import type { EnvironmentMcps_EnvironmentCatalogSelection_EnvironmentMcpCatalogInput } from "./EnvironmentMcps_EnvironmentCatalogSelection_EnvironmentMcpCatalogInput.js";
+import type { EnvironmentPackages } from "./EnvironmentPackages.js";
+import type { EnvironmentPlugins } from "./EnvironmentPlugins.js";
+import type { EnvironmentRules_EnvironmentCatalogSelection_EnvironmentAccessRule } from "./EnvironmentRules_EnvironmentCatalogSelection_EnvironmentAccessRule.js";
+import type { EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRule } from "./EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRule.js";
+import type { EnvironmentSecretBinding } from "./EnvironmentSecretBinding.js";
+import type { EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection_EnvironmentMcpCatalogInputImage } from "./EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection_EnvironmentMcpCatalogInputImage.js";
+import type { EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection_EnvironmentMcpCatalogInputRepositoriesItem } from "./EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection_EnvironmentMcpCatalogInputRepositoriesItem.js";
+import type { EnvironmentStartup } from "./EnvironmentStartup.js";
+
+export interface EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection_EnvironmentMcpCatalogInput {
+  "access"?: EnvironmentRules_EnvironmentCatalogSelection_EnvironmentAccessRule;
+  "description"?: string;
+  "detection"?: EnvironmentRules_EnvironmentCatalogSelection_EnvironmentDetectionRule;
+  "image"?: EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection_EnvironmentMcpCatalogInputImage;
+  "mcps"?: EnvironmentMcps_EnvironmentCatalogSelection_EnvironmentMcpCatalogInput;
+  "name": string;
+  "packages"?: EnvironmentPackages;
+  "plugins"?: EnvironmentPlugins;
+  "repositories"?: Array<EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection_EnvironmentMcpCatalogInputRepositoriesItem>;
+  "secrets"?: Record<string, EnvironmentSecretBinding>;
+  "skills"?: EnvironmentCatalogSelections_EnvironmentCatalogSelection;
+  "startup"?: null | EnvironmentStartup;
+  "variables"?: Record<string, string>;
+}

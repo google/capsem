@@ -48,7 +48,7 @@ impl EnvironmentDocument {
     }
 }
 
-impl<I, R, C> EnvironmentSpecification<I, R, C> {
+impl<I, R, C, M> EnvironmentSpecification<I, R, C, M> {
     fn validate_common(&self) -> Result<(), String> {
         let name = self.name.as_bytes();
         require(
@@ -163,6 +163,11 @@ impl EnvironmentSpecification {
             self.mcps.catalog.selected.iter().map(|entry| entry.id.as_str()),
             self.image.is_some(),
         )?;
+        if let Some(configuration) = &self.mcps.catalog_configuration {
+            for definition in configuration.values() {
+                mcps::validate_definition(definition, self.image.is_some())?;
+            }
+        }
         self.access.validate()?;
         self.detection.validate()?;
         if let Some(image) = &self.image {
@@ -205,6 +210,11 @@ impl EnvironmentDraft {
             self.mcps.catalog.selected.iter().map(|entry| entry.id.as_str()),
             self.image.is_some(),
         )?;
+        if let Some(configuration) = &self.mcps.catalog_configuration {
+            for input in configuration.values() {
+                input.validate()?;
+            }
+        }
         self.access.catalog.validate()?;
         self.detection.catalog.validate()?;
         rules::access(

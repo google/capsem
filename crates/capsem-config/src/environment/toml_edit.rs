@@ -69,6 +69,28 @@ impl EnvironmentDocument {
                 original,
             )?;
         }
+        if let Some(configuration) =
+            table(&mut specification, "mcps").and_then(|mcps| table(mcps, "catalog_configuration"))
+        {
+            for (id, value) in configuration {
+                let Some(entry) = value.as_table_mut().filter(|entry| entry.contains_key("kind")) else {
+                    continue;
+                };
+                let candidate: EnvironmentMcpDefinition = Value::Table(std::mem::take(entry))
+                    .try_into()
+                    .map_err(|_| "invalid saved MCP catalog configuration")?;
+                let saved = original
+                    .mcps
+                    .catalog_configuration
+                    .as_ref()
+                    .and_then(|saved| saved.get(id));
+                if !saved.is_some_and(|saved| candidate.has_same_catalog_template(saved)) {
+                    return Err("MCP catalog launch fields must match the saved template".into());
+                }
+                *value = Value::try_from(candidate.into_catalog_input())
+                    .map_err(|_| "invalid MCP catalog configuration inputs")?;
+            }
+        }
         let draft: EnvironmentDraft = Value::Table(specification)
             .try_into()
             .map_err(|_| "invalid environment specification")?;

@@ -65,6 +65,18 @@ impl EnvironmentPinResolver for Sources {
             Ok(())
         }
     }
+
+    async fn mcp_catalog_definition(
+        &self,
+        pin: &EnvironmentCatalogPin,
+    ) -> Result<McpCatalogDefinition, EnvironmentResolutionError> {
+        self.admit_catalog(CatalogKind::Mcp, pin).await?;
+        Ok(McpCatalogDefinition::Remote {
+            url: "https://example.org/mcp".into(),
+            headers: Default::default(),
+            secret_binding: None,
+        })
+    }
 }
 fn draft() -> EnvironmentDraft {
     toml::from_str(

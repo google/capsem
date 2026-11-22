@@ -3,7 +3,9 @@
 use super::*;
 use capsem_api::environments::{CatalogAvailability, CatalogRefreshError, CatalogStatus};
 use capsem_assets::{catalogs::ValidatedCatalogSource, oci::Puller};
-use capsem_config::catalogs::{CatalogEntryStatus, CatalogSources, RuleCatalogEntry, SkillCatalogEntry};
+use capsem_config::catalogs::{
+    CatalogEntryStatus, CatalogSources, McpCatalogDefinition, McpCatalogEntry, RuleCatalogEntry, SkillCatalogEntry,
+};
 use capsem_core::environment::{CatalogContentEntry, CatalogContentError, CatalogContents};
 use capsem_logger::{
     catalog_revocations::{CatalogRevocation, CatalogRevocationKey},
@@ -92,9 +94,7 @@ pub(super) async fn resolve(
     match kind {
         CatalogKind::Skills => resolve_typed::<SkillCatalogEntry>(state, kind, selection).await,
         CatalogKind::Rules => resolve_typed::<RuleCatalogEntry>(state, kind, selection).await,
-        // Discoverable MCP templates require environment configuration and
-        // runtime admission before they may be selected.
-        CatalogKind::Mcp => Err(Error::Unavailable),
+        CatalogKind::Mcp => resolve_typed::<McpCatalogEntry>(state, kind, selection).await,
     }
 }
 
@@ -179,7 +179,7 @@ pub(super) async fn admit(state: &ServiceState, kind: CatalogKind, pin: &Environ
     match kind {
         CatalogKind::Skills => admit_typed::<SkillCatalogEntry>(state, kind, pin).await,
         CatalogKind::Rules => admit_typed::<RuleCatalogEntry>(state, kind, pin).await,
-        CatalogKind::Mcp => Err(Error::Unavailable),
+        CatalogKind::Mcp => admit_typed::<McpCatalogEntry>(state, kind, pin).await,
     }
 }
 
@@ -188,6 +188,23 @@ async fn admit_typed<E: CatalogContentEntry>(
     kind: CatalogKind,
     pin: &EnvironmentCatalogPin,
 ) -> Result<(), Error> {
+    read_admitted::<E>(state, kind, pin).await.map(|_| ())
+}
+
+pub(super) async fn mcp_definition(
+    state: &ServiceState,
+    pin: &EnvironmentCatalogPin,
+) -> Result<McpCatalogDefinition, Error> {
+    let contents = read_admitted::<McpCatalogEntry>(state, CatalogKind::Mcp, pin).await?;
+    let entry = contents.entry_for_pin(pin).map_err(content_error)?;
+    entry.definition.clone().ok_or(Error::InvalidPin)
+}
+
+async fn read_admitted<E: CatalogContentEntry>(
+    state: &ServiceState,
+    kind: CatalogKind,
+    pin: &EnvironmentCatalogPin,
+) -> Result<CatalogContents<E>, Error> {
     let selected = require_current(state, kind, pin).await?;
     let puller = state
         .containers
@@ -195,11 +212,11 @@ async fn admit_typed<E: CatalogContentEntry>(
         .map_err(|_| Error::Unavailable)?;
     let parent = staging(state).await?;
     // Retained pins never resolve the moving tag or silently fetch missing bytes.
-    CatalogContents::<E>::fetch_cached(&puller, &selected, pin, &parent)
+    let contents = CatalogContents::<E>::fetch_cached(&puller, &selected, pin, &parent)
         .await
         .map_err(content_error)?;
     require_current(state, kind, pin).await?;
-    Ok(())
+    Ok(contents)
 }
 
 pub(in crate::environment_routes) async fn require_current(

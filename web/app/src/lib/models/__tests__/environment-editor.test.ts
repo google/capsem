@@ -41,6 +41,30 @@ describe('environment editing', () => {
     }]);
   });
 
+  it('edits saved MCP inputs using the catalog selector without copying launch fields', () => {
+    const binding_id = '00000000-0000-4000-8000-000000000002';
+    const saved: Parameters<typeof environmentDraft>[0] = {
+      ...specification,
+      mcps: {
+        catalog: { selected: [pin, { ...pin, id: 'worker' }] },
+        catalog_configuration: {
+          coding: { kind: 'remote', url: 'https://catalog.example/mcp', headers: { 'X-Workspace': 'team' }, binding_id },
+          worker: { kind: 'sandbox', executable: 'review', args: ['--stdio'], workdir: '/workspace',
+            variables: { WORKSPACE: 'team' }, secrets: { token: { binding_id, env_name: 'WORKSPACE_TOKEN' } } },
+        },
+      },
+    };
+    const draft = reviewedDraft(editableFields(saved));
+    expect(draft.mcps?.catalog_configuration).toMatchObject({
+      coding: { values: { 'X-Workspace': 'team' }, binding_id },
+      worker: { values: { WORKSPACE: 'team' }, secrets: { token: { binding_id, env_name: 'WORKSPACE_TOKEN' } } },
+    });
+    const section = JSON.stringify(draft.mcps);
+    for (const launchField of ['url', 'executable', 'workdir', 'resolved_digest']) {
+      expect(section).not.toContain(launchField);
+    }
+  });
+
   it('rejects malformed configuration and caller-supplied resolution data before review', () => {
     const fields = editableFields(specification);
     fields.sections.secrets = '{invalid JSON';

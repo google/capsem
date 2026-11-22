@@ -7,7 +7,7 @@ from pydantic import ConfigDict, StrictStr
 from .model_base import Model
 
 
-class EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelectionRepositoriesItem(Model):
+class EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection_EnvironmentMcpCatalogInputRepositoriesItem(Model):
     model_config = ConfigDict(strict=True, populate_by_name=True, extra="forbid")
     destination: StrictStr
     ref: StrictStr

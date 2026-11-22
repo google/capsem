@@ -100,7 +100,7 @@ pub fn openapi() -> OpenApi {
     );
     let request = doc.schema::<EnvironmentCreateRequest>();
     let create = doc.operation::<EnvironmentMutationResponse>("/environments/create", "createEnvironment")
-        .description(Some("Create an operator blueprint. Reconcile the same request ID explicitly after interruption; never infer completed application from an accepted decision. Skills and rules resolve from configured catalogs. Anonymous public HTTPS Git references resolve under current corporate policy; this does not prepare a sandbox checkout. Catalog-based MCP configuration is unavailable."))
+        .description(Some("Create an operator blueprint. Reconcile the same request ID explicitly after interruption; never infer completed application from an accepted decision. Skills and rules resolve from configured catalogs. MCP catalog selections record the exact verified definitions and their configured inputs. Server launch requires scoped runtime preparation. Anonymous public HTTPS Git references resolve under current corporate policy; this does not prepare a sandbox checkout."))
         .request_body(Some(RequestBodyBuilder::new().required(Some(Required::True))
             .content("application/json", Content::new(Some(request))).build()))
         .extensions(Some([("x-capsem-request-timeout-ms", IMAGE_PULL_REQUEST_TIMEOUT_MS)].into_iter().collect()));

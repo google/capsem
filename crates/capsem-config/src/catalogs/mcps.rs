@@ -1,8 +1,8 @@
 //! Published MCP templates describe the values an operator must supply.
 use super::{content, CatalogEntry, CatalogEntryMetadata, CatalogEntryStatus, CatalogKind};
 use crate::environment::{
-    mcps::{ordinary_header_name, remote_endpoint, sandbox_command},
-    variable_name,
+    mcps::{ordinary_header_name, remote_endpoint, sandbox_command, validate_definition},
+    variable_name, EnvironmentMcpCatalogInput, EnvironmentMcpDefinition,
 };
 use capsem_proto::{
     CATALOG_MAX_DESCRIPTION_BYTES, ENVIRONMENT_MAX_CONFIGURATION_ENTRIES, ENVIRONMENT_MAX_CONFIGURATION_TEXT_BYTES,
@@ -117,6 +117,60 @@ impl McpCatalogDefinition {
         }
     }
 
+    /// Compose caller-supplied values with the exact verified template. The
+    /// result contains references that still require runtime binding admission.
+    pub fn configure(self, input: EnvironmentMcpCatalogInput, image: bool) -> Result<EnvironmentMcpDefinition, String> {
+        input.validate()?;
+        let definition = match self {
+            Self::Remote {
+                url,
+                headers,
+                secret_binding,
+            } => {
+                let missing_binding = secret_binding.as_ref().is_some_and(|requirement| requirement.required)
+                    && input.binding_id.is_none();
+                if missing_binding
+                    || (secret_binding.is_none() && input.binding_id.is_some())
+                    || !input.secrets.is_empty()
+                    || !has_declared_inputs(&headers, input.values.keys().map(String::as_str))
+                {
+                    return Err("remote MCP catalog configuration does not match the declared inputs".into());
+                }
+                EnvironmentMcpDefinition::Remote {
+                    url,
+                    headers: input.values,
+                    binding_id: input.binding_id,
+                }
+            }
+            Self::Sandbox {
+                executable,
+                args,
+                workdir,
+                variables,
+                secret_variables,
+            } => {
+                if input.binding_id.is_some()
+                    || !has_declared_inputs(&variables, input.values.keys().map(String::as_str))
+                    || !has_declared_inputs(
+                        &secret_variables,
+                        input.secrets.values().filter_map(|binding| binding.env_name.as_deref()),
+                    )
+                {
+                    return Err("sandbox MCP catalog configuration does not match the declared inputs".into());
+                }
+                EnvironmentMcpDefinition::Sandbox {
+                    executable,
+                    args,
+                    workdir,
+                    variables: input.values,
+                    secrets: input.secrets,
+                }
+            }
+        };
+        validate_definition(&definition, image)?;
+        Ok(definition)
+    }
+
     fn validate(&self) -> Result<(), &'static str> {
         match self {
             Self::Remote {
@@ -158,6 +212,17 @@ impl McpCatalogDefinition {
         }
         Ok(())
     }
+}
+
+fn has_declared_inputs<'a>(
+    requirements: &BTreeMap<String, McpCatalogRequirement>,
+    supplied: impl Iterator<Item = &'a str>,
+) -> bool {
+    let supplied: BTreeSet<_> = supplied.collect();
+    supplied.iter().all(|name| requirements.contains_key(*name))
+        && requirements
+            .iter()
+            .all(|(name, requirement)| !requirement.required || supplied.contains(name.as_str()))
 }
 
 impl McpCatalogRequirement {

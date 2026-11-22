@@ -8,8 +8,8 @@ export {Images} from './images.js';
 export {Environments, type EnvironmentListOptions, type EnvironmentRevisionListOptions} from './environments.js';
 export {Mcps, Rules, Skills, type CatalogListOptions} from './catalogs.js';
 export {
-  EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelectionSchema as EnvironmentDraftSchema,
-} from './validation/EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection.js';
+  EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection_EnvironmentMcpCatalogInputSchema as EnvironmentDraftSchema,
+} from './validation/EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection_EnvironmentMcpCatalogInput.js';
 export {creationDeadlineMs} from './readiness.js';
 export {Requests, type RequestListOptions} from './requests.js';
 export {Credentials} from './credentials.js';

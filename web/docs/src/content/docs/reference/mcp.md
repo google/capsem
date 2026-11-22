@@ -34,6 +34,15 @@ Catalog reads only contact the OCI registry. Live tool discovery accesses a
 configured MCP server under the transport and permissions for that server.
 The catalog describes the inputs an operator needs to configure.
 
+In an environment draft, select an entry by its ID and version under
+`mcps.catalog.selected`. Use the listed source and digest as
+`expected_catalog` to preserve the reviewed snapshot. Put the entry's declared
+inputs in `mcps.catalog_configuration` under its ID. Use `values` for ordinary
+headers or variables, `binding_id` for a remote credential reference, and
+`secrets` for sandbox credential references with their target `env_name`.
+Saved revisions and request reviews show the exact resolved definition.
+Starting it requires scoped runtime preparation.
+
 ## Host server installation and options
 
 Requires Node.js 20 or later, installed Capsem, and gateway access.

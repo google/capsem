@@ -1,5 +1,8 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .file_entry_type import FileEntryType
+from .file_event import FileEvent
+from .file_event_action import FileEventAction
 from .file_list_entry import FileListEntry
 from .file_list_response import FileListResponse
 from .fork_request import ForkRequest
@@ -77,11 +80,11 @@ from .mcp_permission_action import McpPermissionAction
 from .mcp_published_tool import McpPublishedTool
 from .mcp_refresh_response import McpRefreshResponse
 from .mcp_server_info_response import McpServerInfoResponse
-from .mcp_servers_list_response import McpServersListResponse
-from .mcp_tool_info_response import McpToolInfoResponse
-from .mcp_tools_list_response import McpToolsListResponse
 
 __all__ = [
+    'FileEntryType',
+    'FileEvent',
+    'FileEventAction',
     'FileListEntry',
     'FileListResponse',
     'ForkRequest',
@@ -159,7 +162,4 @@ __all__ = [
     'McpPublishedTool',
     'McpRefreshResponse',
     'McpServerInfoResponse',
-    'McpServersListResponse',
-    'McpToolInfoResponse',
-    'McpToolsListResponse',
 ]

@@ -1,8 +1,8 @@
 //! Public request review views contain immutable inputs and read-only provenance.
 use super::*;
 use crate::environments::{
-    EnvironmentCatalogPin, EnvironmentImage, EnvironmentRepository, EnvironmentRevisionReference,
-    EnvironmentSandboxTarget, EnvironmentSpecification,
+    EnvironmentCatalogPin, EnvironmentImage, EnvironmentMcpDefinition, EnvironmentRepository,
+    EnvironmentRevisionReference, EnvironmentSandboxTarget, EnvironmentSpecification,
 };
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, IntoParams)]
@@ -73,7 +73,7 @@ pub enum RequestReviewAvailability {
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentReviewContent {
     pub availability: RequestReviewAvailability,
-    #[schema(value_type = Option<EnvironmentSpecification<EnvironmentImage, EnvironmentRepository, EnvironmentCatalogPin>>)]
+    #[schema(value_type = Option<EnvironmentSpecification<EnvironmentImage, EnvironmentRepository, EnvironmentCatalogPin, EnvironmentMcpDefinition>>)]
     pub specification: Option<Box<EnvironmentSpecification>>,
     pub purged_variables: Vec<String>,
 }

@@ -14,11 +14,20 @@ from .environment_mcp_definition import EnvironmentMcpDefinition
 from .environment_mcp_definition_remote import EnvironmentMcpDefinitionRemote
 from .environment_mcp_definition_sandbox import EnvironmentMcpDefinitionSandbox
 from .environment_mcp_permissions import EnvironmentMcpPermissions
-from .environment_mcps__environment_catalog_pin import (
-    EnvironmentMcps_EnvironmentCatalogPin,
+from .environment_mcps__environment_catalog_pin__environment_mcp_definition import (
+    EnvironmentMcps_EnvironmentCatalogPin_EnvironmentMcpDefinition,
 )
-from .environment_mcps__environment_catalog_selection import (
-    EnvironmentMcps_EnvironmentCatalogSelection,
+from .environment_mcps__environment_catalog_pin__environment_mcp_definition_value_alternative0 import (
+    EnvironmentMcps_EnvironmentCatalogPin_EnvironmentMcpDefinitionValueAlternative0,
+)
+from .environment_mcps__environment_catalog_pin__environment_mcp_definition_value_alternative1 import (
+    EnvironmentMcps_EnvironmentCatalogPin_EnvironmentMcpDefinitionValueAlternative1,
+)
+from .environment_mcps__environment_catalog_selection__environment_mcp_catalog_input import (
+    EnvironmentMcps_EnvironmentCatalogSelection_EnvironmentMcpCatalogInput,
+)
+from .environment_mcps__environment_catalog_selection__environment_mcp_catalog_input_value import (
+    EnvironmentMcps_EnvironmentCatalogSelection_EnvironmentMcpCatalogInputValue,
 )
 from .environment_mutation_response import EnvironmentMutationResponse
 from .environment_packages import EnvironmentPackages
@@ -70,23 +79,23 @@ from .environment_skill_availability import EnvironmentSkillAvailability
 from .environment_skill_detail_response import EnvironmentSkillDetailResponse
 from .environment_skill_list_response import EnvironmentSkillListResponse
 from .environment_skill_summary import EnvironmentSkillSummary
-from .environment_specification__environment_image__environment_repository__environment_catalog_pin import (
-    EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin,
+from .environment_specification__environment_image__environment_repository__environment_catalog_pin__environment_mcp_definition import (
+    EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin_EnvironmentMcpDefinition,
 )
-from .environment_specification__environment_image__environment_repository__environment_catalog_pin_image import (
-    EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPinImage,
+from .environment_specification__environment_image__environment_repository__environment_catalog_pin__environment_mcp_definition_image import (
+    EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin_EnvironmentMcpDefinitionImage,
 )
-from .environment_specification__environment_image__environment_repository__environment_catalog_pin_repositories_item import (
-    EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPinRepositoriesItem,
+from .environment_specification__environment_image__environment_repository__environment_catalog_pin__environment_mcp_definition_repositories_item import (
+    EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin_EnvironmentMcpDefinitionRepositoriesItem,
 )
-from .environment_specification__environment_image_selection__environment_repository_selection__environment_catalog_selection import (
-    EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection,
+from .environment_specification__environment_image_selection__environment_repository_selection__environment_catalog_selection__environment_mcp_catalog_input import (
+    EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection_EnvironmentMcpCatalogInput,
 )
-from .environment_specification__environment_image_selection__environment_repository_selection__environment_catalog_selection_image import (
-    EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelectionImage,
+from .environment_specification__environment_image_selection__environment_repository_selection__environment_catalog_selection__environment_mcp_catalog_input_image import (
+    EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection_EnvironmentMcpCatalogInputImage,
 )
-from .environment_specification__environment_image_selection__environment_repository_selection__environment_catalog_selection_repositories_item import (
-    EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelectionRepositoriesItem,
+from .environment_specification__environment_image_selection__environment_repository_selection__environment_catalog_selection__environment_mcp_catalog_input_repositories_item import (
+    EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection_EnvironmentMcpCatalogInputRepositoriesItem,
 )
 from .environment_startup import EnvironmentStartup
 from .environment_toml_validation_request import EnvironmentTomlValidationRequest
@@ -109,9 +118,6 @@ from .exposure_list_response import ExposureListResponse
 from .exposure_request import ExposureRequest
 from .exposure_target import ExposureTarget
 from .file_action_count import FileActionCount
-from .file_entry_type import FileEntryType
-from .file_event import FileEvent
-from .file_event_action import FileEventAction
 
 __all__ = [
     'EnvironmentDetectionRule',
@@ -128,8 +134,11 @@ __all__ = [
     'EnvironmentMcpDefinitionRemote',
     'EnvironmentMcpDefinitionSandbox',
     'EnvironmentMcpPermissions',
-    'EnvironmentMcps_EnvironmentCatalogPin',
-    'EnvironmentMcps_EnvironmentCatalogSelection',
+    'EnvironmentMcps_EnvironmentCatalogPin_EnvironmentMcpDefinition',
+    'EnvironmentMcps_EnvironmentCatalogPin_EnvironmentMcpDefinitionValueAlternative0',
+    'EnvironmentMcps_EnvironmentCatalogPin_EnvironmentMcpDefinitionValueAlternative1',
+    'EnvironmentMcps_EnvironmentCatalogSelection_EnvironmentMcpCatalogInput',
+    'EnvironmentMcps_EnvironmentCatalogSelection_EnvironmentMcpCatalogInputValue',
     'EnvironmentMutationResponse',
     'EnvironmentPackages',
     'EnvironmentPluginDescriptor',
@@ -164,12 +173,12 @@ __all__ = [
     'EnvironmentSkillDetailResponse',
     'EnvironmentSkillListResponse',
     'EnvironmentSkillSummary',
-    'EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection',
-    'EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelectionImage',
-    'EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelectionRepositoriesItem',
-    'EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin',
-    'EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPinImage',
-    'EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPinRepositoriesItem',
+    'EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection_EnvironmentMcpCatalogInput',
+    'EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection_EnvironmentMcpCatalogInputImage',
+    'EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection_EnvironmentMcpCatalogInputRepositoriesItem',
+    'EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin_EnvironmentMcpDefinition',
+    'EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin_EnvironmentMcpDefinitionImage',
+    'EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin_EnvironmentMcpDefinitionRepositoriesItem',
     'EnvironmentStartup',
     'EnvironmentTomlValidationRequest',
     'EnvironmentTomlValidationResponse',
@@ -191,7 +200,4 @@ __all__ = [
     'ExposureRequest',
     'ExposureTarget',
     'FileActionCount',
-    'FileEntryType',
-    'FileEvent',
-    'FileEventAction',
 ]

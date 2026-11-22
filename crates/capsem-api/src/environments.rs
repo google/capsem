@@ -188,7 +188,7 @@ pub struct EnvironmentCreateRequest {
     /// Client-chosen UUIDv4 for explicit reconciliation, never an authority token.
     #[schema(format = "uuid")]
     pub request_id: String,
-    #[schema(value_type = EnvironmentSpecification<EnvironmentImageSelection, EnvironmentRepositorySelection, EnvironmentCatalogSelection>)]
+    #[schema(value_type = EnvironmentSpecification<EnvironmentImageSelection, EnvironmentRepositorySelection, EnvironmentCatalogSelection, EnvironmentMcpCatalogInput>)]
     pub specification: EnvironmentDraft,
     pub reason: String,
     /// Requested target only. The service verifies live authenticated ownership
@@ -216,7 +216,7 @@ pub struct EnvironmentChangeRequest {
     /// Exact observed base. Changed meaning requires another review.
     #[schema(format = "uuid")]
     pub base_revision_id: String,
-    #[schema(value_type = EnvironmentSpecification<EnvironmentImageSelection, EnvironmentRepositorySelection, EnvironmentCatalogSelection>)]
+    #[schema(value_type = EnvironmentSpecification<EnvironmentImageSelection, EnvironmentRepositorySelection, EnvironmentCatalogSelection, EnvironmentMcpCatalogInput>)]
     pub specification: EnvironmentDraft,
     pub reason: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -36,6 +36,19 @@ fn rules<R>(
     }
 }
 
+fn mcp_inputs(
+    saved: Option<BTreeMap<String, EnvironmentMcpDefinition>>,
+    requested: Option<&BTreeMap<String, EnvironmentMcpCatalogInput>>,
+) -> Option<BTreeMap<String, EnvironmentMcpCatalogInput>> {
+    let inputs: BTreeMap<_, _> = saved
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(id, definition)| (id, definition.into_catalog_input()))
+        .filter(|(id, input)| !input.is_empty() || requested.is_some_and(|values| values.contains_key(id)))
+        .collect();
+    (!inputs.is_empty() || requested.is_some_and(BTreeMap::is_empty)).then_some(inputs)
+}
+
 impl EnvironmentSpecification {
     /// Consume resolved content to recover the exact editable intent. Only host
     /// resolution fields are discarded; large user buffers retain ownership.
@@ -90,6 +103,10 @@ impl EnvironmentSpecification {
             detection: rules(detection, requested.map(|draft| &draft.detection)),
             mcps: EnvironmentMcps {
                 catalog: selections(mcps.catalog, requested.map(|draft| &draft.mcps.catalog)),
+                catalog_configuration: mcp_inputs(
+                    mcps.catalog_configuration,
+                    requested.and_then(|draft| draft.mcps.catalog_configuration.as_ref()),
+                ),
                 servers: mcps.servers,
                 permissions: mcps.permissions,
             },

@@ -2,8 +2,7 @@
 
 import type { EnvironmentImageUpdatePolicy } from "./EnvironmentImageUpdatePolicy.js";
 
-export interface EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPinImage {
+export interface EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection_EnvironmentMcpCatalogInputImage {
   "reference": string;
-  "resolved_digest": string;
   "update_policy"?: EnvironmentImageUpdatePolicy;
 }

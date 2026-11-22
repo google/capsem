@@ -1,5 +1,8 @@
 """Generated from Capsem OpenAPI. Do not edit."""
 
+from .run_request import RunRequest
+from .sandbox_environment import SandboxEnvironment
+from .sandbox_info import SandboxInfo
 from .scope_profile_summary import ScopeProfileSummary
 from .security_ask_decision import SecurityAskDecision
 from .security_ask_list_response import SecurityAskListResponse
@@ -77,11 +80,11 @@ from .vm_readiness_response import VmReadinessResponse
 from .vm_skill_detail_response import VmSkillDetailResponse
 from .vm_skill_list_response import VmSkillListResponse
 from .vm_start_request import VmStartRequest
-from .vm_stats_detail_response import VmStatsDetailResponse
-from .vm_stats_summary_response import VmStatsSummaryResponse
-from .vm_status_response import VmStatusResponse
 
 __all__ = [
+    'RunRequest',
+    'SandboxEnvironment',
+    'SandboxInfo',
     'ScopeProfileSummary',
     'SecurityAskDecision',
     'SecurityAskListResponse',
@@ -159,7 +162,4 @@ __all__ = [
     'VmSkillDetailResponse',
     'VmSkillListResponse',
     'VmStartRequest',
-    'VmStatsDetailResponse',
-    'VmStatsSummaryResponse',
-    'VmStatusResponse',
 ]

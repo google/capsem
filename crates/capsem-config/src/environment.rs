@@ -7,7 +7,10 @@ mod catalog;
 mod drafts;
 pub(crate) mod mcps;
 mod rules;
-pub use mcps::{EnvironmentCapabilityDecision, EnvironmentMcpDefinition, EnvironmentMcpPermissions, EnvironmentMcps};
+pub use mcps::{
+    EnvironmentCapabilityDecision, EnvironmentMcpCatalogInput, EnvironmentMcpDefinition, EnvironmentMcpPermissions,
+    EnvironmentMcps,
+};
 pub use rules::{
     EnvironmentAccessRule, EnvironmentAccessRules, EnvironmentDetectionRule, EnvironmentDetectionRules,
     EnvironmentRuleParameter, EnvironmentRules,
@@ -16,8 +19,8 @@ pub use rules::{
 mod tests;
 mod toml_edit;
 mod validation;
-pub(crate) use validation::variable_name;
 pub use catalog::{EnvironmentCatalogPin, EnvironmentCatalogSelection, EnvironmentCatalogSelections};
+pub(crate) use validation::variable_name;
 
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,9 +40,14 @@ pub struct EnvironmentIdentity {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     deny_unknown_fields,
-    bound(deserialize = "I: Deserialize<'de>, R: Deserialize<'de>, C: Deserialize<'de>")
+    bound(deserialize = "I: Deserialize<'de>, R: Deserialize<'de>, C: Deserialize<'de>, M: Deserialize<'de>")
 )]
-pub struct EnvironmentSpecification<I = EnvironmentImage, R = EnvironmentRepository, C = EnvironmentCatalogPin> {
+pub struct EnvironmentSpecification<
+    I = EnvironmentImage,
+    R = EnvironmentRepository,
+    C = EnvironmentCatalogPin,
+    M = EnvironmentMcpDefinition,
+> {
     pub name: String,
     #[serde(default)]
     pub description: String,
@@ -64,14 +72,18 @@ pub struct EnvironmentSpecification<I = EnvironmentImage, R = EnvironmentReposit
     #[cfg_attr(feature = "schema", schema(value_type = EnvironmentRules<C, EnvironmentDetectionRule>))]
     pub detection: EnvironmentDetectionRules<C>,
     #[serde(default)]
-    pub mcps: EnvironmentMcps<C>,
+    pub mcps: EnvironmentMcps<C, M>,
     #[serde(default)]
     pub plugins: crate::plugins::EnvironmentPlugins,
 }
 
 /// Agent/operator intent has selectors and optional content expectations. The host resolves all pins.
-pub type EnvironmentDraft =
-    EnvironmentSpecification<EnvironmentImageSelection, EnvironmentRepositorySelection, EnvironmentCatalogSelection>;
+pub type EnvironmentDraft = EnvironmentSpecification<
+    EnvironmentImageSelection,
+    EnvironmentRepositorySelection,
+    EnvironmentCatalogSelection,
+    EnvironmentMcpCatalogInput,
+>;
 
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -156,7 +168,7 @@ pub struct EnvironmentPackages {
 #[serde(deny_unknown_fields)]
 pub struct EnvironmentDocument {
     pub identity: EnvironmentIdentity,
-    #[cfg_attr(feature = "schema", schema(value_type = EnvironmentSpecification<EnvironmentImage, EnvironmentRepository, EnvironmentCatalogPin>))]
+    #[cfg_attr(feature = "schema", schema(value_type = EnvironmentSpecification<EnvironmentImage, EnvironmentRepository, EnvironmentCatalogPin, EnvironmentMcpDefinition>))]
     pub specification: EnvironmentSpecification,
 }
 
@@ -197,7 +209,7 @@ impl EnvironmentDocument {
 
 // These representations may contain ordinary variables accidentally holding
 // credentials. Debug output reports shape only, never variable/script values.
-impl<I, R, C> std::fmt::Debug for EnvironmentSpecification<I, R, C> {
+impl<I, R, C, M> std::fmt::Debug for EnvironmentSpecification<I, R, C, M> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EnvironmentSpecification")
             .field("variable_count", &self.variables.len())

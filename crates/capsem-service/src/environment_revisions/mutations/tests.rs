@@ -1,7 +1,7 @@
 use super::*;
 use crate::environment_files::EnvironmentFiles;
 use capsem_config::{
-    catalogs::CatalogKind,
+    catalogs::{CatalogKind, McpCatalogDefinition},
     environment::{EnvironmentCatalogPin, EnvironmentCatalogSelection},
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -50,6 +50,12 @@ impl EnvironmentPinResolver for Source {
         unreachable!()
     }
     async fn admit_catalog(&self, _: CatalogKind, _: &EnvironmentCatalogPin) -> Result<(), EnvironmentResolutionError> {
+        unreachable!()
+    }
+    async fn mcp_catalog_definition(
+        &self,
+        _: &EnvironmentCatalogPin,
+    ) -> Result<McpCatalogDefinition, EnvironmentResolutionError> {
         unreachable!()
     }
 }

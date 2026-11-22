@@ -1,6 +1,118 @@
 use super::*;
 
 #[tokio::test]
+async fn saved_mcp_catalog_configuration_records_the_verified_launch_definition() {
+    let fx = Fixture::new().await;
+    let mut catalog = document(CatalogKind::Mcp, false);
+    catalog["entries"][0]["definition"]["headers"] =
+        json!({"X-Workspace":{"description":"Workspace identity","required":true}});
+    catalog["entries"][0]["definition"]["secret_binding"] =
+        json!({"description":"Workspace credential","required":true});
+    let digest = fx.registry.publish(CatalogKind::Mcp, catalog);
+    let reference = fx.select_mcp_digest(&digest);
+    let app = crate::router_runtime::build_service_router(fx.state.clone());
+    let request = json!({"request_id":id(610),"reason":"approved MCP catalog template","specification":{
+        "name":"catalog-mcp","mcps":{
+            "catalog":{"selected":[{"id":"review","version":"1.0.0",
+                "expected_catalog":{"reference":reference,"digest":digest}}]},
+            "catalog_configuration":{"review":{"values":{"X-Workspace":"example"},"binding_id":id(611)}}
+        }
+    }});
+    let create = |body: serde_json::Value| {
+        let app = app.clone();
+        async move { route_request(app, Method::POST, "/environments/create", Some(body)).await }
+    };
+    for (field, value, expected) in [
+        (
+            "url",
+            json!("https://unreviewed.invalid"),
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+        ("binding_id", serde_json::Value::Null, StatusCode::BAD_REQUEST),
+        ("values", json!({"X-Undeclared":"example"}), StatusCode::BAD_REQUEST),
+    ] {
+        let mut invalid = request.clone();
+        invalid["specification"]["mcps"]["catalog_configuration"]["review"][field] = value;
+        assert_eq!(create(invalid).await.0, expected);
+    }
+    let mut stale = request.clone();
+    stale["specification"]["mcps"]["catalog"]["selected"][0]["expected_catalog"]["digest"] =
+        format!("sha256:{}", "a".repeat(64)).into();
+    assert_eq!(create(stale).await.0, StatusCode::PRECONDITION_FAILED);
+    let review_path = format!("/requests/{}/info", id(610));
+    assert_eq!(
+        route_request(app.clone(), Method::GET, &review_path, None).await.0,
+        StatusCode::NOT_FOUND
+    );
+    let (status, response) = create(request.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    let revision: capsem_api::environments::EnvironmentRevisionReference =
+        serde_json::from_value(response["result"].clone()).unwrap();
+    let environment = &revision.environment_id;
+    let current_path = format!("/environments/{environment}/info");
+    let (status, current) = route_request(app.clone(), Method::GET, &current_path, None).await;
+    assert_eq!(status, StatusCode::OK, "{current}");
+    let config = &current["document"]["specification"]["mcps"]["catalog_configuration"]["review"];
+    assert_eq!(config["kind"], "remote");
+    assert_eq!(config["url"], "https://mcp.example.invalid/service");
+    assert_eq!(config["headers"]["X-Workspace"], "example");
+    assert_eq!(config["binding_id"], id(611));
+    let (status, review) = route_request(app.clone(), Method::GET, &review_path, None).await;
+    assert_eq!(status, StatusCode::OK, "{review}");
+    assert_eq!(
+        review["proposed"]["specification"]["mcps"]["catalog_configuration"]["review"],
+        *config
+    );
+    let refusal = crate::environment_launch::validate_selection(&fx.state, &revision, false)
+        .await
+        .unwrap_err();
+    assert_eq!(refusal.status, StatusCode::NOT_IMPLEMENTED);
+    assert!(refusal.body.error.contains("scoped launch preparation"));
+
+    let requests = fx.registry.requests.lock().unwrap().len();
+    assert_eq!(create(request.clone()).await, (StatusCode::OK, response));
+    assert_eq!(fx.registry.requests.lock().unwrap().len(), requests);
+    let canonical: capsem_config::environment::EnvironmentDocument =
+        serde_json::from_value(current["document"].clone()).unwrap();
+    let canonical_toml = canonical.to_toml().unwrap();
+    assert!(canonical
+        .draft_from_toml(&canonical_toml.replace("https://mcp.example.invalid/service", "https://unreviewed.invalid"))
+        .is_err());
+    let toml = canonical_toml.replace("X-Workspace = \"example\"", "X-Workspace = \"updated\"");
+    let draft = canonical.draft_from_toml(&toml).unwrap();
+    let changes = format!("/environments/{environment}/changes");
+    let edit = |n| {
+        json!({"request_id":id(n),"reason":"reconfigure saved entry",
+        "base_revision_id":revision.revision_id,"specification":draft})
+    };
+    let (status, changed) = route_request(app.clone(), Method::POST, &changes, Some(edit(612))).await;
+    assert_eq!(status, StatusCode::OK, "{changed}");
+    assert_eq!(fx.registry.requests.lock().unwrap().len(), requests);
+    let changed_revision = changed["result"]["revision_id"].as_str().unwrap();
+    let revoked = fx.registry.publish(CatalogKind::Mcp, document(CatalogKind::Mcp, true));
+    fx.select_mcp_digest(&revoked);
+    assert_eq!(
+        route_request(app.clone(), Method::GET, "/mcps/list", None).await.0,
+        StatusCode::OK
+    );
+    fx.select_mcp_digest(&digest);
+    let mut revoked_edit = edit(613);
+    revoked_edit["base_revision_id"] = changed_revision.into();
+    assert_eq!(
+        route_request(app.clone(), Method::POST, &changes, Some(revoked_edit))
+            .await
+            .0,
+        StatusCode::FORBIDDEN
+    );
+    let (_, retained) = route_request(app, Method::GET, &current_path, None).await;
+    assert_eq!(retained["document"]["identity"]["revision_id"], changed_revision);
+    assert_eq!(
+        retained["document"]["specification"]["mcps"]["catalog_configuration"]["review"]["headers"]["X-Workspace"],
+        "updated"
+    );
+}
+
+#[tokio::test]
 async fn global_mcps_browse_the_exact_release_authorized_catalog() {
     let fx = Fixture::new().await;
     let mut original = document(CatalogKind::Mcp, false);

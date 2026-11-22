@@ -426,7 +426,7 @@
     },
     "/environments/create": {
       "post": {
-        "description": "Create an operator blueprint. Reconcile the same request ID explicitly after interruption; never infer completed application from an accepted decision. Skills and rules resolve from configured catalogs. Anonymous public HTTPS Git references resolve under current corporate policy; this does not prepare a sandbox checkout. Catalog-based MCP configuration is unavailable.",
+        "description": "Create an operator blueprint. Reconcile the same request ID explicitly after interruption; never infer completed application from an accepted decision. Skills and rules resolve from configured catalogs. MCP catalog selections record the exact verified definitions and their configured inputs. Server launch requires scoped runtime preparation. Anonymous public HTTPS Git references resolve under current corporate policy; this does not prepare a sandbox checkout.",
         "operationId": "createEnvironment",
         "requestBody": {
           "content": {
@@ -7192,7 +7192,7 @@
             ]
           },
           "specification": {
-            "$ref": "#/components/schemas/EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection"
+            "$ref": "#/components/schemas/EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection_EnvironmentMcpCatalogInput"
           }
         },
         "additionalProperties": false
@@ -7225,7 +7225,7 @@
             ]
           },
           "specification": {
-            "$ref": "#/components/schemas/EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection"
+            "$ref": "#/components/schemas/EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection_EnvironmentMcpCatalogInput"
           }
         },
         "additionalProperties": false
@@ -7301,7 +7301,7 @@
             "$ref": "#/components/schemas/EnvironmentIdentity"
           },
           "specification": {
-            "$ref": "#/components/schemas/EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin"
+            "$ref": "#/components/schemas/EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin_EnvironmentMcpDefinition"
           }
         },
         "additionalProperties": false
@@ -7661,11 +7661,106 @@
         },
         "additionalProperties": false
       },
-      "EnvironmentMcps_EnvironmentCatalogPin": {
+      "EnvironmentMcps_EnvironmentCatalogPin_EnvironmentMcpDefinition": {
         "type": "object",
         "properties": {
           "catalog": {
             "$ref": "#/components/schemas/EnvironmentCatalogSelections_EnvironmentCatalogPin"
+          },
+          "catalog_configuration": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Configuration for catalog selections keyed by entry ID. Saved revisions\ncarry the complete definition resolved by the host.",
+            "additionalProperties": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "url",
+                    "kind"
+                  ],
+                  "properties": {
+                    "binding_id": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "headers": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "propertyNames": {
+                        "type": "string"
+                      }
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "remote"
+                      ]
+                    },
+                    "url": {
+                      "type": "string"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "executable",
+                    "kind"
+                  ],
+                  "properties": {
+                    "args": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "executable": {
+                      "type": "string"
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "sandbox"
+                      ]
+                    },
+                    "secrets": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "$ref": "#/components/schemas/EnvironmentSecretBinding"
+                      },
+                      "propertyNames": {
+                        "type": "string"
+                      }
+                    },
+                    "variables": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      },
+                      "propertyNames": {
+                        "type": "string"
+                      }
+                    },
+                    "workdir": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "propertyNames": {
+              "type": "string"
+            }
           },
           "permissions": {
             "type": "object",
@@ -7688,11 +7783,54 @@
         },
         "additionalProperties": false
       },
-      "EnvironmentMcps_EnvironmentCatalogSelection": {
+      "EnvironmentMcps_EnvironmentCatalogSelection_EnvironmentMcpCatalogInput": {
         "type": "object",
         "properties": {
           "catalog": {
             "$ref": "#/components/schemas/EnvironmentCatalogSelections_EnvironmentCatalogSelection"
+          },
+          "catalog_configuration": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "Configuration for catalog selections keyed by entry ID. Saved revisions\ncarry the complete definition resolved by the host.",
+            "additionalProperties": {
+              "type": "object",
+              "description": "Values an operator can supply for a catalog definition. The host supplies\nits remote endpoint or sandbox command when resolving the exact pin.",
+              "properties": {
+                "binding_id": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "secrets": {
+                  "type": "object",
+                  "description": "Sandbox secret references with an explicit declared target variable.",
+                  "additionalProperties": {
+                    "$ref": "#/components/schemas/EnvironmentSecretBinding"
+                  },
+                  "propertyNames": {
+                    "type": "string"
+                  }
+                },
+                "values": {
+                  "type": "object",
+                  "description": "Ordinary HTTP headers or guest variables declared by the template.",
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "propertyNames": {
+                    "type": "string"
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "propertyNames": {
+              "type": "string"
+            }
           },
           "permissions": {
             "type": "object",
@@ -8184,7 +8322,7 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin"
+                "$ref": "#/components/schemas/EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin_EnvironmentMcpDefinition"
               }
             ]
           }
@@ -8215,7 +8353,7 @@
                 "type": "null"
               },
               {
-                "$ref": "#/components/schemas/EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin",
+                "$ref": "#/components/schemas/EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin_EnvironmentMcpDefinition",
                 "description": "Retained fields of a purged revision, never replayable."
               }
             ]
@@ -8744,7 +8882,7 @@
         },
         "additionalProperties": false
       },
-      "EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection": {
+      "EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection_EnvironmentMcpCatalogInput": {
         "type": "object",
         "description": "Editable content contains no service-assigned revision/history metadata.",
         "required": [
@@ -8776,7 +8914,7 @@
             "additionalProperties": false
           },
           "mcps": {
-            "$ref": "#/components/schemas/EnvironmentMcps_EnvironmentCatalogSelection"
+            "$ref": "#/components/schemas/EnvironmentMcps_EnvironmentCatalogSelection_EnvironmentMcpCatalogInput"
           },
           "name": {
             "type": "string"
@@ -8844,7 +8982,7 @@
         },
         "additionalProperties": false
       },
-      "EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin": {
+      "EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin_EnvironmentMcpDefinition": {
         "type": "object",
         "description": "Editable content contains no service-assigned revision/history metadata.",
         "required": [
@@ -8880,7 +9018,7 @@
             "additionalProperties": false
           },
           "mcps": {
-            "$ref": "#/components/schemas/EnvironmentMcps_EnvironmentCatalogPin"
+            "$ref": "#/components/schemas/EnvironmentMcps_EnvironmentCatalogPin_EnvironmentMcpDefinition"
           },
           "name": {
             "type": "string"
@@ -8993,7 +9131,7 @@
             "$ref": "#/components/schemas/EnvironmentRevisionReference"
           },
           "specification": {
-            "$ref": "#/components/schemas/EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection",
+            "$ref": "#/components/schemas/EnvironmentSpecification_EnvironmentImageSelection_EnvironmentRepositorySelection_EnvironmentCatalogSelection_EnvironmentMcpCatalogInput",
             "description": "Validated selectors for the existing change and review operation."
           }
         },

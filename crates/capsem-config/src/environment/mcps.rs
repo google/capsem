@@ -4,22 +4,67 @@ use super::*;
 
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, bound(deserialize = "C: Deserialize<'de>"))]
-pub struct EnvironmentMcps<C = EnvironmentCatalogPin> {
+#[serde(deny_unknown_fields, bound(deserialize = "C: Deserialize<'de>, M: Deserialize<'de>"))]
+pub struct EnvironmentMcps<C = EnvironmentCatalogPin, M = EnvironmentMcpDefinition> {
     #[serde(default)]
     pub catalog: EnvironmentCatalogSelections<C>,
+    /// Configuration for catalog selections keyed by entry ID. Saved revisions
+    /// carry the complete definition resolved by the host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_configuration: Option<BTreeMap<String, M>>,
     #[serde(default)]
     pub servers: BTreeMap<String, EnvironmentMcpDefinition>,
     #[serde(default)]
     pub permissions: BTreeMap<String, EnvironmentMcpPermissions>,
 }
-impl<C> Default for EnvironmentMcps<C> {
+impl<C, M> Default for EnvironmentMcps<C, M> {
     fn default() -> Self {
         Self {
             catalog: Default::default(),
+            catalog_configuration: None,
             servers: BTreeMap::new(),
             permissions: BTreeMap::new(),
         }
+    }
+}
+
+/// Values an operator can supply for a catalog definition. The host supplies
+/// its remote endpoint or sandbox command when resolving the exact pin.
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnvironmentMcpCatalogInput {
+    /// Ordinary HTTP headers or guest variables declared by the template.
+    #[serde(default)]
+    pub values: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding_id: Option<String>,
+    /// Sandbox secret references with an explicit declared target variable.
+    #[serde(default)]
+    pub secrets: BTreeMap<String, EnvironmentSecretBinding>,
+}
+
+impl EnvironmentMcpCatalogInput {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if self.values.len() > capsem_proto::ENVIRONMENT_MAX_CONFIGURATION_ENTRIES
+            || self.values.iter().any(|(name, value)| {
+                !(ordinary_header_name(name) || validation::variable_name(name))
+                    || value.len() > capsem_proto::ENVIRONMENT_MAX_VARIABLE_VALUE_BYTES
+                    || value.contains('\0')
+            })
+            || self
+                .binding_id
+                .as_deref()
+                .is_some_and(|id| !validation::canonical_uuid(id))
+            || self.secrets.values().any(|binding| binding.env_name.is_none())
+        {
+            return Err("invalid MCP catalog configuration inputs".into());
+        }
+        validation::validate_values(&BTreeMap::new(), &self.secrets)
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.values.is_empty() && self.binding_id.is_none() && self.secrets.is_empty()
     }
 }
 
@@ -45,6 +90,46 @@ pub enum EnvironmentMcpDefinition {
         #[serde(default)]
         secrets: BTreeMap<String, EnvironmentSecretBinding>,
     },
+}
+
+impl EnvironmentMcpDefinition {
+    pub(super) fn has_same_catalog_template(&self, saved: &Self) -> bool {
+        match (self, saved) {
+            (Self::Remote { url, .. }, Self::Remote { url: previous, .. }) => url == previous,
+            (
+                Self::Sandbox {
+                    executable,
+                    args,
+                    workdir,
+                    ..
+                },
+                Self::Sandbox {
+                    executable: previous,
+                    args: previous_args,
+                    workdir: previous_workdir,
+                    ..
+                },
+            ) => (executable, args, workdir) == (previous, previous_args, previous_workdir),
+            _ => false,
+        }
+    }
+
+    pub(super) fn into_catalog_input(self) -> EnvironmentMcpCatalogInput {
+        match self {
+            Self::Remote {
+                headers, binding_id, ..
+            } => EnvironmentMcpCatalogInput {
+                values: headers,
+                binding_id,
+                ..Default::default()
+            },
+            Self::Sandbox { variables, secrets, .. } => EnvironmentMcpCatalogInput {
+                values: variables,
+                secrets,
+                ..Default::default()
+            },
+        }
+    }
 }
 
 #[cfg_attr(feature = "schema", derive(utoipa::ToSchema))]
@@ -159,7 +244,7 @@ pub(crate) fn sandbox_command(executable: &str, args: &[String], workdir: Option
         })
 }
 
-fn definition(definition: &EnvironmentMcpDefinition, image: bool) -> Result<(), String> {
+pub(crate) fn validate_definition(definition: &EnvironmentMcpDefinition, image: bool) -> Result<(), String> {
     match definition {
         EnvironmentMcpDefinition::Remote {
             url,
@@ -197,8 +282,8 @@ fn definition(definition: &EnvironmentMcpDefinition, image: bool) -> Result<(), 
     Ok(())
 }
 
-pub(super) fn validate<'a, C>(
-    mcps: &EnvironmentMcps<C>,
+pub(super) fn validate<'a, C, M>(
+    mcps: &EnvironmentMcps<C, M>,
     selected: impl Iterator<Item = &'a str>,
     image: bool,
 ) -> Result<(), String> {
@@ -206,11 +291,18 @@ pub(super) fn validate<'a, C>(
     if ids.contains("local") || ids.len() + mcps.servers.len() > capsem_proto::ENVIRONMENT_MAX_MCP_SERVERS {
         return Err("reserved or too many environment MCP servers".into());
     }
+    if mcps
+        .catalog_configuration
+        .as_ref()
+        .is_some_and(|configuration| !configuration.keys().all(|id| ids.contains(id.as_str())))
+    {
+        return Err("MCP catalog configuration requires a selected entry".into());
+    }
     for (id, server) in &mcps.servers {
         if id == "local" || crate::validate_identifier_shape(id).is_err() || !ids.insert(id) {
             return Err("invalid or duplicate environment MCP server identity".into());
         }
-        definition(server, image)?;
+        validate_definition(server, image)?;
     }
     // The built-in host server retains its reserved identity and scoped policy.
     // A catalog or inline definition cannot replace its implementation.

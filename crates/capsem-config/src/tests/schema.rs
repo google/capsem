@@ -3,7 +3,7 @@ use serde_json::Value;
 use utoipa::{OpenApi, ToSchema};
 
 #[derive(OpenApi)]
-#[openapi(components(schemas(EnvironmentSpecification<EnvironmentImageSelection, EnvironmentRepositorySelection, EnvironmentCatalogSelection>, EnvironmentDocument, EnvironmentLimits, PluginDescriptor)))]
+#[openapi(components(schemas(EnvironmentSpecification<EnvironmentImageSelection, EnvironmentRepositorySelection, EnvironmentCatalogSelection, EnvironmentMcpCatalogInput>, EnvironmentDocument, EnvironmentLimits, PluginDescriptor)))]
 struct Contract;
 
 fn schemas() -> Value {

@@ -1,4 +1,5 @@
 use super::*;
+use crate::environment::{EnvironmentMcpCatalogInput, EnvironmentMcpDefinition};
 use serde_json::{json, Value};
 
 fn catalog(definition: Value) -> Value {
@@ -71,4 +72,44 @@ fn catalog_mcp_validates_optional_published_tools_and_revoked_tombstones() {
     validate(document.clone()).unwrap();
     document["entries"][0]["metadata"]["id"] = "local".into();
     assert!(validate(document).is_err());
+}
+
+#[test]
+fn catalog_mcp_configures_only_declared_sandbox_values_and_binding_targets() {
+    let template: McpCatalogDefinition = serde_json::from_value(json!({
+        "kind":"sandbox","executable":"review","args":["--stdio"],"workdir":"/workspace",
+        "variables":{"WORKSPACE":{"description":"Workspace","required":true}},
+        "secret_variables":{"REVIEW_TOKEN":{"description":"Review token","required":true}}
+    }))
+    .unwrap();
+    let input = || {
+        json!({
+            "values":{"WORKSPACE":"project"},
+            "secrets":{"token":{"binding_id":"00000000-0000-4000-8000-000000000010","env_name":"REVIEW_TOKEN"}}
+        })
+    };
+    let parse = |value| serde_json::from_value::<EnvironmentMcpCatalogInput>(value).unwrap();
+    let definition = template.clone().configure(parse(input()), true).unwrap();
+    let EnvironmentMcpDefinition::Sandbox {
+        executable,
+        args,
+        workdir,
+        variables,
+        secrets,
+    } = definition
+    else {
+        panic!("sandbox template changed kind")
+    };
+    assert_eq!(executable, "review");
+    assert_eq!(args, ["--stdio"]);
+    assert_eq!(workdir.as_deref(), Some("/workspace"));
+    assert_eq!(variables["WORKSPACE"], "project");
+    assert_eq!(secrets["token"].env_name.as_deref(), Some("REVIEW_TOKEN"));
+    let mut wrong = input();
+    wrong["secrets"]["token"]["env_name"] = "OTHER_TOKEN".into();
+    assert!(template.clone().configure(parse(wrong), true).is_err());
+    let mut wrong = input();
+    wrong["values"]["REVIEW_TOKEN"] = "undeclared secret value".into();
+    assert!(template.clone().configure(parse(wrong), true).is_err());
+    assert!(template.configure(parse(input()), false).is_err());
 }

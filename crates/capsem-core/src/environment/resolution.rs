@@ -1,6 +1,9 @@
 //! Resolve editable intent once before review; unchanged selectors retain their pins.
-use capsem_config::{catalogs::CatalogKind, environment::*};
-use std::future::Future;
+use capsem_config::{
+    catalogs::{CatalogKind, McpCatalogDefinition},
+    environment::*,
+};
+use std::{collections::BTreeMap, future::Future};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EnvironmentResolutionError {
@@ -52,6 +55,10 @@ pub trait EnvironmentPinResolver: Sync {
         kind: CatalogKind,
         pin: &EnvironmentCatalogPin,
     ) -> impl Future<Output = Result<(), EnvironmentResolutionError>> + Send;
+    fn mcp_catalog_definition(
+        &self,
+        pin: &EnvironmentCatalogPin,
+    ) -> impl Future<Output = Result<McpCatalogDefinition, EnvironmentResolutionError>> + Send;
 }
 
 /// This produces content for review, not caller authority or permission to apply.
@@ -134,13 +141,25 @@ pub async fn resolve_environment(
         sources,
     )
     .await?;
-    let mcp_catalog = selections(
-        mcps.catalog,
-        base.map(|base| &base.mcps.catalog),
-        CatalogKind::Mcp,
-        sources,
-    )
-    .await?;
+    let mut inputs = mcps.catalog_configuration.unwrap_or_default();
+    let mut selected_mcps = Vec::with_capacity(mcps.catalog.selected.len());
+    let mut definitions = BTreeMap::new();
+    for selection in mcps.catalog.selected {
+        let pin = selection_pin(
+            selection,
+            base.map(|base| &base.mcps.catalog),
+            CatalogKind::Mcp,
+            sources,
+        )
+        .await?;
+        let definition = sources.mcp_catalog_definition(&pin).await?;
+        let input = inputs.remove(&pin.id).unwrap_or_default();
+        let definition = definition
+            .configure(input, image.is_some())
+            .map_err(|_| EnvironmentResolutionError::InvalidIntent)?;
+        definitions.insert(pin.id.clone(), definition);
+        selected_mcps.push(pin);
+    }
     let result = EnvironmentSpecification {
         name,
         description,
@@ -162,7 +181,10 @@ pub async fn resolve_environment(
             custom: detection.custom,
         },
         mcps: EnvironmentMcps {
-            catalog: mcp_catalog,
+            catalog: EnvironmentCatalogSelections {
+                selected: selected_mcps,
+            },
+            catalog_configuration: (!definitions.is_empty()).then_some(definitions),
             servers: mcps.servers,
             permissions: mcps.permissions,
         },
@@ -180,27 +202,37 @@ async fn selections(
 ) -> Result<EnvironmentCatalogSelections<EnvironmentCatalogPin>, EnvironmentResolutionError> {
     let mut selected = Vec::with_capacity(selections.selected.len());
     for selection in selections.selected {
-        let retained = base.and_then(|base| {
-            base.selected
-                .iter()
-                .find(|pin| pin.id == selection.id && pin.version == selection.version)
-        });
-        let pin = if let Some(pin) = retained {
-            pin.clone()
-        } else {
-            let pin = sources.catalog(kind, &selection).await?;
-            if pin.id != selection.id || pin.version != selection.version {
-                return Err(EnvironmentResolutionError::InvalidPin);
-            }
-            pin
-        };
-        if !selection.expects(&pin) {
-            return Err(EnvironmentResolutionError::CatalogChanged);
-        }
+        let pin = selection_pin(selection, base, kind, sources).await?;
         sources.admit_catalog(kind, &pin).await?;
         selected.push(pin);
     }
     Ok(EnvironmentCatalogSelections { selected })
+}
+
+async fn selection_pin(
+    selection: EnvironmentCatalogSelection,
+    base: Option<&EnvironmentCatalogSelections<EnvironmentCatalogPin>>,
+    kind: CatalogKind,
+    sources: &impl EnvironmentPinResolver,
+) -> Result<EnvironmentCatalogPin, EnvironmentResolutionError> {
+    let retained = base.and_then(|base| {
+        base.selected
+            .iter()
+            .find(|pin| pin.id == selection.id && pin.version == selection.version)
+    });
+    let pin = if let Some(pin) = retained {
+        pin.clone()
+    } else {
+        let pin = sources.catalog(kind, &selection).await?;
+        if pin.id != selection.id || pin.version != selection.version {
+            return Err(EnvironmentResolutionError::InvalidPin);
+        }
+        pin
+    };
+    if !selection.expects(&pin) {
+        return Err(EnvironmentResolutionError::CatalogChanged);
+    }
+    Ok(pin)
 }
 
 #[cfg(test)]

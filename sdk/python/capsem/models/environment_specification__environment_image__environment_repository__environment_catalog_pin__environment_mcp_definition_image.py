@@ -8,7 +8,7 @@ from .environment_image_update_policy import EnvironmentImageUpdatePolicy
 from .model_base import Model
 
 
-class EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPinImage(Model):
+class EnvironmentSpecification_EnvironmentImage_EnvironmentRepository_EnvironmentCatalogPin_EnvironmentMcpDefinitionImage(Model):
     nonnullable_optional = frozenset(['update_policy'])
     model_config = ConfigDict(strict=True, populate_by_name=True, extra="forbid")
     reference: StrictStr
