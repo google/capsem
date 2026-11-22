@@ -1,10 +1,10 @@
 import { EnvironmentDraftSchema } from '@capsem/sdk';
 import type { EnvironmentChangeRequest, EnvironmentCurrentResponse } from '@capsem/sdk';
 
-type Specification = EnvironmentCurrentResponse['document']['specification'];
+export type EnvironmentSpecification = EnvironmentCurrentResponse['document']['specification'];
 export type EnvironmentDraft = EnvironmentChangeRequest['specification'];
 type McpDraft = NonNullable<EnvironmentDraft['mcps']>;
-type McpCatalogInput = NonNullable<McpDraft['catalog_configuration']>[string];
+export type McpCatalogInput = NonNullable<McpDraft['catalog_configuration']>[string];
 
 export const environmentSections = {
   repositories: 'Repositories', variables: 'Environment variables', secrets: 'Secret bindings',
@@ -29,11 +29,11 @@ export interface EnvironmentFields {
   sections: Record<EnvironmentSection, string>;
 }
 
-function catalogSelections(catalog: Specification['skills']) {
+function catalogSelections(catalog: EnvironmentSpecification['skills']) {
   return { selected: (catalog?.selected ?? []).map(({ id, version }) => ({ id, version })) };
 }
 
-function mcpDraft(mcps: NonNullable<Specification['mcps']>): McpDraft {
+function mcpDraft(mcps: NonNullable<EnvironmentSpecification['mcps']>): McpDraft {
   const { catalog, catalog_configuration, ...inline } = mcps;
   const inputs: [string, McpCatalogInput][] = [];
   for (const [id, definition] of Object.entries(catalog_configuration ?? {})) {
@@ -52,7 +52,7 @@ function mcpDraft(mcps: NonNullable<Specification['mcps']>): McpDraft {
 }
 
 /** Translate committed content to editable selectors. Only the service may resolve their pins. */
-export function environmentDraft(specification: Specification): EnvironmentDraft {
+export function environmentDraft(specification: EnvironmentSpecification): EnvironmentDraft {
   const { image, repositories, access, detection, skills, mcps, ...rest } = specification;
   return {
     ...rest,
@@ -65,7 +65,7 @@ export function environmentDraft(specification: Specification): EnvironmentDraft
   };
 }
 
-export function editableFields(specification?: Specification): EnvironmentFields {
+export function editableFields(specification?: EnvironmentSpecification): EnvironmentFields {
   const draft = specification ? environmentDraft(specification) : null;
   return {
     name: draft?.name ?? '', description: draft?.description ?? '', image: draft?.image?.reference ?? '',

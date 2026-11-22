@@ -43,6 +43,12 @@ headers or variables, `binding_id` for a remote credential reference, and
 Saved revisions and request reviews show the exact resolved definition.
 Starting it requires scoped runtime preparation.
 
+In the desktop environment editor, open **Browse MCP catalog** to inspect a
+version, fill its configuration fields, and add it to the draft.
+**Review changes** shows the exact endpoint or sandbox command and arguments
+before saving. If the catalog changes during review, reopen it and inspect the
+current version.
+
 ## Host server installation and options
 
 Requires Node.js 20 or later, installed Capsem, and gateway access.

@@ -1,7 +1,8 @@
 import { CatalogAvailability, CatalogRefreshError, EnvironmentDraftSchema, type CatalogStatus, type EnvironmentCatalogPin } from '@capsem/sdk';
-import { environmentSections, type EnvironmentDraft } from './environment-editor';
+import { environmentSections, type EnvironmentDraft, type McpCatalogInput } from './environment-editor';
 
-export type CatalogDraftSection = 'skills' | 'access' | 'detection';
+type SkillOrRuleSection = 'skills' | 'access' | 'detection';
+type CatalogDraftSection = SkillOrRuleSection | 'mcps';
 
 function readSection(value: string, section: CatalogDraftSection): EnvironmentDraft {
   try {
@@ -25,22 +26,67 @@ export function currentCatalogSelection(value: string, section: CatalogDraftSect
   }
 }
 
-export function stageCatalogSelection(value: string, section: CatalogDraftSection, pin: EnvironmentCatalogPin): string {
+export function stageCatalogSelection(value: string, section: SkillOrRuleSection, pin: EnvironmentCatalogPin): string {
   const draft = readSection(value, section);
   const entries = selected(draft, section);
   const previous = entries.find(item => item.id === pin.id);
   if (previous?.version === pin.version && !previous.expected_catalog) return value;
-  const selection = {
-    id: pin.id,
-    version: pin.version,
-    expected_catalog: { reference: pin.catalog_reference, digest: pin.resolved_digest },
-  };
+  const selection = catalogSelector(pin);
   const replacement = previous ? entries.map(item => item.id === pin.id ? selection : item) : [...entries, selection];
   if (section === 'skills') return JSON.stringify({ ...draft.skills, selected: replacement }, null, 2);
   const rules = draft[section];
   const parameters = { ...rules?.parameters };
   if (previous && previous.version !== pin.version) delete parameters[pin.id];
   return JSON.stringify({ ...rules, catalog: { ...rules?.catalog, selected: replacement }, parameters }, null, 2);
+}
+
+export function catalogSelector(pin: EnvironmentCatalogPin) {
+  return { id: pin.id, version: pin.version, expected_catalog: { reference: pin.catalog_reference, digest: pin.resolved_digest } };
+}
+
+export function matchesCatalogPin(reference: { reference: string; digest: string }, pin: EnvironmentCatalogPin) {
+  return reference.reference === pin.catalog_reference && reference.digest === pin.resolved_digest;
+}
+
+export function mcpCatalogDraft(value: string) {
+  try {
+    return readSection(value, 'mcps').mcps;
+  } catch {
+    return undefined;
+  }
+}
+
+export function stageMcpCatalogSelection(
+  value: string, pin: EnvironmentCatalogPin, input: McpCatalogInput, saved?: EnvironmentCatalogPin,
+): string {
+  const { catalog, catalog_configuration, ...other } = readSection(value, 'mcps').mcps ?? {};
+  if (Object.hasOwn(other.servers ?? {}, pin.id)) throw new Error('An inline MCP server already uses this ID.');
+  if (saved && !matchesCatalogPin(catalogSelector(saved).expected_catalog, pin)) {
+    throw new Error('This version differs from the saved digest. Choose a new version to replace it.');
+  }
+  const next = saved ? { id: pin.id, version: pin.version } : catalogSelector(pin);
+  const entries = catalog?.selected ?? [];
+  const replacement = entries.some(item => item.id === pin.id)
+    ? entries.map(item => item.id === pin.id ? next : item) : [...entries, next];
+  const configuration = Object.entries(catalog_configuration ?? {}).filter(([id]) => id !== pin.id);
+  if (Object.keys(input.values ?? {}).length || input.binding_id || Object.keys(input.secrets ?? {}).length) {
+    configuration.push([pin.id, input]);
+  }
+  return JSON.stringify({
+    ...other, catalog: { ...catalog, selected: replacement },
+    ...(configuration.length ? { catalog_configuration: Object.fromEntries(configuration) } : {}),
+  }, null, 2);
+}
+
+export function removeMcpCatalogSelection(value: string, id: string): string {
+  const { catalog, catalog_configuration, permissions, ...other } = readSection(value, 'mcps').mcps ?? {};
+  const configuration = Object.entries(catalog_configuration ?? {}).filter(([key]) => key !== id);
+  const overrides = Object.entries(permissions ?? {}).filter(([key]) => key !== id);
+  return JSON.stringify({
+    ...other, catalog: { ...catalog, selected: (catalog?.selected ?? []).filter(entry => entry.id !== id) },
+    ...(configuration.length ? { catalog_configuration: Object.fromEntries(configuration) } : {}),
+    ...(overrides.length ? { permissions: Object.fromEntries(overrides) } : {}),
+  }, null, 2);
 }
 
 const availabilityLabels: Record<CatalogAvailability, string> = {

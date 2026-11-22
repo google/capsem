@@ -2,22 +2,32 @@
   import { onDestroy, tick } from 'svelte';
   import {
     CatalogSourceOrigin, type CatalogEntryMetadata, type CatalogSnapshot, type CatalogStatus,
-    type CatalogRuleKind, type EnvironmentCatalogPin, type RuleCatalogDetailResponse, type SkillCatalogDetailResponse,
+    type CatalogRuleKind, type EnvironmentCatalogPin, type McpCatalogDetailResponse, type McpCatalogKind,
+    type RuleCatalogDetailResponse, type SkillCatalogDetailResponse,
   } from '@capsem/sdk';
-  import { environmentCatalogStatus, getPublishedRule, getPublishedSkill, listEnvironmentCatalog } from '../../api';
+  import { environmentCatalogStatus, getPublishedMcp, getPublishedRule, getPublishedSkill, listEnvironmentCatalog } from '../../api';
   import { ApiError } from '../../gateway-sdk';
-  import { catalogStatusText, currentCatalogSelection, stageCatalogSelection } from '../../models/environment-catalog';
-  import type { EnvironmentFields } from '../../models/environment-editor';
+  import {
+    catalogSelector, catalogStatusText, currentCatalogSelection, matchesCatalogPin, mcpCatalogDraft,
+    removeMcpCatalogSelection, stageCatalogSelection, stageMcpCatalogSelection,
+  } from '../../models/environment-catalog';
+  import type { EnvironmentFields, McpCatalogInput } from '../../models/environment-editor';
   import { sessionActionError } from '../../models/session-action-error';
+  import EnvironmentMcpCatalogInputs from './EnvironmentMcpCatalogInputs.svelte';
 
-  type Row = { metadata: CatalogEntryMetadata; ruleKind?: CatalogRuleKind };
+  type Row = { metadata: CatalogEntryMetadata; entryKind?: CatalogRuleKind | McpCatalogKind };
 
-  let { kind, sections = $bindable() }: {
-    kind: 'skills' | 'rules'; sections: EnvironmentFields['sections'];
+  let { kind, sections = $bindable(), savedMcpPins = [] }: {
+    kind: 'skills' | 'rules' | 'mcp';
+    sections: EnvironmentFields['sections'];
+    savedMcpPins?: EnvironmentCatalogPin[];
   } = $props();
   const id = $props.id();
   const button = 'rounded-md border border-line-2 px-2.5 py-1.5 text-xs font-medium hover:bg-muted-hover';
-  const itemName = $derived(kind === 'skills' ? 'skill' : 'rule');
+  const itemName = $derived(kind === 'skills' ? 'skill' : kind === 'rules' ? 'rule' : 'MCP server');
+  const catalogName = $derived(kind === 'mcp' ? 'MCP' : itemName);
+  const collectionName = $derived(kind === 'mcp' ? 'MCP servers' : kind);
+  const entryKinds = { access: 'Access', detection: 'Detection', remote: 'Remote HTTP', sandbox: 'Sandbox command' };
   let status = $state<CatalogStatus | undefined>();
   let catalog = $state<CatalogSnapshot | null>(null);
   let entries = $state<Row[]>([]);
@@ -26,7 +36,7 @@
   let submittedSearch = $state('');
   let busy = $state(false);
   let inspecting = $state<string | null>(null);
-  let detail = $state<SkillCatalogDetailResponse | RuleCatalogDetailResponse | null>(null);
+  let detail = $state<SkillCatalogDetailResponse | RuleCatalogDetailResponse | McpCatalogDetailResponse | null>(null);
   let selectedFile = $state('SKILL.md');
   let problem = $state<string | null>(null);
   let notice = $state<string | null>(null);
@@ -35,11 +45,17 @@
   let detailTitle = $state<HTMLElement>();
   let detailTrigger: HTMLButtonElement | undefined;
   const rowKey = (row: Row) => `${row.metadata.id}:${row.metadata.version}`;
-  const target = $derived(detail && 'definition' in detail ? detail.definition.kind : 'skills');
+  const target = $derived(kind === 'mcp' ? 'mcps' : detail && 'parameters' in detail ? detail.definition.kind : 'skills');
   const current = $derived(detail ? currentCatalogSelection(sections[target], target, detail.selection.id) : undefined);
+  const savedMcp = $derived(target === 'mcps' && detail
+    ? savedMcpPins.find(pin => pin.id === detail?.selection.id && pin.version === detail?.selection.version) : undefined);
+  const expected = $derived(current?.expected_catalog ?? (savedMcp ? catalogSelector(savedMcp).expected_catalog : null));
   const sameSelection = $derived(!!detail && current?.version === detail.selection.version
-    && (!current.expected_catalog || (current.expected_catalog.reference === detail.selection.catalog_reference
-      && current.expected_catalog.digest === detail.selection.resolved_digest)));
+    && (!expected || matchesCatalogPin(expected, detail.selection)));
+  const mcpDraft = $derived(kind === 'mcp' ? mcpCatalogDraft(sections.mcps) : undefined);
+  const mcpInputs = $derived(mcpDraft?.catalog_configuration ?? {});
+  const currentMcpInput = $derived(sameSelection && detail && Object.hasOwn(mcpInputs, detail.selection.id)
+    ? mcpInputs[detail.selection.id] : undefined);
 
   function clearDetail() {
     detailRequest?.abort();
@@ -92,7 +108,7 @@
         return;
       }
       const page = 'skills' in result ? result.skills.map(metadata => ({ metadata }))
-        : result.rules.map(rule => ({ metadata: rule.metadata, ruleKind: rule.kind }));
+        : ('rules' in result ? result.rules : result.mcps).map(entry => ({ metadata: entry.metadata, entryKind: entry.kind }));
       catalog = result.catalog;
       entries = after ? [...entries, ...page] : page;
       cursor = result.next_cursor ?? null;
@@ -120,7 +136,8 @@
     const { id: entryId, version } = row.metadata;
     try {
       const result = kind === 'skills' ? await getPublishedSkill(entryId, version, snapshot, signal)
-        : await getPublishedRule(entryId, version, snapshot, signal);
+        : kind === 'rules' ? await getPublishedRule(entryId, version, snapshot, signal)
+          : await getPublishedMcp(entryId, version, snapshot, signal);
       if (signal.aborted) return;
       detail = result;
       selectedFile = 'SKILL.md';
@@ -136,10 +153,25 @@
     }
   }
 
-  function stage(pin: EnvironmentCatalogPin) {
+  function stage(pin: EnvironmentCatalogPin, input: McpCatalogInput = {}) {
     try {
-      sections[target] = stageCatalogSelection(sections[target], target, pin);
-      notice = `Added ${detail?.metadata.name ?? pin.id} ${pin.version} to the draft.`;
+      const updating = target === 'mcps' && current;
+      sections[target] = target === 'mcps'
+        ? stageMcpCatalogSelection(sections.mcps, pin, input, savedMcp)
+        : stageCatalogSelection(sections[target], target, pin);
+      const entry = `${detail?.metadata.name ?? pin.id} ${pin.version}`;
+      notice = updating ? `Updated ${entry} in the draft.` : `Added ${entry} to the draft.`;
+      problem = null;
+    } catch (error) {
+      problem = sessionActionError(error);
+    }
+  }
+
+  function removeMcp(entry: { id: string; version: string }) {
+    try {
+      sections.mcps = removeMcpCatalogSelection(sections.mcps, entry.id);
+      if (detail?.selection.id === entry.id) clearDetail();
+      notice = `Removed ${entry.id} ${entry.version} from the draft.`;
       problem = null;
     } catch (error) {
       problem = sessionActionError(error);
@@ -166,8 +198,8 @@
 </script>
 
 <details class="min-w-0 rounded-lg border border-line-2" ontoggle={toggle}>
-  <summary class="cursor-pointer px-3 py-2 text-sm font-medium">Browse {itemName} catalog</summary>
-  <section aria-label={`${itemName === 'skill' ? 'Skill' : 'Rule'} catalog`} class="min-w-0 space-y-3 p-3 pt-0">
+  <summary class="cursor-pointer px-3 py-2 text-sm font-medium">Browse {catalogName} catalog</summary>
+  <section aria-label={`${catalogName[0]?.toUpperCase()}${catalogName.slice(1)} catalog`} class="min-w-0 space-y-3 p-3 pt-0">
     {#if status}
       {@const display = catalogStatusText(status)}
       <div class="space-y-1 rounded-md bg-muted/60 px-3 py-2 text-xs">
@@ -181,23 +213,34 @@
         {#if display.error}<p class="text-muted-foreground-1">{display.error}</p>{/if}
       </div>
     {/if}
+    {#if mcpDraft?.catalog?.selected?.length}
+      <ul aria-label="Selected MCP catalog servers" class="divide-y divide-line-2 rounded-md border border-line-2">
+        {#each mcpDraft.catalog.selected as entry, index (`${entry.id}:${index}`)}
+          <li class="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-xs">
+            <span class="break-words">{entry.id} · {entry.version}</span>
+            <button type="button" class={button} aria-label={`Remove ${entry.id} ${entry.version} from draft`}
+              onclick={() => removeMcp(entry)}>Remove</button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
     <form class="flex flex-wrap items-end gap-2" onsubmit={event => { event.preventDefault(); void load(); }}>
       <label class="min-w-0 flex-1 space-y-1">
-        <span class="text-xs font-medium">Search {kind}</span>
+        <span class="text-xs font-medium">Search {collectionName}</span>
         <input type="search" bind:value={search} maxlength="64" class="w-full rounded-md border border-line-2 bg-background-1 px-2.5 py-1.5 text-sm" />
       </label>
       <button type="submit" class={button}>Search</button>
     </form>
     {#if problem}<p role="alert" class="text-xs text-destructive-text">{problem}</p>{/if}
-    {#if busy}<p role="status" class="text-xs text-muted-foreground-1">Loading {kind}…</p>{/if}
-    {#if catalog && entries.length === 0 && !busy}<p class="text-xs text-muted-foreground-1">No {kind} match this search.</p>{/if}
+    {#if busy}<p role="status" class="text-xs text-muted-foreground-1">Loading {collectionName}…</p>{/if}
+    {#if catalog && entries.length === 0 && !busy}<p class="text-xs text-muted-foreground-1">No {collectionName} match this search.</p>{/if}
     {#if entries.length}
       <ul class="divide-y divide-line-2 rounded-md border border-line-2">
         {#each entries as entry (rowKey(entry))}
           <li class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-3 py-2">
             <div class="min-w-0 flex-1 space-y-0.5">
               <p class="break-words text-sm font-medium">{entry.metadata.name}</p>
-              <p class="break-words text-xs text-muted-foreground-1">{entry.metadata.id} · {entry.metadata.version}{entry.ruleKind ? ` · ${entry.ruleKind === 'access' ? 'Access' : 'Detection'}` : ''}{entry.metadata.status === 'deprecated' ? ' · Deprecated' : ''}</p>
+              <p class="break-words text-xs text-muted-foreground-1">{entry.metadata.id} · {entry.metadata.version}{entry.entryKind ? ` · ${entryKinds[entry.entryKind]}` : ''}{entry.metadata.status === 'deprecated' ? ' · Deprecated' : ''}</p>
             </div>
             <button type="button" class={button} aria-label={`Inspect ${entry.metadata.name} ${entry.metadata.version}`}
               onclick={event => inspect(entry, event.currentTarget)}>
@@ -208,7 +251,7 @@
       </ul>
     {/if}
     {#if cursor}
-      <button type="button" class={button} disabled={busy} onclick={() => { if (cursor) void load(cursor); }}>More {kind}</button>
+      <button type="button" class={button} disabled={busy} onclick={() => { if (cursor) void load(cursor); }}>More {collectionName}</button>
     {/if}
     {#if detail}
       <section aria-labelledby={`${id}-entry`} class="min-w-0 space-y-3 rounded-md border border-line-2 p-3">
@@ -230,7 +273,7 @@
           </div>
           <textarea readonly aria-label="Skill file contents" value={detail.files[selectedFile]} rows="8"
             class="block w-full resize-y rounded-md bg-muted p-2 font-mono text-xs"></textarea>
-        {:else}
+        {:else if 'parameters' in detail}
           <textarea readonly aria-label="Rule definition" value={JSON.stringify(detail.definition, null, 2)} rows="8"
             class="block w-full resize-y rounded-md bg-muted p-2 font-mono text-xs"></textarea>
           {#if Object.keys(detail.parameters).length}
@@ -247,14 +290,19 @@
               {/each}
             </dl>
           {/if}
+        {:else}
+          <EnvironmentMcpCatalogInputs {detail} initial={currentMcpInput} selected={!!current}
+            onstage={input => { if (detail) stage(detail.selection, input); }} />
         {/if}
-        {#if current && current.version !== detail.selection.version}
-          <p class="text-xs text-muted-foreground-1">Draft version {current.version}{target !== 'skills' ? '. Replacing it uses the published parameter defaults.' : ''}</p>
+        {#if 'files' in detail || 'parameters' in detail}
+          {#if current && current.version !== detail.selection.version}
+            <p class="text-xs text-muted-foreground-1">Draft version {current.version}{target !== 'skills' ? '. Replacing it uses the published parameter defaults.' : ''}</p>
+          {/if}
+          <button type="button" class="rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary-hover disabled:opacity-50"
+            disabled={sameSelection} onclick={() => { if (detail) stage(detail.selection); }}>
+            {sameSelection ? 'Selected in draft' : current ? 'Update draft selection' : `Add ${itemName} to draft`}
+          </button>
         {/if}
-        <button type="button" class="rounded-md bg-primary px-2.5 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary-hover disabled:opacity-50"
-          disabled={sameSelection} onclick={() => { if (detail) stage(detail.selection); }}>
-          {sameSelection ? 'Selected in draft' : current ? 'Update draft selection' : `Add ${itemName} to draft`}
-        </button>
       </section>
     {/if}
     {#if notice}<p role="status" class="text-xs text-primary">{notice}</p>{/if}

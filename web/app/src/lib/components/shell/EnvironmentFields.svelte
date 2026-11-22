@@ -1,13 +1,18 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import type { EnvironmentRevisionReference, EnvironmentRuleListResponse } from '@capsem/sdk';
+  import type { EnvironmentCatalogPin, EnvironmentRevisionReference, EnvironmentRuleListResponse } from '@capsem/sdk';
   import { listEnvironmentRules } from '../../api';
   import { environmentSectionKeys, environmentSections, type EnvironmentFields } from '../../models/environment-editor';
   import { sessionActionError } from '../../models/session-action-error';
   import EnvironmentCatalogBrowser from './EnvironmentCatalogBrowser.svelte';
   import EnvironmentPluginFields from './EnvironmentPluginFields.svelte';
   import EnvironmentRuleView from './EnvironmentRuleView.svelte';
-  let { fields = $bindable(), pin, reference }: { fields: EnvironmentFields; pin?: string; reference: EnvironmentRevisionReference | null } = $props();
+  let { fields = $bindable(), pin, reference, savedMcpPins }: {
+    fields: EnvironmentFields;
+    pin?: string;
+    reference: EnvironmentRevisionReference | null;
+    savedMcpPins?: EnvironmentCatalogPin[];
+  } = $props();
   const id = $props.id();
   const input = 'w-full rounded-lg border border-line-2 bg-background-1 px-3 py-2 text-sm text-foreground outline-hidden focus:border-primary';
   let effectiveRules = $state<EnvironmentRuleListResponse | null>(null);
@@ -79,6 +84,7 @@
   <div class="space-y-2">
     <EnvironmentCatalogBrowser kind="skills" bind:sections={fields.sections} />
     <EnvironmentCatalogBrowser kind="rules" bind:sections={fields.sections} />
+    <EnvironmentCatalogBrowser kind="mcp" bind:sections={fields.sections} {savedMcpPins} />
     {#each environmentSectionKeys as key (key)}
       {#if key === 'plugins'}
       <EnvironmentPluginFields {reference} bind:value={fields.sections.plugins} />

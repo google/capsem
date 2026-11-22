@@ -1,14 +1,16 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
-  import { EnvironmentArchiveAction, RequestApplicationState, RequestReviewAvailability, RequestState, type EnvironmentArchiveRequest, type EnvironmentCreateRequest, type EnvironmentCurrentResponse,
+  import { EnvironmentArchiveAction, RequestApplicationState, RequestReviewAvailability, RequestState, type CatalogSnapshot, type EnvironmentArchiveRequest, type EnvironmentCreateRequest, type EnvironmentCurrentResponse,
     type EnvironmentMutationResponse, type EnvironmentRevisionReference } from '@capsem/sdk';
   import X from 'phosphor-svelte/lib/X';
-  import { archiveEnvironment, getSavedEnvironment, getSavedEnvironmentRevision, saveEnvironment, validateSavedEnvironmentToml } from '../../api';
+  import { archiveEnvironment, getPublishedMcp, getSavedEnvironment, getSavedEnvironmentRevision, listEnvironmentCatalog, saveEnvironment, validateSavedEnvironmentToml } from '../../api';
   import { ApiError } from '../../gateway-sdk';
-  import { editableFields, environmentChanges, reviewedDraft, type EnvironmentDraft } from '../../models/environment-editor';
+  import { editableFields, environmentChanges, environmentSections, reviewedDraft, type EnvironmentDraft } from '../../models/environment-editor';
+  import { prepareMcpCatalogReview, type McpLaunchReview } from '../../models/environment-mcp-review';
   import { sessionActionError } from '../../models/session-action-error';
   import EnvironmentFields from './EnvironmentFields.svelte';
   import EnvironmentHistory from './EnvironmentHistory.svelte';
+  import EnvironmentMcpLaunch from './EnvironmentMcpLaunch.svelte';
 
   let { selection, onclose, onsaved }: {
     selection: EnvironmentRevisionReference | null;
@@ -30,11 +32,14 @@
   let canonical = $state<string | null>(null);
   let toml = $state('');
   let loadingToml = $state(false);
+  let mcpLaunches = $state<McpLaunchReview[]>([]);
+  let reviewStatus = $state('');
   let dialog: HTMLDialogElement;
   let title: HTMLHeadingElement;
   let content: HTMLDivElement;
   let reader: AbortController | null = null;
   let tomlReader: AbortController | null = null;
+  let reviewReader: AbortController | null = null;
   const id = $props.id();
   let base = $derived(current ? { environment_id: current.document.identity.id, revision_id: current.document.identity.revision_id } : null);
   let original = $derived(current ? reviewedDraft(editableFields(current.document.specification)) : null);
@@ -69,6 +74,7 @@
       current = value;
       fields = editableFields(value.document.specification);
       draft = null;
+      mcpLaunches = [];
       attempt = null;
       archiveReview = false;
       reason = '';
@@ -137,33 +143,53 @@
     if (phase !== 'editing' || showHistory || current?.archived) return;
     error = null;
     draft = null;
+    mcpLaunches = [];
+    let validatingToml = false;
+    const controller = new AbortController();
+    reviewReader = controller;
+    const { signal } = controller;
     try {
       let next: EnvironmentDraft;
       if (source === 'toml') {
         if (!base || canonical == null) return;
-        const controller = new AbortController();
-        tomlReader = controller;
+        validatingToml = true;
         phase = 'validating';
-        next = (await validateSavedEnvironmentToml(base, toml, controller.signal)).specification;
-        if (controller.signal.aborted) return;
-        phase = 'editing';
+        reviewStatus = 'Validating TOML…';
+        next = (await validateSavedEnvironmentToml(base, toml, signal)).specification;
+        if (signal.aborted) return;
+        validatingToml = false;
       } else {
         next = reviewedDraft(fields);
       }
-      if (!environmentChanges(original, next).length) { error = 'There are no changes to save.'; return; }
+      const pending = environmentChanges(original, next);
+      if (!pending.length) { error = 'There are no changes to save.'; phase = 'editing'; return; }
+      if (pending.some(change => change.label === environmentSections.mcps)) {
+        phase = 'validating';
+        reviewStatus = 'Preparing MCP definitions for review…';
+        let snapshot: Promise<CatalogSnapshot> | undefined;
+        const review = await prepareMcpCatalogReview(next, current?.document.specification, async (entryId, version) => {
+          snapshot ??= listEnvironmentCatalog('mcp', { limit: 1, signal }).then(page => page.catalog);
+          return getPublishedMcp(entryId, version, await snapshot, signal);
+        });
+        if (signal.aborted) return;
+        next = review.draft;
+        mcpLaunches = review.launches;
+      }
       draft = next;
       attempt = null;
       archiveReview = false;
       phase = 'reviewing';
       focusTitle();
     } catch (err) {
-      if (tomlReader?.signal.aborted) return;
-      if (source === 'toml' && err instanceof ApiError && err.status === 409) {
+      if (signal.aborted) return;
+      if (validatingToml && err instanceof ApiError && err.status === 409) {
         phase = 'stale';
         error = 'The saved revision changed before TOML could be validated. Reload the current revision to start a new edit.';
       } else {
         phase = 'editing';
-        error = sessionActionError(err);
+        error = err instanceof ApiError && err.status === 409
+          ? 'The MCP catalog changed. Browse the catalog again and review the updated draft.'
+          : sessionActionError(err);
       }
     }
   }
@@ -237,7 +263,7 @@
     dialog.showModal();
     focusTitle();
     if (selection) void load(selection.revision_id);
-    return () => { reader?.abort(); tomlReader?.abort(); };
+    return () => { reader?.abort(); tomlReader?.abort(); reviewReader?.abort(); };
   });
 </script>
 
@@ -282,7 +308,8 @@
         <button type="button" class="text-primary hover:underline" onclick={loadToml}>Retry canonical TOML</button>
       {/if}
     {:else if phase === 'editing'}
-      <EnvironmentFields bind:fields reference={base} pin={current?.document.specification.image?.resolved_digest} />
+      <EnvironmentFields bind:fields reference={base} pin={current?.document.specification.image?.resolved_digest}
+        savedMcpPins={current?.document.specification.mcps?.catalog?.selected} />
     {:else if archiveReview && phase !== 'saved'}
       <p>New sandboxes cannot use this environment after it is archived. Existing sandboxes keep their saved revisions.</p>
       <div class="space-y-1">
@@ -302,6 +329,18 @@
           </div>
         {/each}
       </div>
+      {#if mcpLaunches.length}
+        <section aria-label="MCP launch definitions" class="space-y-2">
+          <h3 class="text-sm font-medium">MCP launch definitions</h3>
+          {#each mcpLaunches as launch (launch.pin.id)}
+            <div class="min-w-0 space-y-2 rounded-md border border-line-2 p-3">
+              <p class="break-words text-sm font-medium">{launch.pin.id} {launch.pin.version}</p>
+              <p class="break-all font-mono text-xs text-muted-foreground-1">{launch.pin.catalog_reference}</p>
+              <EnvironmentMcpLaunch definition={launch.definition} />
+            </div>
+          {/each}
+        </section>
+      {/if}
       <div class="space-y-1">
         <label for={`${id}-reason`} class="text-sm font-medium">Reason for saving</label>
         <textarea id={`${id}-reason`} class="w-full rounded-lg border border-line-2 bg-background-1 p-2 text-sm" rows="2" bind:value={reason} disabled={phase !== 'reviewing'}></textarea>
@@ -320,7 +359,7 @@
       {#if base && !current?.archived}<button type="button" class={secondary} onclick={reviewArchive}>Archive environment</button>{/if}
       {#if !showHistory && !current?.archived}<button type="button" class={action} disabled={source === 'toml' && canonical == null} onclick={review}>Review changes</button>{/if}
     {:else if phase === 'validating'}
-      <p role="status">Validating TOML…</p>
+      <p role="status">{reviewStatus}</p>
     {:else if phase === 'reviewing'}
       <button type="button" class={secondary} onclick={() => { error = null; phase = 'editing'; focusTitle(); }}>Back to editing</button>
       <button type="button" class={action} disabled={!reason.trim()} onclick={save}>{archiveReview ? 'Confirm archive' : 'Save environment'}</button>

@@ -1,8 +1,8 @@
 // Gateway API client. Token is module-scoped -- never in localStorage, DOM, logs, or URLs.
 
 import * as gateway from '@capsem/sdk/operations';
-import { Connections, CredentialGrants, Environments, HostLogSource, NetworkError, Rules, ServiceAvailability, Skills, creationDeadlineMs } from '@capsem/sdk';
-import type { CatalogListOptions, CatalogSnapshot, EnvironmentListOptions, EnvironmentRevisionListOptions, EnvironmentRevisionReference, RuleCatalogListResponse, SkillCatalogListResponse } from '@capsem/sdk';
+import { Connections, CredentialGrants, Environments, HostLogSource, Mcps, NetworkError, Rules, ServiceAvailability, Skills, creationDeadlineMs } from '@capsem/sdk';
+import type { CatalogListOptions, CatalogSnapshot, EnvironmentListOptions, EnvironmentRevisionListOptions, EnvironmentRevisionReference, McpCatalogListResponse, RuleCatalogListResponse, SkillCatalogListResponse } from '@capsem/sdk';
 import type { AuthorizeGoogleRequest, CreateSessionGrantRequest } from '@capsem/sdk';
 import type { StopResponse, VmActionResponse, LogsResponse, VmStatsDetailResponse, EventBodiesResponse } from '@capsem/sdk';
 import type { ContainerStatusResponse, ImageListResponse, ImagePullResponse, CredentialInjectProvider, CredentialInjectResponse, CredentialStorage } from '@capsem/sdk';
@@ -85,10 +85,12 @@ export function listEnvironmentRules(reference: EnvironmentRevisionReference, si
   return _sdk.call(transport => new Environments(transport).rules(reference, { signal }));
 }
 
-export function listEnvironmentCatalog(kind: 'skills' | 'rules', options: CatalogListOptions) {
-  return _sdk.call<SkillCatalogListResponse | RuleCatalogListResponse>(transport => kind === 'skills'
-    ? new Skills(transport).list(options)
-    : new Rules(transport).list(options));
+export function listEnvironmentCatalog(kind: 'skills' | 'rules' | 'mcp', options: CatalogListOptions) {
+  return _sdk.call<SkillCatalogListResponse | RuleCatalogListResponse | McpCatalogListResponse>(transport => {
+    if (kind === 'skills') return new Skills(transport).list(options);
+    if (kind === 'rules') return new Rules(transport).list(options);
+    return new Mcps(transport).list(options);
+  });
 }
 
 export function getPublishedSkill(id: string, version: string, catalog: CatalogSnapshot, signal: AbortSignal) {
@@ -97,6 +99,10 @@ export function getPublishedSkill(id: string, version: string, catalog: CatalogS
 
 export function getPublishedRule(id: string, version: string, catalog: CatalogSnapshot, signal: AbortSignal) {
   return _sdk.call(transport => new Rules(transport).get(id, version, catalog, { signal }));
+}
+
+export function getPublishedMcp(id: string, version: string, catalog: CatalogSnapshot, signal: AbortSignal) {
+  return _sdk.call(transport => new Mcps(transport).get(id, version, catalog, { signal }));
 }
 
 export async function environmentCatalogStatus(signal: AbortSignal) {

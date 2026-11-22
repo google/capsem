@@ -1,6 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import type { McpCatalogDetailResponse } from '@capsem/sdk';
+import { describe, expect, it, vi } from 'vitest';
 import { reviewedDraft, editableFields, environmentChanges } from '../models/environment-editor';
-import { currentCatalogSelection, stageCatalogSelection } from '../models/environment-catalog';
+import { currentCatalogSelection, removeMcpCatalogSelection, stageCatalogSelection, stageMcpCatalogSelection } from '../models/environment-catalog';
+import { prepareMcpCatalogReview } from '../models/environment-mcp-review';
 
 const selection = {
   id: 'review', version: '2.0.0', catalog_reference: 'registry.example/team/skills:stable',
@@ -49,5 +51,64 @@ describe('catalog selections in an editable draft', () => {
   it('leaves invalid section text for the operator to repair', () => {
     expect(() => stageCatalogSelection('{"selected":42}', 'skills', selection)).toThrow('Check the configuration for Skills');
     expect(currentCatalogSelection('{', 'skills', selection.id)).toBeUndefined();
+  });
+
+  it('stages only MCP inputs and removes configuration and permissions with a selected server', () => {
+    const binding = '00000000-0000-4000-8000-000000000011';
+    const section = JSON.stringify({
+      catalog: { selected: [{ id: 'other', version: '1' }] },
+      catalog_configuration: { other: { values: { ROOM: 'keep' } } },
+      permissions: { review: { default: 'block' }, other: { default: 'ask' } },
+    });
+    const staged = stageMcpCatalogSelection(section, selection, { values: { 'X-Workspace': 'example' }, binding_id: binding });
+    expect(JSON.parse(staged)).toMatchObject({
+      catalog: { selected: [{ id: 'other', version: '1' }, expected] },
+      catalog_configuration: { other: { values: { ROOM: 'keep' } }, review: { values: { 'X-Workspace': 'example' }, binding_id: binding } },
+    });
+    const removed = JSON.parse(removeMcpCatalogSelection(staged, 'review'));
+    expect(removed.catalog.selected).toEqual([{ id: 'other', version: '1' }]);
+    expect(Object.keys(removed.catalog_configuration)).toEqual(['other']);
+    expect(Object.keys(removed.permissions)).toEqual(['other']);
+  });
+
+  it('refuses to configure a saved version against a different digest', () => {
+    const section = JSON.stringify({ catalog: { selected: [{ id: selection.id, version: selection.version }] } });
+    const saved = { ...selection, resolved_digest: `sha256:${'b'.repeat(64)}` };
+    expect(() => stageMcpCatalogSelection(section, selection, {}, saved)).toThrow('saved digest');
+    const staged = JSON.parse(stageMcpCatalogSelection(section, selection, { values: { ROOM: 'update' } }, selection));
+    expect(staged.catalog.selected).toEqual([{ id: selection.id, version: selection.version }]);
+  });
+});
+
+describe('MCP launch review', () => {
+  const detail = {
+    selection,
+    definition: { kind: 'sandbox', executable: '/opt/bin/review', args: ['--stdio', 'exact\ninput'], workdir: '/workspace' },
+  } satisfies Pick<McpCatalogDetailResponse, 'selection' | 'definition'>;
+  const draft = {
+    name: 'workspace', mcps: { catalog: { selected: [{ id: selection.id, version: selection.version }] } },
+  };
+
+  it('pins a manually supplied selector to the definition shown in review', async () => {
+    const read = vi.fn().mockResolvedValue(detail);
+    const result = await prepareMcpCatalogReview(draft, undefined, read);
+    expect(read).toHaveBeenCalledWith(selection.id, selection.version);
+    expect(result.draft.mcps?.catalog?.selected).toEqual([expected]);
+    expect(result.launches).toEqual([{ pin: selection, definition: detail.definition }]);
+    expect(draft.mcps.catalog.selected).toEqual([{ id: selection.id, version: selection.version }]);
+  });
+
+  it('rejects a changed catalog after inspection and keeps a saved exact definition offline', async () => {
+    const changed = { ...detail, selection: { ...selection, resolved_digest: `sha256:${'b'.repeat(64)}` } };
+    const read = vi.fn().mockResolvedValue(changed);
+    await expect(prepareMcpCatalogReview(
+      { name: 'workspace', mcps: { catalog: { selected: [expected] } } }, undefined, read,
+    )).rejects.toThrow('MCP catalog selection changed');
+    read.mockClear();
+    const saved = { name: 'workspace', mcps: { catalog: { selected: [selection] }, catalog_configuration: { review: detail.definition } } };
+    const result = await prepareMcpCatalogReview(draft, saved, read);
+    expect(read).not.toHaveBeenCalled();
+    expect(result.draft).toEqual(draft);
+    expect(result.launches[0]?.definition).toEqual(detail.definition);
   });
 });
